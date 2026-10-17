@@ -1,6 +1,7 @@
 import { randomUUID,createHash } from 'node:crypto';
 import type { Core } from './core.ts';
 import { parseTypeScript } from '../domain/parsers.ts';
+import {projectSources} from '../domain/project-sources.ts';
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
 function error(statusCode:number,code:string,message:string):never {throw Object.assign(new Error(message),{statusCode,code});}
 export function createExtensions(input:{core:Core;generation:any;git:any;workspace:any;emit:(event:any)=>void;executeTargetCi?:(requirementId:string,body:any)=>Promise<any>}) {
@@ -8,7 +9,8 @@ export function createExtensions(input:{core:Core;generation:any;git:any;workspa
   const one=async(sql:string,params:any[])=>{const row=(await store.all(sql,params))[0];if(!row)error(404,'NOT_FOUND','Resource does not exist');return row;};
   const phase=(r:any,stage:string)=>{if(r.stage!==stage)error(409,'ARTIFACT_LOCKED_IN_STAGE','此階段不可修改該產物');};
   const project=(id:string)=>one('SELECT * FROM projects WHERE id=?',[id]);
-  async function current(id:string,featureId?:string){const r=await core.getRequirement(id,featureId);const s=(await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC LIMIT 1",[r.featureId]))[0];return {...r,sourceBaseline:s?JSON.parse(s.manifest_json):null};}
+  function selectedProject(r:any,id?:string){const selected=r.projects.find((p:any)=>p.id===(id??r.projectId));if(!selected)error(400,'PROJECT_REQUIRED','Select a project linked to this requirement');return selected;}
+  async function current(id:string,featureId?:string){const r=await core.getRequirement(id,featureId);const s=(await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC LIMIT 1",[r.featureId]))[0];if(s&&hash(s.manifest_json)!==s.sha256)error(409,'SOURCE_BASELINE_INVALID','Source baseline hash differs');const value=s?JSON.parse(s.manifest_json):null;return {...r,sourceBaseline:value?{...value,projects:projectSources(value,r.projects.map(p=>p.id))}:null};}
   const sources=async(r:any)=>store.all('SELECT c.id sourceCaseId,c.case_key caseId,c.scenario_id scenarioEntityId,s.scenario_key scenarioId,sv.source_line scenarioLine FROM source_cases c JOIN scenarios s ON s.id=c.scenario_id JOIN scenario_versions sv ON sv.gherkin_version_id=c.gherkin_version_id AND sv.scenario_id=c.scenario_id WHERE c.gherkin_version_id=? AND s.requirement_id=? ORDER BY sv.ordinal,c.row_ordinal',[r.confirmations.gherkin?.versionId,r.id]);
   function suppliedSources(r:any,body:any) {
     for(const kind of ['gherkin','sd'])for(const [suffix,field] of [['VersionId','versionId'],['Sha256','rawSha256'],['Hash','rawSha256']]) {
@@ -71,7 +73,7 @@ export function createExtensions(input:{core:Core;generation:any;git:any;workspa
     emit({type:'test.skeletonGenerated',projectId:r.projectId,requirementId:id,featureId:r.featureId,documentVersionId:version.versionId,payload:{testStage:'SKELETON'}});return {...version,...bundle,manifest,testStage:'SKELETON'};
   }
   return {
-    current,project,generated,
+    current,project,selectedProject,generated,
     async beginDevelopment(id:string,featureId?:string){
       const r=await current(id,featureId),v=r.documents.spec;if(v?.testStage!=='COMPLETED')error(409,'TESTS_PENDING_COMPLETION','Tests are pending completion');
       const g=confirmed(r,'gherkin'),s=confirmed(r,'sd'),expectations={featureId:r.featureId,expectedSpecVersionId:v.versionId!,expectedSpecSha256:v.rawSha256!,expectedConfirmedGherkinVersionId:g.versionId,expectedConfirmedGherkinSha256:g.rawSha256,expectedConfirmedSdVersionId:s.versionId,expectedConfirmedSdSha256:s.rawSha256};
@@ -79,7 +81,7 @@ export function createExtensions(input:{core:Core;generation:any;git:any;workspa
       const receipt=await generation.generator.validateCompletion({rawText:v.rawText,files:v.manifest?.bundleFiles,manifest});if(!receipt.passed)throw Object.assign(new Error('Completed test bundle did not pass typecheck/discovery'),{statusCode:422,code:'COMPLETION_CHECKS_FAILED',diagnostics:receipt.diagnostics});
       return core.startDevelopment(id,expectations);
     },
-    async generateSd(id:string,body:any={}){const r=await current(id,body.featureId);phase(r,'SD');const assertions=jobAssertions(r,'sd',body,false);const result=await generation.llm.generateSd({gherkin:r.documents.gherkin.rawText,context:{currentSd:r.documents.sd.rawText,providedContext:body.context}});if(result.status==='needs_input')return result;const v=await core.saveVersion(r.documents.sd.id,{...assertions,rawText:result.rawText,sourceGherkinVersionId:r.confirmations.gherkin.versionId});return {...result,...v};},
+    async generateSd(id:string,body:any={}){const r=await current(id,body.featureId);phase(r,'SD');const assertions=jobAssertions(r,'sd',body,false);const result=await generation.llm.generateSd({terminalContext:{projectId:r.projectId,requirementId:id,featureId:r.featureId},gherkin:r.documents.gherkin.rawText,context:{currentSd:r.documents.sd.rawText,providedContext:body.context}});if(result.status==='needs_input')return result;const v=await core.saveVersion(r.documents.sd.id,{...assertions,rawText:result.rawText,sourceGherkinVersionId:r.confirmations.gherkin.versionId});return {...result,...v};},
     async complete(id:string,body:any={}){
       const r=await current(id,body.featureId);phase(r,'TESTS');const spec=r.documents.spec;
       const assertions=jobAssertions(r,'spec',body,true);
@@ -90,10 +92,18 @@ export function createExtensions(input:{core:Core;generation:any;git:any;workspa
       if(skeleton.testStage!=='SKELETON')error(409,'SKELETON_REQUIRED','Source must be an immutable skeleton');
       for(const key of ['skeletonSha256','skeletonHash','sourceSkeletonSha256'])if(body[key]!==undefined&&body[key]!==skeleton.rawSha256)error(409,'VERSION_HASH_MISMATCH','Skeleton hash does not match');
       skeletonSources(r,skeleton);const available=await sources(r);
-      const targetConnections=(await store.all('SELECT id,environment_label,app_base_url FROM target_connections WHERE project_id=?',[r.projectId])).map(c=>({id:c.id,environmentLabel:c.environment_label,appBaseUrl:c.app_base_url}));
-      const result=await generation.llm.complete({gherkin:r.documents.gherkin.rawText,sd:r.documents.sd.rawText,skeleton:skeleton.rawText,skeletonManifest:skeleton.manifest,context:{...skeleton.executionConfig?.completionContext,...body.context,targetConnections,manifest:skeleton.manifest,gherkinVersionId:r.confirmations.gherkin?.versionId}});
+      const targetConnections=(await store.all('SELECT c.id,c.project_id,c.environment_label,c.app_base_url FROM target_connections c JOIN requirement_projects rp ON rp.project_id=c.project_id WHERE rp.requirement_id=?',[id])).map(c=>({id:c.id,projectId:c.project_id,environmentLabel:c.environment_label,appBaseUrl:c.app_base_url}));
+      const result=await generation.llm.complete({terminalContext:{projectId:r.projectId,requirementId:id,featureId:r.featureId},gherkin:r.documents.gherkin.rawText,sd:r.documents.sd.rawText,skeleton:skeleton.rawText,skeletonManifest:skeleton.manifest,context:{...skeleton.executionConfig?.completionContext,...body.context,targetConnections,manifest:skeleton.manifest,gherkinVersionId:r.confirmations.gherkin?.versionId}});
       if(result.status==='needs_input'){emit({type:'test.needsInput',projectId:r.projectId,requirementId:id,featureId:r.featureId,payload:{questions:result.questions}});return result;}
       const rawText=String(result.rawText??''),members=new Map<string,string>((skeleton.manifest?.bundleFiles??[]).map((f:any)=>[f.path,f.rawText]));
+      const bundleDirectory=skeleton.manifest?.bundleDirectory;
+      for(const file of body.context?.files??[]){
+        if(!file||typeof file.path!=='string'||typeof file.rawText!=='string'||!bundleDirectory||file.path.startsWith('/')||file.path.includes('\\')||file.path.split('/').some((part:string)=>!part||part==='.'||part==='..'||part==='.git'||part==='node_modules')||!(/\.(?:[cm]?[jt]s)$/.test(file.path))||Buffer.byteLength(file.rawText)>2*1024*1024)error(422,'BUNDLE_INVALID','Context helper files require safe relative TypeScript or JavaScript paths inside the feature bundle');
+        const path=`${bundleDirectory}/${file.path}`;
+        if(!path.startsWith(bundleDirectory+'/'))error(422,'BUNDLE_SCOPE_INVALID','Context helper files must remain inside the selected feature directory');
+        if(members.has(path)&&members.get(path)!==file.rawText)error(422,'BUNDLE_INVALID','A context helper cannot replace an existing skeleton bundle file');
+        members.set(path,file.rawText);
+      }
       for(const file of result.files??[]){if(typeof file.path!=='string'||typeof file.rawText!=='string')error(422,'BUNDLE_INVALID','Completion files require path and rawText');if(skeleton.manifest?.bundleDirectory&&!file.path.startsWith(skeleton.manifest.bundleDirectory+'/'))error(422,'BUNDLE_SCOPE_INVALID','Completion files must remain in the selected feature directory');if((file.path.endsWith('.feature')||file.path.endsWith('.sd.md'))&&members.has(file.path)&&members.get(file.path)!==file.rawText)error(422,file.path.endsWith('.feature')?'APPROVED_GHERKIN_CHANGED':'APPROVED_SD_CHANGED','LLM completion cannot modify approved source documents');members.set(file.path,file.rawText);}
       members.set(skeleton.manifest?.specPath??'generated.spec.ts',rawText);const files=[...members].map(([path,rawText])=>({path,rawText}));
       const mappings=(skeleton.manifest?.mappings??[]).map((m:any)=>({...m}));
@@ -117,12 +127,16 @@ export function createExtensions(input:{core:Core;generation:any;git:any;workspa
       emit({type:'test.completionSaved',projectId:r.projectId,requirementId:id,featureId:r.featureId,documentVersionId:v.versionId,payload:{testStage:'COMPLETED'}});return {...v,status:'completed',testStage:'COMPLETED',questions:[],checks};
     },
     async exportBundle(id:string,versionId:string,featureId?:string){const r=await current(id,featureId),v=await core.getVersion(r.documents.spec.id,versionId??r.documents.spec.versionId!);return {specPath:v.manifest?.specPath??r.documents.spec.fileName,files:v.manifest?.bundleFiles??[{path:r.documents.spec.fileName,rawText:v.rawText}]};},
-    async source(id:string,body?:any,featureId?:string){const r=await current(id,body?.featureId??featureId);if(body){phase(r,'IMPLEMENTATION');await store.batch([{sql:"UPDATE baselines SET valid=0 WHERE feature_id=? AND kind='source'",params:[r.featureId]},{sql:"UPDATE runs SET status='INVALID' WHERE feature_id=?",params:[r.featureId]}]);return workspace.saveSource(r.projectId,String(body.rawText??''));}return workspace.readSource(r.projectId);},
+    async source(id:string,body?:any,featureId?:string,projectId?:string,filePath?:string){const r=await current(id,body?.featureId??featureId),p=selectedProject(r,body?.projectId??projectId);if(body){phase(r,'IMPLEMENTATION');await store.batch([{sql:"UPDATE baselines SET valid=0 WHERE feature_id=? AND kind='source'",params:[r.featureId]},{sql:"UPDATE runs SET status='INVALID' WHERE feature_id=?",params:[r.featureId]}]);return workspace.saveSource(p.workspaceRef,String(body.rawText??''),body.path);}return workspace.readSource(p.workspaceRef,filePath);},
     async pinSource(id:string,body:any){
       const r=await current(id,body.featureId);if(!['IMPLEMENTATION','VERIFICATION','VERIFIED'].includes(r.stage))error(409,'WORKFLOW_GATE_NOT_MET','Source can be fixed after tests are complete');
       const previous=(await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC LIMIT 1",[r.featureId]))[0];
-      const p=await project(r.projectId),resolved=await workspace.resolveSource(String(body.sourceRef??''),p.workspace_ref,r.projectId),manifest=JSON.stringify(resolved),baselineId=randomUUID();
-      const changed=!previous||JSON.parse(previous.manifest_json).resolvedCommit!==resolved.resolvedCommit;
+      const requested=body.projects??(r.projects.length===1?[{projectId:r.projects[0].id,sourceRef:body.sourceRef}]:null);
+      if(!Array.isArray(requested)||requested.length!==r.projects.length||!requested.length||new Set(requested.map((p:any)=>p.projectId)).size!==requested.length)error(422,'PROJECT_SOURCES_REQUIRED','Pin a source revision for every linked project');
+      const projects=await Promise.all(requested.map(async(item:any)=>{const p=selectedProject(r,item.projectId);return {projectId:p.id,workspaceRef:p.workspaceRef,...await workspace.resolveSource(String(item.sourceRef??''),p.workspaceRef,p.id)};}));projects.sort((a,b)=>a.projectId.localeCompare(b.projectId));
+      const resolved={projects,...(projects.length===1?projects[0]:{})},manifest=JSON.stringify(resolved),baselineId=randomUUID();
+      const previousValue=previous?JSON.parse(previous.manifest_json):null,previousProjects=previousValue?projectSources(previousValue,r.projects.map(p=>p.id)):[];
+      const changed=projects.length!==previousProjects.length||projects.some(p=>!previousProjects.some((old:any)=>old.projectId===p.projectId&&old.resolvedCommit===p.resolvedCommit));
       const commands:any[]=[{sql:'SELECT id FROM features WHERE id=? AND stage=?',params:[r.featureId,r.stage],mode:'all',expectRows:1},
         {sql:"SELECT id FROM baselines WHERE feature_id=? AND kind='source' AND valid=1"+(previous?' AND id=?':''),params:previous?[r.featureId,previous.id]:[r.featureId],mode:'all',expectRows:previous?1:0},
         {sql:"UPDATE baselines SET valid=0 WHERE feature_id=? AND kind='source'",params:[r.featureId]},
@@ -139,8 +153,17 @@ export function createExtensions(input:{core:Core;generation:any;git:any;workspa
       emit({type:'recording.saved',projectId:body.projectId,documentVersionId:result.versionId,payload:{id:result.id}});return result;
     },
     async scriptHead(id:string){const d=await one('SELECT d.*,h.version_id FROM documents d JOIN document_heads h ON h.document_id=d.id WHERE d.id=?',[id]);return core.getVersion(id,d.version_id);},
-    async snapshot(body:any){const r=await current(body.requirementId,body.featureId);phase(r,'TESTS');const assertions=jobAssertions(r,'spec',body,true);const snap=await git.readSnapshot({repo:body.repo??body.repositoryUrl,branch:body.branch??body.branchRef,commit:body.commit??body.commitSha,path:body.path??body.filePath});const v=await core.saveVersion(r.documents.spec.id,{...assertions,rawText:snap.rawText,sourceGherkinVersionId:r.confirmations.gherkin.versionId,manifest:body.manifest});await store.run('INSERT INTO git_snapshots(spec_version_id,repository_url,branch_ref,commit_sha,file_path) VALUES (?,?,?,?,?)',[v.versionId,snap.repo??body.repo??body.repositoryUrl,snap.branch??body.branch??body.branchRef,snap.commit??snap.commitSha,snap.path??snap.filePath??body.path??body.filePath]);return {...v,...snap};},
-    async saveGit(id:string,featureId?:string){const r=await current(id,featureId),p=await project(r.projectId);if(!r.documents.spec.versionId)error(409,'NO_TEST_VERSION','No spec version to save');const bundle=await this.exportBundle(id,r.documents.spec.versionId,r.featureId);const receipt=await git.save({repo:p.workspace_ref,files:bundle.files,message:`Save ${r.requirementKey} test version ${r.documents.spec.versionId}`});const v=r.documents.spec;await store.run('INSERT INTO git_snapshots(spec_version_id,repository_url,branch_ref,commit_sha,file_path) VALUES (?,?,?,?,?) ON CONFLICT(spec_version_id) DO UPDATE SET repository_url=excluded.repository_url,branch_ref=excluded.branch_ref,commit_sha=excluded.commit_sha,file_path=excluded.file_path',[v.versionId,p.workspace_ref,receipt.branch??'HEAD',receipt.commit??receipt.commitSha,bundle.specPath]);return receipt;},
-    async runCi(id:string,featureId?:string){let r=await current(id,featureId);const snapshot=await one('SELECT * FROM git_snapshots WHERE spec_version_id=?',[r.documents.spec.versionId]);if(!r.baseline&&r.stage==='TESTS'){await this.beginDevelopment(id,r.featureId);r=await current(id,r.featureId);}if(!r.baseline)error(409,'BASELINE_REQUIRED','Tests baseline is required');if(!input.executeTargetCi)error(503,'CI_UNAVAILABLE','CI executor is not configured');return input.executeTargetCi(id,{featureId:r.featureId,testBaselineId:r.baseline.id,testBaselineHash:r.baseline.sha256,sourceRef:snapshot.commit_sha,selection:{mode:'ALL_REQUIRED',sourceCaseIds:[]},executor:'target_ci'});}
+    async snapshot(body:any){const r=await current(body.requirementId,body.featureId),selected=selectedProject(r,body.projectId);phase(r,'TESTS');const assertions=jobAssertions(r,'spec',body,true);const snap=await git.readSnapshot({repo:body.repo??body.repositoryUrl,branch:body.branch??body.branchRef,commit:body.commit??body.commitSha,path:body.path??body.filePath});const v=await core.saveVersion(r.documents.spec.id,{...assertions,rawText:snap.rawText,sourceGherkinVersionId:r.confirmations.gherkin.versionId,manifest:body.manifest});await store.run('INSERT INTO git_snapshots(spec_version_id,project_id,repository_url,branch_ref,commit_sha,file_path) VALUES (?,?,?,?,?,?)',[v.versionId,selected.id,snap.repo??body.repo??body.repositoryUrl,snap.branch??body.branch??body.branchRef,snap.commit??snap.commitSha,snap.path??snap.filePath??body.path??body.filePath]);return {...v,...snap};},
+    async saveGit(id:string,featureId?:string,projectId?:string){const r=await current(id,featureId),selected=selectedProject(r,projectId),p=await project(selected.id);if(!r.documents.spec.versionId)error(409,'NO_TEST_VERSION','No spec version to save');const bundle=await this.exportBundle(id,r.documents.spec.versionId,r.featureId);const receipt=await git.save({repo:p.workspace_ref,files:bundle.files,message:`Save ${r.requirementKey} test version ${r.documents.spec.versionId}`});const v=r.documents.spec;await store.run('INSERT INTO git_snapshots(spec_version_id,project_id,repository_url,branch_ref,commit_sha,file_path) VALUES (?,?,?,?,?,?) ON CONFLICT(spec_version_id,project_id) DO UPDATE SET repository_url=excluded.repository_url,branch_ref=excluded.branch_ref,commit_sha=excluded.commit_sha,file_path=excluded.file_path',[v.versionId,p.id,p.workspace_ref,receipt.branch??'HEAD',receipt.commit??receipt.commitSha,bundle.specPath]);return receipt;},
+    async runCi(id:string,featureId?:string,projectId?:string){
+      let r=await current(id,featureId);const selected=selectedProject(r,projectId);
+      const snapshot=await one('SELECT * FROM git_snapshots WHERE spec_version_id=? AND project_id=?',[r.documents.spec.versionId,selected.id]);
+      if(!r.baseline&&r.stage==='TESTS'){await this.beginDevelopment(id,r.featureId);r=await current(id,r.featureId);}
+      if(!r.baseline)error(409,'BASELINE_REQUIRED','Tests baseline is required');
+      if(!input.executeTargetCi)error(503,'CI_UNAVAILABLE','CI executor is not configured');
+      const projects=r.sourceBaseline?.projects?.map((p:any)=>({projectId:p.projectId,sourceRef:p.projectId===selected.id?snapshot.commit_sha:p.sourceRef}));
+      return input.executeTargetCi(id,{featureId:r.featureId,projectId:selected.id,projects,testBaselineId:r.baseline.id,testBaselineHash:r.baseline.sha256,sourceRef:snapshot.commit_sha,selection:{mode:'ALL_REQUIRED',sourceCaseIds:[]},executor:'target_ci'});
+    }
+
   };
 }

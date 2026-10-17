@@ -12,7 +12,9 @@ INSERT INTO test_documents(document_key,content) VALUES ('scenario_document','in
 export function initializeTargetDatabase(file: string) {
   if (existsSync(file) && lstatSync(file).isSymbolicLink()) throw new Error('Dedicated target fixture database cannot be a symbolic link');
   const db = new DatabaseSync(file);
-  try { db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;'); db.exec(targetFixtureDdl); }
+  // Host website and Docker DbGate cannot share SQLite's WAL-index memory.
+  // Use rollback journaling for the fixture file mounted across that boundary.
+  try { db.exec('PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;'); db.exec(targetFixtureDdl); }
   finally { db.close(); }
 }
 const escape = (value: unknown) => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);

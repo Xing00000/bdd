@@ -11,20 +11,20 @@ export class PtyTerminalAdapter implements TerminalRuntimePort {
   private readonly sessions = new Map<string, TerminalState>();
   private closed = false;
   private readonly workspaceRoot: string;
-  constructor(workspaceRoot: string) { this.workspaceRoot = workspaceRoot; }
+  constructor(workspaceRoot: string,private readonly registeredRoots:()=>Promise<string[]>=async()=>[]) { this.workspaceRoot = workspaceRoot; }
 
-  async create(input: { workspaceRef: string; cols?: number; rows?: number }): Promise<{ id: string }> {
+  async create(input: { workspaceRef: string; cols?: number; rows?: number; command?:{file:string;args:string[]} }): Promise<{ id: string }> {
     if (this.closed) throw new RuntimeAdapterError('RUNTIME_CLOSED', 'Terminal runtime is closed', 409);
-    const cwd = await existingWorkspacePath(this.workspaceRoot, input.workspaceRef, 'directory');
+    const cwd = await existingWorkspacePath(this.workspaceRoot, input.workspaceRef, 'directory',await this.registeredRoots());
     const cols = dimension(input.cols ?? 100), rows = dimension(input.rows ?? 30);
     let process: IPty;
     try {
       const pty = await import('node-pty');
       // Deliberately do not forward provider tokens, DB credentials, or the full
       // server environment. Execution inherits the existing cloud isolation.
-      process = pty.spawn('/bin/bash', ['--noprofile', '--norc'], {
+      process = pty.spawn(input.command?.file??'/bin/bash', input.command?.args??['--noprofile', '--norc'], {
         cwd, cols, rows, name: 'xterm-256color',
-        env: { PATH: globalThis.process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8', TERM: 'xterm-256color' },
+        env: { PATH: globalThis.process.env.PATH ?? '/usr/bin:/bin', HOME:globalThis.process.env.HOME, LANG: 'C.UTF-8', TERM: 'xterm-256color' },
       });
     } catch (cause) {
       throw new RuntimeAdapterError('TERMINAL_UNAVAILABLE', 'A real node-pty terminal could not be started', 503, { cause });

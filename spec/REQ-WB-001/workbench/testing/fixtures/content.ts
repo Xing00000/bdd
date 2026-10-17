@@ -1,9 +1,22 @@
 import { resolve } from 'node:path';
 import {readFileSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+export function designContext(){
+ const files=['src/fixtures/target-app.ts','src/fixtures/setup.ts'];
+ if(!process.env.WB_TARGET_DB)throw Error('WB_TARGET_DB is required for the actual target database design context');
+ const db=new DatabaseSync(process.env.WB_TARGET_DB,{readOnly:true});
+ let database;
+ try{database={sqliteVersion:db.prepare('SELECT sqlite_version() AS version').get()!.version,userVersion:db.prepare('PRAGMA user_version').get()!.user_version,schema:db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name").all()};}finally{db.close();}
+ return {purpose:'Dedicated document-editing test application, not the workbench metadata database',existingFiles:files.map(path=>({path,rawText:readFileSync(path,'utf8')})),
+  nodeVersion:process.version,requiredNodeRange:JSON.parse(readFileSync('package.json','utf8')).engines.node,database,
+  databaseLifecycle:'Canonical target initializer is initializeTargetDatabase in target-app.ts. It uses idempotent CREATE TABLE IF NOT EXISTS and seed INSERT ON CONFLICT DO NOTHING. The dedicated target fixture has no versioned migration owner or historical upgrade contract. Document that actual fact; do not invent a legacy production migration requirement. Production metadata migrations/deploy are a separate workbench concern.',
+  fixtures:fixtureSql,instructions:'Use actual contracts, selectors and authorization from existingFiles. Distinguish this dedicated test database from production metadata. Proposed development or deployment files must be explicitly marked planned, not existing. Browser recording and PTY are not document-editing product capabilities. Draft a pending-review SD from the known implementation and source acceptance conditions; do not claim approval or execution.'};
+}
 export function completionContext(){
- const module=resolve('spec/REQ-WB-001/workbench/testing/fixtures/managed-runner.ts');
- return {runnerFixtureModule:module,runnerFixtureSource:readFileSync(module,'utf8'),
-  instructions:'The supplied managed runner is existing project infrastructure. Import runnerFixture and ManagedRunner from runnerFixtureModule; extend Playwright test with runner:runnerFixture. Use runner.login(target URL, source role), runner.edit(source expected outcome), runner.assertOutcome(source expected outcome). These methods capture real DB UI, application actions and assertions. Preserve every source mapping and test ID. The helper is context, never alter its source or fabricate missing product outcomes.'};
+ const modules=['spec/REQ-WB-001/workbench/testing/fixtures/managed-runner.ts','spec/REQ-WB-001/workbench/testing/support/managed.ts','spec/REQ-WB-001/workbench/testing/support/dbgate.ts'];
+ const files=modules.map(file=>({path:file.slice('spec/REQ-WB-001/workbench/'.length),rawText:readFileSync(file,'utf8')}));
+ return {runnerFixtureModule:'./testing/fixtures/managed-runner.ts',files,
+  instructions:'The supplied files are existing project helper modules. Their exact bundle paths are bundleDirectory + each files[].path. Keep each supplied path and source unchanged; import runnerFixture and ManagedRunner from runnerFixtureModule and extend Playwright test with runner:runnerFixture. Use runner.login(target URL, source role), runner.edit(source expected outcome), runner.assertOutcome(source expected outcome). These methods capture real DB UI, application actions and assertions. Preserve every source mapping and test ID. Never request these supplied files or fabricate missing product outcomes.'};
 }
 export const sourceFeature = `Feature: Document editing
   @AC-DEMO-001
@@ -48,6 +61,19 @@ export function failingSpecText(baseURL:string){
   }, 'A');
 });\n`;
  const remainder=specText(baseURL,true);return failure+remainder.slice(remainder.indexOf("test('test-b'"));
+}
+export function dbgateSpecText(mode:'positive'|'mismatch'|'query-error'|'unavailable'|'not-loaded'){
+ const module=resolve('spec/REQ-WB-001/workbench/testing/fixtures/managed-runner.ts');
+ return `import {test,expect} from ${JSON.stringify(module)};\n`+['test-a','test-b','test-a-extra'].map(id=>`test('${id}',{annotation:{type:'workbenchTestId',description:'${id}'}},async({runner})=>{
+  ${mode==='unavailable'?"await runner.dbPage.route('**/*',route=>route.abort('connectionrefused'));":''}
+  ${mode==='not-loaded'?"await runner.dbPage.route('**/sessions/execute-query',route=>route.fulfill({json:{state:'ok'}}));":''}
+  await runner.capture(4,'db-source',runner.dbPage,async()=>runner.dbPage.url());
+  await runner.query(${JSON.stringify(mode==='query-error'?'SELECT * FROM missing_acceptance_table;':"SELECT role_code,state FROM test_accounts WHERE username='scenario_user';")},5);
+  await runner.capture(6,'db-value',runner.dbPage,async()=>{
+    const actual=await runner.dbPage.locator('td[data-row="0"][data-col="0"]').innerText();
+    expect(actual).toBe(${JSON.stringify(mode==='mismatch'?'B':'A')});return actual;
+  },${JSON.stringify(mode==='mismatch'?'B':'A')});
+});\n`).join('');
 }
 export const malformedFeature='Feature: invalid\n  Scenario: broken\n    Given value\n      """\n      unterminated\n';
 export const malformedSpec="import { test } from '@playwright/test';\ntest('broken', async ({ page }) => {\n  await page.goto( ;\n});\n";

@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "requirementId": "REQ-WB-001",
   "featurePath": "spec/REQ-WB-001/workbench/workbench.feature",
-  "featureSha256": "88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66",
-  "scenarioCount": 28,
-  "expandedCaseCount": 44,
+  "featureSha256": "ac89e4ad70b6bf095b0fb87f067c793c366bde2aefffe7b10e6e2aac19402a39",
+  "scenarioCount": 31,
+  "expandedCaseCount": 47,
   "scenarioIds": [
     "AC-WB-001",
     "AC-WB-002",
@@ -33,19 +33,30 @@
     "AC-WB-025",
     "AC-WB-026",
     "AC-WB-027",
-    "AC-WB-028"
+    "AC-WB-028",
+    "AC-WB-029",
+    "AC-WB-030",
+    "AC-WB-031"
   ],
   "sdPath": "spec/REQ-WB-001/workbench/workbench.sd.md",
-  "sdVersion": "0.6",
-  "sdSha256": "6e23466cad8a8821c23498848c0f141ec604fd20ca54d29f65bbd923054c5c53",
+  "sdVersion": "0.8",
+  "sdSha256": "5d5be33f334184e9af5ceb5601fdd2e217475381bd97a02a51af38d7b58768e3",
   "sdStatus": "confirmed",
-  "sdApproval": {"sha256": "6e23466cad8a8821c23498848c0f141ec604fd20ca54d29f65bbd923054c5c53", "source": "user explicitly confirmed SD 0.6 in this session", "date": "2026-10-17"},
+  "sdApproval": {
+    "sha256": "5d5be33f334184e9af5ceb5601fdd2e217475381bd97a02a51af38d7b58768e3",
+    "source": "User explicitly instructed implementation of the concrete requirement-centric multi-project design and fixed expandable left sidebar on 2026-10-18; existing approved CLI/DbGate requirements retained."
+  },
   "documentBinding": {
     "requirementId": "REQ-WB-001",
     "featurePath": "spec/REQ-WB-001/workbench/workbench.feature",
-    "featureSha256": "88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66",
+    "featureSha256": "ac89e4ad70b6bf095b0fb87f067c793c366bde2aefffe7b10e6e2aac19402a39",
     "sdPath": "spec/REQ-WB-001/workbench/workbench.sd.md",
-    "sdSha256": "6e23466cad8a8821c23498848c0f141ec604fd20ca54d29f65bbd923054c5c53",
+    "sdSha256": "5d5be33f334184e9af5ceb5601fdd2e217475381bd97a02a51af38d7b58768e3",
     "adrDirectory": "doc"
+  },
+  "featureStatus": "confirmed",
+  "featureApproval": {
+    "sha256": "ac89e4ad70b6bf095b0fb87f067c793c366bde2aefffe7b10e6e2aac19402a39",
+    "source": "User explicitly instructed requirement-centric navigation, independent requirements across local code projects and a fixed expandable left sidebar on 2026-10-18."
   }
 }

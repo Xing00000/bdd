@@ -1,5 +1,6 @@
 import type { Page, Locator, TestInfo, Expect, BrowserContext } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
+import {writeFile} from 'node:fs/promises';
 import type { BrowserBinding } from './managed.ts';
 const hash=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 const pageActions=new Set(['goto','reload','goBack','goForward','waitForURL']);
@@ -22,7 +23,7 @@ export class StepEvidence {
   const testKey=this.info.annotations.find(a=>a.type==='workbenchTestId')?.description;
   const task=this.pending.catch(()=>{}).then(async()=>{
    let image:Buffer|undefined,screenshotError:unknown;
-   try{image=await page.screenshot({fullPage:false});await this.info.attach(`action-${index}-L${sourceStepLine}-${error?'failure':'after'}`,{body:image,contentType:'image/png'});}catch(e){screenshotError=e;}
+   try{image=await page.screenshot({fullPage:false});const name=`action-${index}-L${sourceStepLine}-${error?'failure':'after'}`,path=this.info.outputPath(name+'.png');await writeFile(path,image);await this.info.attach(name,{path,contentType:'image/png'});}catch(e){screenshotError=e;}
    const row={runId:this.runId,testDefinitionId:testKey,sourceCaseId:testKey,scenarioId:testKey?.split('/')[1],sourceStepId:`${testKey}:L${sourceStepLine}`,sourceStepLine,actionIndex:index,...identity,label,assertion,moment:error?'failure':keyword==='Given'?'precondition':assertion?'after_assertion':'after_action',status:error?'FAILED':screenshotError?'INCOMPLETE':'COMPLETED',expected:this.json(expected),actual:this.json(actual),error:error?String(error):undefined,screenshotSha256:image?hash(image):null,screenshotError:screenshotError?String(screenshotError):undefined};
    this.actions.push(row);
    if(screenshotError&&!error)throw Error('Required per-action screenshot failed: '+String(screenshotError));

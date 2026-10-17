@@ -12,6 +12,23 @@ function repositoryRoot(){let candidate=dirname(fileURLToPath(import.meta.url));
 const sha=(text:string)=>createHash('sha256').update(text).digest('hex');
 const feature='Feature: HTTP integration persistence\n  @AC-HTTP-001\n  Scenario: Save approved source\n    Given a source document\n    When the document is stored\n    Then its exact bytes are preserved\n';
 
+test('default DbGate binding applies only to its actual canonical database file',async()=>{
+ const root=repositoryRoot(),directory=await mkdtemp(join(root,'.test-fixtures/dbgate-routing-'));
+ const first=join(directory,'first.sqlite'),second=join(directory,'second.sqlite');
+ for(const file of [first,second]){const db=new DatabaseSync(file);db.exec('CREATE TABLE records(value TEXT)');db.close();}
+ const server=await createServer({root,metadataFile:join(directory,'metadata.sqlite'),dataRoot:join(directory,'data'),baseUrl:'http://127.0.0.1:1',dbgate:{url:'http://127.0.0.1:3000/',username:'fixture',password:'fixture-secret',connectionName:'first',databaseFile:first}});
+ try{
+  const project=await server.core.createProject({name:'DbGate routing',workspaceRef:directory});
+  const connections:{id:string}[]=[];
+  for(const file of [first,second]){const response=await server.app.inject({method:'POST',url:`/projects/${project.id}/db-connections`,payload:{sqliteFileRef:file}});assert.equal(response.statusCode,201,response.body);connections.push(response.json());}
+  const list=await server.app.inject({method:'GET',url:`/projects/${project.id}/db-connections`});const rows=list.json();
+  assert.equal(rows.find((row:any)=>row.id===connections[0].id).dbgateConnectionName,'first');
+  assert.equal(rows.find((row:any)=>row.id===connections[1].id).dbgateUrl,null);
+  const refused=await server.app.inject({method:'POST',url:`/db-connections/${connections[1].id}/browser`,payload:{}});assert.equal(refused.statusCode,503);assert.equal(refused.json().code,'DBGATE_NOT_CONFIGURED');
+  const invalid=await server.app.inject({method:'POST',url:`/projects/${project.id}/db-connections`,payload:{sqliteFileRef:second,dbgateUrl:'file:///wrong'}});assert.equal(invalid.statusCode,422);
+ }finally{await server.app.close();await rm(directory,{recursive:true,force:true});}
+});
+
 test('real HTTP adapters persist documents, enforce version-bound workflow, execute SQLite and preserve independent scripts',async()=>{
   const root=repositoryRoot();await mkdir(join(root,'.test-fixtures'),{recursive:true});
   const temporary=await mkdtemp(join(root,'.test-fixtures/http-integration-'));

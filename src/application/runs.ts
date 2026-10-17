@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path';
 import type { Store, Row, SqlCommand } from '../ports/store.ts';
 import type { BrowserRuntimePort, BrowserAttachment } from '../ports/runtime.ts';
 import { CoreError } from '../domain/errors.ts';
+import {projectSources} from '../domain/project-sources.ts';
 import type {TestRunnerPort, PreparedRun} from '../ports/runner.ts';
 import {requiredRecordingSecretAliases,resolveRecordingSecrets,type RecordingSecretResolver} from '../domain/recording-secrets.js';
 
@@ -70,7 +71,16 @@ export function createRuns(options: Options) {
   async function finalize(runId: string, processResult: {code: number; stdout: string; stderr: string} | null, executionError?: unknown) {
     await mutation(async () => {
       const run = await one('SELECT * FROM runs WHERE id=?', [runId]);
-      if (run.status === 'INVALID') return;
+      if (run.status === 'INVALID') {
+        // Invalidation removes result validity; the worker still has a real
+        // lifetime which must finish before its target data can be reused.
+        const environment=JSON.parse(run.environment_snapshot_json);
+        environment.execution={...environment.execution,status:'INVALID',exitCode:processResult?.code??null,
+          error:executionError?redact(String(executionError),recordingSecretValues.get(runId)??[]):null,finishedAt:new Date().toISOString()};
+        await store.run('UPDATE runs SET environment_snapshot_json=? WHERE id=?',[JSON.stringify(environment),runId]);
+        await publish(run,{type:'run.completed',payload:{status:'INVALID'}});
+        return;
+      }
       const data = snapshot(run), results = await store.all('SELECT * FROM case_results WHERE run_id=?', [runId]);
       const receipt = runnerCompletions.get(runId);
       let incomplete = !receipt || results.length !== data.definitions.length || !!executionError;
@@ -135,11 +145,16 @@ export function createRuns(options: Options) {
     if (!['IMPLEMENTATION', 'VERIFICATION', 'VERIFIED'].includes(feature.stage)) fail(409, 'WORKFLOW_GATE_NOT_MET', 'Verification requires a fixed completed test baseline');
     const baseline = await one("SELECT * FROM baselines WHERE id=? AND feature_id=? AND kind='tests'", [body.testBaselineId ?? '', feature.id], 'Test baseline');
     if (!baseline.valid || hash(baseline.manifest_json) !== baseline.sha256 || (body.hash && body.hash !== baseline.sha256) || (body.testBaselineHash && body.testBaselineHash !== baseline.sha256)) fail(409, 'BASELINE_INVALID', 'Test baseline is invalid or its hash does not match');
-    if (typeof body.sourceRef !== 'string' || !body.sourceRef.trim()) fail(422, 'SOURCE_REF_REQUIRED', 'Pin a source revision before verification');
-    const sourceSnapshot = await options.resolveSource(requirement.project_id, body.sourceRef);
-    if (!sourceSnapshot || !/^[0-9a-f]{40,64}$/.test(sourceSnapshot.resolvedCommit)) fail(422, 'INVALID_SOURCE_REF', 'Source must resolve to a real immutable Git commit');
     const sourceBaselines = await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC", [feature.id]);
-    if (sourceBaselines.length && !sourceBaselines.some(row => { const value = JSON.parse(row.manifest_json); return hash(row.manifest_json) === row.sha256 && value.resolvedCommit === sourceSnapshot.resolvedCommit; })) fail(409, 'SOURCE_VERSION_MISMATCH', 'Requested source does not match the pinned source baseline');
+    const projects=await store.all('SELECT p.* FROM projects p JOIN requirement_projects rp ON rp.project_id=p.id WHERE rp.requirement_id=? ORDER BY p.id',[requirementId]);
+    const executionProject=projects.find(p=>p.id===(body.projectId??(projects.length===1?projects[0].id:null)))??fail(422,'PROJECT_REQUIRED','Select the execution project linked to this requirement');
+    const pinned=sourceBaselines[0]?JSON.parse(sourceBaselines[0].manifest_json):null;
+    const requested=body.projects??(projects.length===1&&body.sourceRef?[{projectId:projects[0].id,sourceRef:body.sourceRef}]:pinned?projectSources(pinned,projects.map(p=>p.id)):null);
+    if(!Array.isArray(requested)||requested.length!==projects.length||!requested.length||new Set(requested.map(p=>p.projectId)).size!==requested.length||requested.some(item=>!projects.some(p=>p.id===item.projectId)||typeof item.sourceRef!=='string'||!item.sourceRef.trim()))fail(422,'SOURCE_REF_REQUIRED','Pin a source revision for every linked project');
+    const sourceProjects=await Promise.all(requested.map(async(item:any)=>({projectId:item.projectId,...await options.resolveSource(item.projectId,item.sourceRef)})));sourceProjects.sort((a,b)=>a.projectId.localeCompare(b.projectId));
+    if(sourceProjects.some(p=>!/^[0-9a-f]{40,64}$/.test(p.resolvedCommit)))fail(422,'INVALID_SOURCE_REF','Every project source must resolve to a real immutable Git commit');
+    if(sourceBaselines.length&&!sourceBaselines.some(row=>{const values=projectSources(JSON.parse(row.manifest_json),projects.map(p=>p.id));return hash(row.manifest_json)===row.sha256&&sourceProjects.every(p=>values.some(v=>v.projectId===p.projectId&&v.resolvedCommit===p.resolvedCommit));}))fail(409,'SOURCE_VERSION_MISMATCH','Project versions differ from the pinned source baseline');
+    const sourceSnapshot=sourceProjects.find(p=>p.projectId===executionProject.id)!;
     const versions = await store.all('SELECT v.*,d.kind,d.file_name FROM baseline_documents bd JOIN document_versions v ON v.id=bd.document_version_id JOIN documents d ON d.id=v.document_id WHERE bd.baseline_id=?', [baseline.id]);
     const gherkin = versions.find(version => version.kind === 'gherkin'), sd = versions.find(version => version.kind === 'sd'), specs = versions.filter(version => version.kind === 'spec');
     if (!gherkin || !sd || !specs.length || specs.some(spec => spec.test_stage !== 'COMPLETED')) fail(409, 'BASELINE_INVALID', 'Baseline must fix Gherkin, SD and completed tests');
@@ -167,12 +182,12 @@ export function createRuns(options: Options) {
     if (JSON.stringify(prepared.tests.map(test => test.testKey).sort()) !== JSON.stringify(required.map(test => test.testKey).sort())) fail(422, 'DISCOVERY_BASELINE_MISMATCH', 'Runner discovery differs from the fixed baseline test collection');
     const definition: Snapshot = {gherkinVersionId: gherkin.id, versions: versions.map(version => version.id), definitions: selected, required,
       sourceCases, materializations: prepared.materializations, discovery: prepared.selected, createdAt: new Date().toISOString()};
-    const connection = (await store.all('SELECT * FROM target_connections WHERE project_id=? ORDER BY rowid LIMIT 1', [requirement.project_id]))[0];
+    const connection = (await store.all('SELECT * FROM target_connections WHERE project_id=? ORDER BY rowid LIMIT 1', [executionProject.id]))[0];
     await mutation(async () => {
       const commands: SqlCommand[] = [{sql: 'SELECT id FROM features WHERE id=? AND stage=?', params: [feature.id, feature.stage], mode: 'all', expectRows: 1},
         {sql: 'SELECT id FROM baselines WHERE id=? AND valid=1 AND sha256=?', params: [baseline.id, baseline.sha256], mode: 'all', expectRows: 1},
-        insert('runs', {id: runId, project_id: requirement.project_id, requirement_id: requirementId,feature_id:feature.id, origin: 'target_ci', execution_scope: mode, baseline_id: baseline.id, connection_id: connection?.id ?? null,
-          source_ref: sourceSnapshot.resolvedCommit, definition_snapshot_json: JSON.stringify(definition), environment_snapshot_json: JSON.stringify({runner: 'Playwright', version: '1.64.1', baseUrl: options.baseUrl, targetUrl: connection?.app_base_url ?? null, sourceRef: body.sourceRef, sourceSnapshot, testBaselineHash: baseline.sha256, checks: {parser: 'PASSED', mapping: 'PASSED', discovery: 'PASSED', typecheck: 'NOT_RUN', execution: 'NOT_RUN'}}), status: 'RUNNING'})];
+        insert('runs', {id: runId, project_id: executionProject.id, requirement_id: requirementId,feature_id:feature.id, origin: 'target_ci', execution_scope: mode, baseline_id: baseline.id, connection_id: connection?.id ?? null,
+          source_ref: sourceSnapshot.resolvedCommit, definition_snapshot_json: JSON.stringify(definition), environment_snapshot_json: JSON.stringify({runner: 'Playwright', version: '1.64.1', baseUrl: options.baseUrl, targetUrl: connection?.app_base_url ?? null, sourceRef: sourceSnapshot.sourceRef, sourceSnapshot, projects:sourceProjects,testBaselineHash: baseline.sha256, checks: {parser: 'PASSED', mapping: 'PASSED', discovery: 'PASSED', typecheck: 'NOT_RUN', execution: 'NOT_RUN'}}), status: 'RUNNING'})];
       for (const id of selectedCases) commands.push(insert('run_source_cases', {run_id: runId, source_case_id: id}));
       for (const test of selected) commands.push(insert('run_test_selection', {run_id: runId, test_definition_id: test.id}));
       commands.push({sql: 'UPDATE features SET stage=? WHERE id=?', params: ['VERIFICATION', feature.id]});
@@ -195,7 +210,7 @@ export function createRuns(options: Options) {
       const environment = JSON.parse(run.environment_snapshot_json);
       const app = await browser.create({projectId: run.project_id, workspaceRef: project.workspace_ref, targetUrl: environment.targetUrl ?? connection?.app_base_url ?? undefined});
       let db: BrowserAttachment | undefined;
-      try {if (connection) db = await browser.create({projectId: run.project_id, workspaceRef: project.workspace_ref, targetUrl: new URL('/projects/' + run.project_id + '/db/' + connection.id, options.baseUrl).href});}
+      try {if (connection) db = await browser.create({projectId: run.project_id, workspaceRef: project.workspace_ref, targetUrl: connection.dbgate_url??new URL('/projects/' + run.project_id + '/db/' + connection.id, options.baseUrl).href});}
       catch (error) { await browser.closeSession(app.sessionId); throw error; }
       let sourceSteps: Record<string, string>;
       if (run.execution_scope === 'INDEPENDENT') sourceSteps = {'4': 'recording:4', '5': 'recording:5', '6': 'recording:6'};
@@ -207,7 +222,8 @@ export function createRuns(options: Options) {
     }
     const managed = contexts.get(key)!;
     return {runId, testDefinitionId: test.id, sourceCaseId: test.sourceCaseId, testKey,
-      sourceSteps: managed.sourceSteps, app: managed.app, db: managed.db, dbUiUrl: run.connection_id ? new URL('/projects/' + run.project_id + '/db/' + run.connection_id, options.baseUrl).href : null};
+      projectId: run.project_id, projects: JSON.parse(run.environment_snapshot_json).projects,
+      sourceSteps: managed.sourceSteps, app: managed.app, db: managed.db, dbgateConnectionName:run.connection_id?(await one('SELECT dbgate_connection_name FROM target_connections WHERE id=?',[run.connection_id])).dbgate_connection_name:null, dbUiKind:run.connection_id&&(await one('SELECT dbgate_url FROM target_connections WHERE id=?',[run.connection_id])).dbgate_url?'dbgate':'workbench', dbUiUrl: run.connection_id ? ((await one('SELECT dbgate_url FROM target_connections WHERE id=?',[run.connection_id])).dbgate_url??new URL('/projects/' + run.project_id + '/db/' + run.connection_id, options.baseUrl).href) : null};
   }
 
   async function binding(runId: string) {

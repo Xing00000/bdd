@@ -6,7 +6,8 @@ import { join, resolve, dirname } from 'node:path';
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createServer } from 'node:http';
+import type {TerminalRuntimePort} from '../../src/ports/runtime.ts';
+import type {LlmOptions} from '../../src/adapters/generation/types.ts';
 import { createGenerationAdapters } from '../../src/adapters/generation/index.js';
 import {createGitAdapter} from '../../src/adapters/git/index.ts';
 
@@ -51,8 +52,8 @@ test('two sibling generated bundles remain together in Git with dedicated source
   assert.equal(await readFile(join(repository,file.path),'utf8'),file.rawText);
  }
 });
-async function adapters(llm?: { baseUrl: string; apiKey: string; model: string }) {
-  return createGenerationAdapters({ root, artifactRoot: await mkdtemp(join(tmpdir(), 'workbench-generation-tests-')), llm });
+async function adapters(llm?:LlmOptions,terminal?:TerminalRuntimePort) {
+  return createGenerationAdapters({ root, artifactRoot: await mkdtemp(join(tmpdir(), 'workbench-generation-tests-')), llm,terminal });
 }
 
 test('real bddgen creates discoverable pending TS with exact case mappings without executing uploaded code', async () => {
@@ -130,25 +131,23 @@ test('missing LLM configuration is explicit and never returns fabricated content
   assert.equal(missing.status, 'needs_input'); assert.equal(missing.questions.length, 3);
 });
 
-test('LLM HTTP protocol preserves provider questions and rejects removed acceptance IDs', async () => {
-  const requests: any[] = [];
-  let proposal: any = { status: 'needs_input', questions: ['請補充預期結果。'] };
-  const server = createServer(async (request, response) => {
-    assert.equal(request.url, '/v1/chat/completions'); assert.equal(request.headers.authorization, 'Bearer unit-test-secret');
-    let body = ''; for await (const chunk of request) body += chunk;
-    requests.push(JSON.parse(body));
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(proposal) } }], usage: { total_tokens: 12 } }));
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  try {
-    const address = server.address(); assert.ok(address && typeof address !== 'string');
-    const { llm } = await adapters({ baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: 'unit-test-secret', model: 'protocol-test-only' });
+// Controlled terminal port for proposal validation only; not a real CLI/E2E claim.
+function proposalTerminal(proposal:()=>unknown,requests:{task:string}[]):TerminalRuntimePort {
+ return {async create({workspaceRef}){
+   requests.push({task:await readFile(join(workspaceRef,'task.md'),'utf8')});
+   setImmediate(()=>{void(async()=>{await writeFile(join(workspaceRef,'proposal.json'),JSON.stringify(proposal()));await writeFile(join(workspaceRef,'proposal.ready'),'');})();});
+   return {id:'controlled-terminal-port'};
+ },input(){},resize(){},subscribe(){return ()=>{};},closeTerminal(){},close(){}};
+}
+test('terminal proposals preserve questions and reject removed acceptance IDs', async () => {
+  const requests:{task:string}[]=[];
+  let proposal:any={status:'needs_input',questions:['請補充預期結果。']};
+  const {llm}=await adapters({executable:'controlled-terminal-port'},proposalTerminal(()=>proposal,requests));
     const skeleton = "test('a',{annotation:{type:'workbenchTestId',description:'test-a'}},async()=>{});";
     const result = await llm.complete({ gherkin: feature, sd: 'Expected outcome is not specified.', skeleton });
     assert.equal(result.status, 'needs_input'); assert.deepEqual(result.questions, ['請補充預期結果。']);
     assert.equal(result.proposalOnly, true); assert.equal(result.rawText, undefined);
-    assert.match(requests[0].messages[0].content, /Do not remove/);
+    assert.match(requests[0].task, /Do not remove/);
     proposal = { status: 'completed', questions: [], rawText: "test('other',{annotation:{type:'workbenchTestId',description:'other'}},async()=>{});" };
     await assert.rejects(() => llm.complete({ gherkin: feature, sd: 'SD', skeleton }), (error: any) => error.code === 'LLM_ACCEPTANCE_CHANGED');
     const mapping = { testKey: 'test-extra', scenarioId: 'AC-GEN-001', caseId: 'a' };
@@ -156,26 +155,17 @@ test('LLM HTTP protocol preserves provider questions and rejects removed accepta
     const additional = await llm.complete({ gherkin: feature, sd: 'SD', skeleton });
     assert.deepEqual(additional.mappings, [mapping]);
     assert.equal(additional.proposalOnly, true);
-    assert.match(requests.at(-1).messages[0].content, /explicit mappings to known source/);
+    assert.match(requests.at(-1)!.task, /explicit mappings to known source/);
     proposal.mappings = [{ testKey: 'test-extra', caseId: 'a' }];
     await assert.rejects(() => llm.complete({ gherkin: feature, sd: 'SD', skeleton }),
       (error: any) => error.code === 'LLM_RESPONSE_INVALID' && /未猜測來源/.test(error.message));
-  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
 
 test('generated SD proposals must pass canonical structural validation before acceptance', async () => {
   let rawText='# SD without required chapters';
-  const server=createServer(async (_request,response)=>{
-    response.writeHead(200,{'content-type':'application/json'});
-    response.end(JSON.stringify({choices:[{message:{content:JSON.stringify({status:'completed',questions:[],rawText})}}]}));
-  });
-  await new Promise<void>(resolveListen=>server.listen(0,'127.0.0.1',resolveListen));
-  try{
-    const address=server.address();assert.ok(address&&typeof address!=='string');
-    const {llm}=await adapters({baseUrl:`http://127.0.0.1:${address.port}`,apiKey:'explicit-protocol-fixture',model:'protocol-fixture'});
+  const {llm}=await adapters({executable:'controlled-terminal-port'},proposalTerminal(()=>({status:'completed',questions:[],rawText}),[]));
     await assert.rejects(()=>llm.generateSd({gherkin:feature}),(error:any)=>error.code==='SD_FORMAT_INVALID'&&error.diagnostics.length>0);
     rawText=await readFile(join(root,'spec/REQ-WB-001/workbench/workbench.sd.md'),'utf8');
     const result=await llm.generateSd({gherkin:feature});
     assert.equal(result.status,'completed');assert.equal(result.rawText,rawText);assert.equal(result.proposalOnly,true);
-  }finally{await new Promise<void>((resolveClose,reject)=>server.close(error=>error?reject(error):resolveClose()));}
 });

@@ -6,7 +6,7 @@
 spec/REQ-WB-001/
   review.json                需求文件的目前確認與 hash
   workbench/
-    workbench.feature          驗收條件：28 個 Scenario、44 個案例
+    workbench.feature          驗收條件：29 個 Scenario、45 個案例
     workbench.sd.md            此 Gherkin 專屬設計與測試契約
     workbench.steps.ts         Given / When / Then 操作與斷言
     workbench.feature.spec.ts  從此 Gherkin 生成的 Playwright spec
@@ -52,6 +52,8 @@ npm start
 
 預設 metadata：`.workbench/metadata.sqlite`；執行／圖片／暫存工作區：`.workbench/`。新建 metadata 由真實 SQLite worker migration 初始化；既有不相容資料庫會拒絕啟動，不清空使用者資料。瀏覽器不在安裝或啟動服務時自動下載。
 
+第一次啟動會在需求清單建立一份「預設範例」需求，展示需求與 Gherkin 的關係；它不會綁定任何本機程式碼專案。使用者可在需求清單按「刪除範例」移除。刪除會保留需求文件與執行證據，並記錄刪除狀態，因此服務重啟後不會再次建立。
+
 ## 部署 SQL
 
 ```bash
@@ -80,13 +82,15 @@ npm run test:e2e
 
 ## LLM 與瀏覽器設定
 
-預設使用 terminal 的 Claude CLI：先安裝並在 terminal 登入 `claude`，以 `claude --version` 確認可啟動。無需設定 API key。`WB_LLM_CLI_PATH` 可指定執行檔，`WB_LLM_MODEL` 可選擇模型，未指定時使用 CLI 已有設定。程式以 stdin 傳入資料，使用結構化輸出、停用工具與 MCP，不保留 session；CLI 失敗或逾時會明確報錯，不自動切換 provider。
-
-若明確設定 `WB_LLM_MODE=http`，才使用 Chat Completions 相容協定，要求 `WB_LLM_API_KEY`（或 `OPENAI_API_KEY`）及 `WB_LLM_MODEL`；`WB_LLM_BASE_URL` 可指定端點。秘密值不寫入 Git、UI 或測試報告。
+LLM 只透過網頁 terminal 的互動 Codex CLI 操作。先在 terminal 登入 `codex`，以 `codex login status` 確認；不需要 API key。`WB_LLM_CLI_PATH` 可指定相容執行檔，`WB_LLM_MODEL` 可選填。點生成 SD／補齊 BDD 後，頁面自動連到該次真實 PTY，可看輸出、輸入、回應 CLI 提示或關閉。CLI 在隔離工作目錄讀取 task.md／request.json、寫完 proposal.json 後建立 proposal.ready 提交標記，工作台再做格式、來源與測試檢查。沒有 HTTP LLM provider 或背景模型請求。
 
 補齊輸入固定目前核准 Gherkin／SD、原骨架版本/hash、映射、同專案 step definitions/context 與目標 URL。輸出先經語法、pending/停用測試、ID集合、真實型別與 discovery 檢查；不通過就保存待補稿或回問題。骨架不覆寫，原 test IDs 不可刪或改映射。實作檢查成功仍不代表產品執行通過。
 
-模型須支援本 adapter 使用的 `POST /chat/completions` 與 JSON object 回應格式；其他 provider API 需要另一個 adapter。金鑰透過 server 的私有環境／秘密管理機制注入，無需貼進對話。缺少業務預期、locator 或 fixture 時應補入專案 context，不能讓模型自行弱化已確認條件。長任務保存時會重驗起點文件 head 與確認版本；即使文字 hash 相同，換版仍須重新核對來源。
+缺少業務預期、locator 或 fixture 時補入專案 context，不能讓模型弱化確認條件。長任務保存重驗文件 head 與確認版本；文字相同但換版仍重新核對。CLI 工作目錄不是已確認文件的可寫副本。
+
+DbGate 使用真實 web 服務；server 可設定 `WB_DBGATE_URL`、`WB_DBGATE_CONNECTION_NAME`、`WB_DBGATE_DATABASE_FILE`、`WB_DBGATE_LOGIN`、`WB_DBGATE_PASSWORD`。憑證留在 server；預設 DbGate 僅綁定該 canonical SQLite 檔，其他資料庫須明確設定自己的入口。專用驗收的 `serve-fixtures` 啟動及停止 Docker DbGate；固定 image 與 native SQLite build 定義於 tools/dbgate.Dockerfile。Playwright 在 DbGate 查詢、讀結果及截圖，報告保存 SQL 與 actual／expected、來源識別及圖片。
+
+專用 target fixture 使用 SQLite rollback journal（`DELETE`），由 `initializeTargetDatabase` 在服務啟動前設定；host 網站與 Docker DbGate 不共享 WAL-index 記憶體。[SQLite WAL 的同主機限制](https://www.sqlite.org/wal.html)；工作台 metadata 的 journal 設定由其 adapter 管理。
 
 Chromium 必須使用與 Playwright 1.64.1 相容的正式發行版。執行 E2E 前須安裝正式 Chromium；啟動檢查保留 chromiumSandbox=true。
 
@@ -110,7 +114,7 @@ npm run test:app
 npm run verify
 ```
 
-`tools/verify-app.mjs` 保留命令 logs 至 `test-results/product/checks/`，記錄產品原始碼 hashes，核對目前 BDD manifest 的 implementation hashes，輸出 `test-results/product/verification.json`。單元測試的 HTTP provider fixture、數值斷言或 browser-unavailable 拒絕測試都不是產品 E2E 通過證據。
+`tools/verify-app.mjs` 保留命令 logs 至 `test-results/product/checks/`，記錄產品原始碼 hashes，核對目前 BDD manifest 的 implementation hashes，輸出 `test-results/product/verification.json`。單元測試的受控 terminal port、數值斷言或 browser-unavailable 拒絕測試都不是產品 E2E 通過證據。
 
 執行報告：`GET /runs/:id/report`、`report.json`、`report.html`；逐步圖片 `GET /screenshots/:id`。Native HTML 位於該 run 的私有 artifacts 路徑。零測試、缺步驟／斷言／圖檔、未執行、失敗、失效或中斷皆不能 PASSED；SELECTED_CASES 即使通過，仍 `coverageComplete=false`，需求不能 VERIFIED。
 
@@ -139,7 +143,7 @@ npm test
 - 174 個直接 TypeScript step callbacks，保留所有情境／Examples／testKey 與來源步驟映射；共用 fixtures/helpers 管理 DB 前置、登入、SQL UI、版本保存與證據，沒有 runtime 指令表。
 - AC005 用獨立完整／缺預期資訊 projects；AC015 實際 UI 保存拒絕、資料未變與編輯／執行入口鎖定；AC017～020 真實 DB UI A→B、重新登入、允許／拒絕、重跑還原與失敗圖。
 - AC021 檢查重新開啟的實際 editor 值與所選文件關聯。AC028 的清單、精確兩個 tests、b 未執行、同 run/current test/session/context/page 的 JPEG／canvas／報告／圖片 hash 斷言直接放在 steps；SelectionProbe 僅觀察 WS/畫格與 managed page。
-- `npm run spec:verify` 檢查 44 個案例的來源映射、操作與斷言，產生目前版本的 `test-results/bdd/case-review.json`。
+- `npm run spec:verify` 檢查 45 個案例的來源映射、操作與斷言，產生目前版本的 `test-results/bdd/case-review.json`。
 - 分析器拒絕空 step、缺來源／結果斷言、pending、opcode dispatcher、JSON import 與 literal actual 的假斷言。單元測試包含這些拒絕案例；不能只因 pattern 非空、能列出或型別通過就固定完成。
 - 額外的原生 bddgen runtime probe 讀取真實批准來源檔並斷言 hash：正例通過、故意給錯 hash 的反例失敗；另外驗證缺／歧義 step 拒絕生成與預設產品環境阻擋。這些全部標為工具檢查。
 

@@ -1,16 +1,18 @@
 import { Given, When, Then } from './testing/support/fixtures.ts';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import {mkdtemp} from 'node:fs/promises';
+import {resolve} from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { FixtureDatabase, sha } from './testing/support/database.ts';
 import { SelectionProbe } from './testing/support/selection.ts';
 import { sourceFeature, specText, fixtureSql } from './testing/fixtures/content.ts';
 const phases: Record<string, string> = { 'Gherkin確認': 'GHERKIN', 'SD確認': 'SD', 'test generation/completion': 'TESTS', implementation: 'IMPLEMENTATION', 'verification/report': 'VERIFICATION' };
 // Background; source Gherkin line 9
-Given(/^已選擇工作台的共用專案$/, async ({ sut }) => {
+Given(/^已選擇工作台的需求$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(9, 'Given', async () => {
-        await sut.page.goto(`/projects/${sut.vars.project}/requirements/${sut.vars.requirement}`);
+        await sut.page.goto(`/requirements/${sut.vars.requirement}`);
     });
 });
 // AC-WB-001; source Gherkin line 13
@@ -107,21 +109,21 @@ Then(/^本專案的規格與文件與確認紀錄與測試全部保存在Git$/, 
     });
 });
 // AC-WB-002; source Gherkin line 22
-Given(/^兩位使用者開啟同一個共用專案$/, async ({ sut }) => {
+Given(/^兩位使用者開啟同一個需求$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(22, 'Given', async () => {
         await sut.page.goto(`/projects/${sut.vars.project}/requirements/${sut.vars.requirement}`);
     });
 });
 // AC-WB-002; source Gherkin line 23
-When(/^一位使用者在專案保存Gherkin或SD文件$/, async ({ sut }) => {
+When(/^一位使用者在需求保存Gherkin或SD文件$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(23, 'When', async () => {
         await sut.save({ "kind": "gherkin" });
     });
 });
 // AC-WB-002; source Gherkin line 24
-Then(/^另一位使用者可在該專案讀取相同文件內容$/, async ({ sut }) => {
+Then(/^另一位使用者可在該需求讀取相同文件內容$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(24, 'Then', async () => {
         sut.other = await sut.context.browser()!.newContext({ baseURL: process.env.WB_BASE_URL });
@@ -131,7 +133,7 @@ Then(/^另一位使用者可在該專案讀取相同文件內容$/, async ({ sut
     });
 });
 // AC-WB-003; source Gherkin line 28
-Given(/^工作台顯示專案處於Gherkin確認階段且已有Gherkin草稿$/, async ({ sut }) => {
+Given(/^工作台顯示所選Gherkin處於確認階段且已有草稿$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(28, 'Given', async () => {
         {
@@ -144,15 +146,18 @@ Given(/^工作台顯示專案處於Gherkin確認階段且已有Gherkin草稿$/, 
     });
 });
 // AC-WB-003; source Gherkin line 29
-When(/^人類按下確認Gherkin並要求產生SD$/, async ({ sut }) => {
+When(/^人類按下確認Gherkin並透過網頁terminal的互動CLI要求產生SD$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(29, 'When', async () => {
         {
             await sut.page.getByTestId("confirm-gherkin").click();
         }
         {
+            await sut.provideDesignContext();
             const completed=sut.page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===`/requirements/${sut.vars.requirement}/generate-sd`);
             await sut.page.getByTestId("generate-sd").click();
+            await expect(sut.page.getByTestId("terminal-session-id")).not.toHaveText('');
+            await expect(sut.page.getByTestId("terminal-output")).toContainText(/Codex/, {timeout:30000});
             const response=await completed;expect(response.ok()).toBe(true);
         }
     });
@@ -275,11 +280,13 @@ Given(/^已產生對應確認文件的測試骨架$/, async ({ sut }) => {
     });
 });
 // AC-WB-005; source Gherkin line 47
-When(/^LLM補齊操作步驟與預期結果的測試內容$/, async ({ sut }) => {
+When(/^使用者透過網頁terminal的互動CLI要求LLM補齊操作步驟與預期結果的測試內容$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(47, 'When', async () => {
         const runCompletion = async (db: FixtureDatabase) => {
             await sut.page.goto(`/projects/${db.vars.project}/requirements/${db.vars.requirement}`);
+            await sut.page.getByTestId('step-definitions-upload').setInputFiles('spec/REQ-WB-001/workbench/testing/fixtures/target.steps.ts');
+            await sut.provideCompletionContext();
             const waiting = sut.page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === `/requirements/${db.vars.requirement}/complete-tests`);
             await sut.page.getByTestId('complete-tests').click();
             const response = await waiting;
@@ -287,7 +294,7 @@ When(/^LLM補齊操作步驟與預期結果的測試內容$/, async ({ sut }) =>
             return response.json() as Promise<Record<string, unknown>>;
         };
         await runCompletion(sut.db);
-        await expect(sut.page.getByTestId('test-readiness')).toHaveText('COMPLETED', { timeout: 60000 });
+        await expect(sut.page.getByTestId('test-readiness')).toHaveText('COMPLETED', { timeout: sut.info.timeout });
         const missing = new FixtureDatabase(process.env.WB_METADATA_DB!, sut.targetUrl, process.env.WB_TARGET_DB!, true);
         sut.secondary.push(missing);
         missing.stage('TESTS');
@@ -389,7 +396,7 @@ Then(/^開發完成後可開始驗證該次開發成果$/, async ({ sut }) => {
     });
 });
 // AC-WB-007; source Gherkin line 61
-Given(/^共用專案已有SQLite資料庫連線$/, async ({ sut }) => {
+Given(/^共用專案已設定DbGate網頁入口與SQLite測試資料庫連線$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(61, 'Given', async () => {
         {
@@ -404,7 +411,7 @@ Given(/^共用專案已有SQLite資料庫連線$/, async ({ sut }) => {
     });
 });
 // AC-WB-007; source Gherkin line 62
-When(/^使用者瀏覽schema與資料並執行本次SD內的DDL或DML$/, async ({ sut }) => {
+When(/^使用者透過DbGate瀏覽schema與資料並執行本次SD內的DDL或DML$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(62, 'When', async () => {
         {
@@ -416,22 +423,23 @@ When(/^使用者瀏覽schema與資料並執行本次SD內的DDL或DML$/, async (
     });
 });
 // AC-WB-007; source Gherkin line 63
-Then(/^工作台顯示實際schema與資料及SQL執行結果$/, async ({ sut }) => {
+Then(/^DbGate顯示該測試資料庫的實際schema與資料及SQL執行結果$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(63, 'Then', async () => {
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("B");
+            await expect(sut.dbGateResults()).toContainText("B");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("B"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         {
-            sut.last = await sut.page.getByTestId("sql-execution-state").textContent();
-            await expect(sut.page.getByTestId("sql-execution-state")).toContainText("completed");
+            sut.last = await sut.dbGate!.page.getByText('Finished',{exact:true}).textContent();
+            await expect(sut.dbGate!.page.getByText('Finished',{exact:true})).toContainText("Finished");
         }
         {
-            await sut.page.getByTestId('db-schema-refresh').click();
-            await expect(sut.page.getByTestId('db-schema')).toContainText('test_accounts');
-            await expect(sut.page.getByTestId('db-schema')).toContainText('role_code');
+            await sut.dbGate!.page.getByTestId('SqlObjectList_refreshButton').click();
+            await expect(sut.dbGate!.schema()).toContainText('test_accounts');
+            await sut.queryUi('PRAGMA table_info(test_accounts);');
+            await expect(sut.dbGateResults()).toContainText('role_code');
         }
     });
 });
@@ -443,9 +451,9 @@ Then(/^重新讀取資料庫時可看到實際變更$/, async ({ sut }) => {
             await sut.queryUi("SELECT role_code FROM test_accounts WHERE username='scenario_user';");
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("B");
+            await expect(sut.dbGateResults()).toContainText("B");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("B"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
     });
 });
@@ -1137,7 +1145,7 @@ Given(/^被測專案的測試資料庫有帳號"scenario_user"且角色為"A"與
     });
 });
 // AC-WB-017; source Gherkin line 164
-When(/^spec使用Playwright開啟工作台網頁版DB介面並查詢"scenario_user"$/, async ({ sut }) => {
+When(/^spec使用Playwright開啟專案的DbGate網頁介面並查詢"scenario_user"$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(164, 'When', async () => {
         await sut.queryUi("SELECT role_code,state FROM test_accounts WHERE username='scenario_user';");
@@ -1148,14 +1156,14 @@ Then(/^spec斷言實際查詢資料的角色為"A"且狀態為"active"$/, async 
     const expect = sut.check;
     await sut.step(165, 'Then', async () => {
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("A");
+            await expect(sut.dbGateResults()).toContainText("A");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("A"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("active");
+            await expect(sut.dbGateResults()).toContainText("active");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("active"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         expect(sut.vars.dbRows).toEqual([{ role_code: 'A', state: 'active' }]);
     });
@@ -1179,14 +1187,14 @@ Then(/^只有實際資料斷言符合預期才算該步驟通過$/, async ({ sut
     const expect = sut.check;
     await sut.step(167, 'Then', async () => {
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("A");
+            await expect(sut.dbGateResults()).toContainText("A");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("A"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("active");
+            await expect(sut.dbGateResults()).toContainText("active");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("active"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
     });
 });
@@ -1215,7 +1223,7 @@ Given(/^被測網站角色"A"僅可閱讀測試文件而角色"B"可編輯測試
     });
 });
 // AC-WB-018; source Gherkin line 173
-When(/^spec使用Playwright透過工作台網頁版DB將"scenario_user"角色由"A"改為"B"並保存$/, async ({ sut }) => {
+When(/^spec使用Playwright透過專案的DbGate網頁介面將"scenario_user"角色由"A"改為"B"並保存$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(173, 'When', async () => {
         await sut.queryUi("UPDATE test_accounts SET role_code='B' WHERE username='scenario_user';");
@@ -1229,9 +1237,9 @@ When(/^spec重新查詢測試資料並斷言角色已實際變成"B"$/, async ({
             await sut.queryUi("SELECT role_code FROM test_accounts WHERE username='scenario_user';");
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("B");
+            await expect(sut.dbGateResults()).toContainText("B");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("B"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
     });
 });
@@ -1263,7 +1271,7 @@ When(/^spec在被測網站將"scenario_document"內容改為"edited"並開啟管
         }
         {
             await sut.queryUi('SELECT username,role_code,state FROM test_accounts ORDER BY username;');
-            sut.vars.accountsBefore = await sut.page.getByTestId('db-results').innerText();
+            sut.vars.accountsBefore = await sut.dbGateResults().innerText();
             await sut.target!.getByTestId('manage-accounts-link').click();
             await expect(sut.target!.getByTestId('access-denied')).toBeVisible();
         }
@@ -1282,16 +1290,16 @@ Then(/^spec斷言新登入頁面可看到角色"B"的編輯入口且文件保存
     });
 });
 // AC-WB-018; source Gherkin line 178
-Then(/^spec透過網頁版DB斷言"scenario_document"的實際內容為"edited"$/, async ({ sut }) => {
+Then(/^spec透過DbGate網頁介面斷言"scenario_document"的實際內容為"edited"$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(178, 'Then', async () => {
         {
             await sut.queryUi("SELECT content FROM test_documents WHERE document_key='scenario_document';");
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("edited");
+            await expect(sut.dbGateResults()).toContainText("edited");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("edited"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
     });
 });
@@ -1306,22 +1314,22 @@ Then(/^spec斷言管理帳號頁面顯示拒絕且帳號資料沒有因此變更
             await sut.queryUi("SELECT username,role_code,state FROM test_accounts ORDER BY username;");
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("scenario_user");
+            await expect(sut.dbGateResults()).toContainText("scenario_user");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("scenario_user"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("B");
+            await expect(sut.dbGateResults()).toContainText("B");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("B"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("active");
+            await expect(sut.dbGateResults()).toContainText("active");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("active"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         {
-            expect(await sut.page.getByTestId('db-results').innerText()).toBe(sut.vars.accountsBefore);
+            expect(await sut.dbGateResults().innerText()).toBe(sut.vars.accountsBefore);
         }
     });
 });
@@ -1455,7 +1463,7 @@ Given(/^上一次執行已將測試帳號"scenario_user"改為角色"B"且測試
     });
 });
 // AC-WB-020; source Gherkin line 194
-When(/^spec開始下一次執行並透過網頁版DB將該測試帳號角色設為"A"與"scenario_document"內容設為"initial"$/, async ({ sut }) => {
+When(/^spec開始下一次執行並透過DbGate網頁介面將該測試帳號角色設為"A"與"scenario_document"內容設為"initial"$/, async ({ sut }) => {
     const expect = sut.check;
     await sut.step(194, 'When', async () => {
         await sut.queryUi(fixtureSql);
@@ -1480,17 +1488,17 @@ Then(/^spec斷言測試資料庫中的角色為"A"且"scenario_document"內容�
             await sut.queryUi("SELECT role_code FROM test_accounts WHERE username='scenario_user';");
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("A");
+            await expect(sut.dbGateResults()).toContainText("A");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("A"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
         {
             await sut.queryUi("SELECT content FROM test_documents WHERE document_key='scenario_document';");
         }
         {
-            await expect(sut.page.getByTestId('db-results')).toContainText("initial");
+            await expect(sut.dbGateResults()).toContainText("initial");
             expect((sut.vars.dbRows as Record<string, unknown>[]).some(row => Object.values(row).includes("initial"))).toBe(true);
-            sut.last = await sut.page.getByTestId('db-results').innerText();
+            sut.last = await sut.dbGateResults().innerText();
         }
     });
 });
@@ -1675,7 +1683,7 @@ Then(/^工作台在瀏覽器實際重播已保存的操作與斷言$/, async ({ 
                 sut.last = await response.json();
                 sut.vars.report = sut.last;
                 return (sut.last as Record<string, unknown>).status;
-            }, { timeout: 60000 }).toMatch(/^(PASSED|FAILED|INCOMPLETE|INVALID)$/);
+            }, { timeout: sut.info.timeout }).toMatch(/^(PASSED|FAILED|INCOMPLETE|INVALID)$/);
         }
         {
             const report = sut.vars.report as {
@@ -2159,6 +2167,7 @@ Given(/^專案已有Gherkin情境"AC-DEMO-001"及Examples案例"a"與"b"的spec\
         sut.db.useSkeleton();
         sut.db.stage('TESTS');
         sut.selection = new SelectionProbe(sut.page, sut.db, sut.vars, sut.info, expect);
+        await sut.selection.ready;
         await sut.page.reload();
     });
 });
@@ -2218,8 +2227,10 @@ When(/^使用者在測試已由LLM補齊且測試基線與程式版本已固定�
     const expect = sut.check;
     await sut.step(295, 'When', async () => {
         // Real completion use case; no fixture DB update substitutes for its result.
+        await sut.page.getByTestId('step-definitions-upload').setInputFiles('spec/REQ-WB-001/workbench/testing/fixtures/target.steps.ts');
+        await sut.provideCompletionContext();
         await sut.page.getByTestId('complete-tests').click();
-        await expect(sut.page.getByTestId('test-readiness')).toHaveText('COMPLETED', { timeout: 60000 });
+        await expect(sut.page.getByTestId('test-readiness')).toHaveText('COMPLETED', { timeout: sut.info.timeout });
         const row = sut.db.all('SELECT v.* FROM document_heads h JOIN document_versions v ON v.id=h.version_id WHERE h.document_id=?', [String(sut.vars.specDoc)])[0];
         expect(row.test_stage).toBe('COMPLETED');
         expect(row.source_skeleton_version_id).toBe(sut.vars.specSkeletonVersion);
@@ -2350,4 +2361,142 @@ Then(/^所選案例通過不代表未執行的全專案案例已通過$/, async 
         expect(report.unexecutedTestKeys).toEqual(['test-b']);
         expect(sut.db.all('SELECT stage FROM features WHERE id=?', [String(sut.vars.featureId)])[0].stage).toBe('VERIFICATION');
     });
+});
+// AC-WB-029; source Gherkin line 305
+Given(/^專案已設定DbGate網頁入口且連接該專案的測試資料庫$/,async({sut})=>{
+ const expect=sut.check;await sut.step(305,'Given',async()=>{
+  expect(process.env.WB_DBGATE_URL).toBeTruthy();
+  await sut.queryUi(fixtureSql);
+  await expect(sut.dbGate!.page.getByText('Connected',{exact:true})).toBeVisible();
+ });
+});
+// AC-WB-029; source Gherkin line 306
+Given(/^測試已明確指定查詢SQL與預期欄位值$/,async({sut})=>{
+ const expect=sut.check;await sut.step(306,'Given',async()=>{
+  sut.vars.dbgateSql="SELECT role_code,state FROM test_accounts WHERE username='scenario_user';";
+  sut.vars.dbgateExpected=[{role_code:'A',state:'active'}];
+  expect(sut.vars.dbgateSql).toContain('SELECT');
+ });
+});
+// AC-WB-029; source Gherkin line 307
+When(/^spec使用Playwright在DbGate執行查詢並等待本次結果顯示$/,async({sut})=>{
+ await sut.step(307,'When',async()=>{await sut.queryUi(String(sut.vars.dbgateSql));sut.vars.dbgatePositive=await sut.dbgateRun('positive');});
+});
+// AC-WB-029; source Gherkin line 308
+Then(/^spec從DbGate結果表格讀取實際欄位值並斷言符合預期$/,async({sut})=>{
+ const expect=sut.check;await sut.step(308,'Then',async()=>{
+  expect(sut.vars.dbRows).toEqual(sut.vars.dbgateExpected);
+  expect((sut.vars.dbgatePositive as any).status).toBe('PASSED');
+  await expect(sut.dbGateResults()).toContainText('active');
+ });
+});
+// AC-WB-029; source Gherkin line 309
+Then(/^Playwright擷取本次DbGate查詢與結果表格的畫面$/,async({sut})=>{
+ const expect=sut.check;await sut.step(309,'Then',async()=>{
+  const image=await sut.dbGate!.page.screenshot();await sut.info.attach('DbGate-query-result',{body:image,contentType:'image/png'});
+  expect(image.subarray(1,4).toString()).toBe('PNG');
+ });
+});
+// AC-WB-029; source Gherkin line 310
+Then(/^測試報告保存查詢SQL與預期值及實際值並可開啟對應DbGate截圖$/,async({sut})=>{
+ const expect=sut.check;await sut.step(310,'Then',async()=>{
+  const report=sut.vars.dbgatePositive as any;
+  for(const result of report.cases){
+   expect(result.steps.some((s:any)=>s.actual?.sql===sut.vars.dbgateSql)).toBe(true);
+   expect(result.steps.some((s:any)=>s.assertion&&s.expected==='A'&&s.actual==='A')).toBe(true);
+   for(const step of result.steps)for(const shot of step.screenshots){const response=await sut.page.request.get(`/screenshots/${shot.id}`);expect(response.ok()).toBe(true);expect(sha(await response.body())).toBe(shot.sha256);}
+  }
+ });
+});
+// AC-WB-029; source Gherkin line 311
+Then(/^DbGate截圖與資料斷言對應同一次run與Gherkin情境及案例與step及被驗證程式版本$/,async({sut})=>{
+ const expect=sut.check;await sut.step(311,'Then',async()=>{
+  const report=sut.vars.dbgatePositive as any;expect(report.sourceRef).toBe(sut.vars.sourceRef);
+  for(const result of report.cases){expect(result.scenarioId).toBe('AC-DEMO-001');expect(result.caseId).toMatch(/^[ab]$/);
+   for(const step of result.steps){expect(step.runId).toBe(report.runId);expect(step.testDefinitionId).toBe(result.testDefinitionId);expect(step.sourceCaseId).toBeTruthy();expect(step.sourceStepId).toBeTruthy();expect(step.sessionId).toBeTruthy();expect(step.pageId).toBeTruthy();expect(step.screenshots.length).toBeGreaterThan(0);}
+  }
+ });
+});
+// AC-WB-029; source Gherkin line 312
+Then(/^查詢失敗或資料不符時報告保留失敗結果與錯誤及DbGate畫面$/,async({sut})=>{
+ const expect=sut.check;await sut.step(312,'Then',async()=>{
+  const reports=[];for(const mode of ['query-error','mismatch'] as const){const report=await sut.dbgateRun(mode);reports.push(report);expect(report.status).toBe('FAILED');
+   const failures=report.cases.flatMap((c:any)=>c.steps).filter((s:any)=>s.status==='FAILED');expect(failures.length).toBeGreaterThan(0);
+   for(const failure of failures){expect(failure.error).toBeTruthy();expect(failure.screenshots.some((s:any)=>s.moment==='failure')).toBe(true);}
+  }sut.vars.dbgateFailures=reports;
+ });
+});
+// AC-WB-029; source Gherkin line 313
+Then(/^DbGate無法連線或結果未載入時明確顯示錯誤且不標示資料驗證通過$/,async({sut})=>{
+ const expect=sut.check;await sut.step(313,'Then',async()=>{
+  for(const mode of ['unavailable','not-loaded'] as const){const report=await sut.dbgateRun(mode);expect(report.status).toBe('FAILED');expect(report.cases.flatMap((c:any)=>c.steps).some((s:any)=>s.status==='FAILED'&&s.error)).toBe(true);}
+ });
+});
+// AC-WB-029; source Gherkin line 314
+Then(/^截圖保存成功本身不代表資料斷言通過$/,async({sut})=>{
+ const expect=sut.check;await sut.step(314,'Then',async()=>{
+  for(const report of sut.vars.dbgateFailures as any[]){expect(report.status).toBe('FAILED');expect(report.cases.flatMap((c:any)=>c.steps).some((s:any)=>s.status==='FAILED'&&s.screenshots.length>0)).toBe(true);}
+ });
+});
+
+Given(/^使用者開啟工作台首頁而未先選擇專案$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(318,'Given',async()=>{await sut.page.goto('/requirements');await expect(sut.page.getByRole('heading',{name:'需求工作台',exact:true})).toBeVisible();});
+});
+When(/^使用者從左側固定需求選單新增需求$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(319,'When',async()=>{
+  await sut.page.getByTestId('requirement-sidebar').getByRole('button',{name:'新增需求',exact:true}).click();
+  await sut.page.getByLabel('需求編號').fill('REQ-SIDEBAR-'+sut.vars.requirement);
+  const response=sut.page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/requirements');
+  await sut.page.getByRole('button',{name:'建立',exact:true}).click();const result=await response;expect(result.status()).toBe(201);sut.vars.navigationRequirement=await result.json();
+ });
+});
+Then(/^新需求可直接開啟且不必先建立或選擇專案$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(320,'Then',async()=>{const r=sut.vars.navigationRequirement as any;expect(r.projects).toEqual([]);expect(r.projectId).toBeNull();await expect(sut.page.getByRole('heading',{name:r.requirementKey,exact:true})).toBeVisible();await expect(sut.page.getByTestId('workflow-stage')).toHaveText('Gherkin確認');});
+});
+When(/^使用者在該需求新增第二份Gherkin$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(321,'When',async()=>{await sut.page.getByRole('button',{name:'新增 Gherkin',exact:true}).click();await sut.page.getByLabel('Gherkin 名稱（不含副檔名）').fill('checkout');await sut.page.getByRole('button',{name:'建立',exact:true}).click();await expect(sut.page.getByTestId('feature-select').locator('option')).toHaveCount(2);});
+});
+Then(/^左側需求節點展開列出兩份Gherkin與各自狀態$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(322,'Then',async()=>{const node=sut.page.getByTestId('sidebar-requirement-'+(sut.vars.navigationRequirement as any).id);await expect(node).toHaveAttribute('open','');await expect(node.locator('ul a')).toHaveCount(2);for(const link of await node.locator('ul a').all())await expect(link).toContainText('需求確認');});
+});
+When(/^使用者從左側點選其中一份Gherkin並捲動右側工作區$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(323,'When',async()=>{const node=sut.page.getByTestId('sidebar-requirement-'+(sut.vars.navigationRequirement as any).id);await node.getByRole('link',{name:/checkout/}).click();await expect(sut.page.getByTestId('feature-select').locator('option:checked')).toContainText('checkout');await sut.page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));sut.vars.navigationUrl=sut.page.url();});
+});
+Then(/^左側需求選單維持固定且右側顯示所選Gherkin的文件與流程$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(324,'Then',async()=>{const sidebar=sut.page.getByTestId('requirement-sidebar');expect(await sidebar.evaluate(element=>getComputedStyle(element).position)).toBe('fixed');expect((await sidebar.boundingBox())!.y).toBe(0);await expect(sut.page.getByTestId('feature-select').locator('option:checked')).toContainText('checkout');for(const kind of ['gherkin','sd','spec'])await expect(sut.page.getByTestId(kind+'-editor')).toBeVisible();});
+});
+Then(/^重新載入後仍顯示相同需求及所選Gherkin$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(325,'Then',async()=>{await sut.page.reload();expect(sut.page.url()).toBe(sut.vars.navigationUrl);await expect(sut.page.getByTestId('feature-select').locator('option:checked')).toContainText('checkout');});
+});
+Given(/^兩個程式碼專案已各自綁定不同的本機目錄$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(329,'Given',async()=>{const projects=[];for(const name of ['frontend','backend']){const workspaceRef=await mkdtemp(resolve('.test-fixtures/'+name+'-'));const r=await sut.request('/projects',{name:name+'-'+sut.vars.requirement,workspaceRef},201);projects.push(r);}sut.vars.localProjects=projects;await sut.page.goto(`/requirements/${sut.vars.requirement}`);});
+});
+When(/^使用者在需求中關聯這兩個專案$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(330,'When',async()=>{const projects=sut.vars.localProjects as any[];for(const checkbox of await sut.page.getByRole('checkbox',{name:/^關聯專案 /}).all())await checkbox.uncheck();for(const p of projects)await sut.page.getByRole('checkbox',{name:'關聯專案 '+p.name,exact:true}).check();await sut.page.getByTestId('save-requirement-projects').click();await expect(sut.page.getByTestId('execution-project').locator('option')).toHaveCount(3);});
+});
+Then(/^工作台保留一份需求與其Gherkin及專屬SD和BDD而不按專案複製需求$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(331,'Then',async()=>{const response=await sut.page.request.get(`/requirements/${sut.vars.requirement}`);expect(response.ok()).toBe(true);const r=await response.json();expect(r.projects.map((p:any)=>p.id).sort()).toEqual((sut.vars.localProjects as any[]).map(p=>p.id).sort());expect(r.id).toBe(sut.vars.requirement);for(const kind of ['gherkin','sd','spec']){expect(r.documents[kind].id).toBe(sut.vars[kind+'Doc']);expect(r.documents[kind].projectId).toBeNull();}sut.vars.requirementProjects=r.projects;});
+});
+When(/^使用者在需求開發區切換目前操作專案並開啟terminal$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(332,'When',async()=>{const results=[];for(const p of sut.vars.localProjects as any[]){await sut.page.getByTestId('execution-project').selectOption(p.id);await sut.page.getByTestId('open-terminal').click();await expect(sut.page.getByTestId('terminal-session-id')).not.toBeEmpty();await sut.page.getByTestId('terminal-input').fill('pwd');await sut.page.getByTestId('terminal-input').press('Enter');await expect(sut.page.getByTestId('terminal-output')).toContainText(p.workspaceRef);results.push({projectId:p.id,expected:p.workspaceRef,actual:await sut.page.getByTestId('terminal-output').textContent()});await sut.page.getByRole('button',{name:'關閉',exact:true}).click();}sut.vars.terminalDirectories=results;});
+});
+Then(/^每個terminal的實際工作目錄等於所選專案綁定的本機目錄$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(333,'Then',async()=>{const rows=sut.vars.terminalDirectories as any[];expect(rows).toHaveLength(2);expect(new Set(rows.map(row=>row.expected)).size).toBe(2);for(const row of rows)expect(row.actual).toContain(row.expected);});
+});
+Then(/^專案管理位於固定選單的設定入口且需求不隸屬單一專案$/,async({sut})=>{
+ const expect=sut.check;
+ await sut.step(334,'Then',async()=>{await expect(sut.page.getByTestId('requirement-sidebar').getByRole('link',{name:/專案管理/})).toHaveAttribute('href','/projects');expect(sut.vars.requirementProjects).toHaveLength(2);expect(sut.db.all('PRAGMA table_info(requirements)').some(row=>row.name==='project_id')).toBe(false);});
 });

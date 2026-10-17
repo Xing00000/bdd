@@ -50,13 +50,13 @@ async function git(repo: string, args: string[]) {
 }
 
 /** No operation pushes. A write is made only by the explicit save() application action. */
-export function createGitAdapter({ workspaceRoot }: { workspaceRoot: string }) {
+export function createGitAdapter({ workspaceRoot,registeredRoots=async()=>[] }: { workspaceRoot: string;registeredRoots?:()=>Promise<string[]> }) {
   const rootPromise = realpath(workspaceRoot);
   const writes = new Map<string, Promise<unknown>>();
   async function repository(input: string) {
     if (!input || input.includes('\0')) throw new GitAdapterError('GIT_REPO_INVALID', 'Repository 路徑無效');
     const root = await rootPromise, candidate = await realpath(path.resolve(workspaceRoot, input));
-    if (candidate !== root && !inside(root, candidate)) throw new GitAdapterError('GIT_REPO_OUTSIDE_WORKSPACE', 'Repository 必須位於目前工作區', 403);
+    if (candidate !== root && !inside(root, candidate)&&!(await registeredRoots()).includes(candidate)) throw new GitAdapterError('GIT_REPO_OUTSIDE_WORKSPACE', 'Repository must be a registered local project or inside the managed workspace', 403);
     const top = (await git(candidate, ['rev-parse', '--show-toplevel'])).trim();
     if (await realpath(top) !== candidate) throw new GitAdapterError('GIT_REPO_INVALID', '必須指定 repository 根目錄');
     return candidate;

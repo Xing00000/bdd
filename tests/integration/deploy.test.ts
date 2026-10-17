@@ -6,7 +6,18 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
-import {metadataMigrations,applyMetadataMigrations} from '../../src/adapters/sqlite/migrations.ts';
+import {metadataMigrations,applyMetadataMigrations,migrationSql} from '../../src/adapters/sqlite/migrations.ts';
+
+test('DbGate migration preserves existing project connections without inventing credentials',()=>{
+ const db=new DatabaseSync(':memory:');
+ try{
+  for(const migration of metadataMigrations.slice(0,2))db.exec(migrationSql(migration));
+  db.exec("INSERT INTO projects(id,name,workspace_ref) VALUES('p','existing','workspace'); INSERT INTO target_connections(id,project_id,sqlite_file_ref,environment_label) VALUES('c','p','target.sqlite','test');");
+  applyMetadataMigrations(db);
+  assert.deepEqual({...db.prepare('SELECT sqlite_file_ref,dbgate_url,dbgate_connection_name FROM target_connections WHERE id=?').get('c')},{sqlite_file_ref:'target.sqlite',dbgate_url:null,dbgate_connection_name:null});
+  assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
+ }finally{db.close();}
+});
 
 test('canonical metadata migrations preserve existing records, reject unknown versions and roll back failures',()=>{
   const db=new DatabaseSync(':memory:');
@@ -50,6 +61,7 @@ test('generated deploy bundle migrates real SQLite, preserves data, backs up and
   }
   const backedUp=new DatabaseSync(backup);try{assert.equal(Number(backedUp.prepare('PRAGMA user_version').get()!.user_version),0);}finally{backedUp.close();}
   const manifest=JSON.parse(await readFile(join(bundle,'manifest.json'),'utf8'));
+  assert.equal(await readFile(join(bundle,manifest.dbgate.dockerfile.path),'utf8'),await readFile(join(root,'tools/dbgate.Dockerfile'),'utf8'));
   await appendFile(join(bundle,manifest.migrations[0].ddl.path),'\n-- corruption\n');
   const rejected=join(directory,'must-not-exist.sqlite');
   const invalid=execute(rejected);assert.notEqual(invalid.status,0);assert.match(invalid.stderr,/hash mismatch/);assert.equal(existsSync(rejected),false);

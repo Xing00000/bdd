@@ -6,5 +6,6 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .workbench/
+.mentor/
 dist/
 deploy/

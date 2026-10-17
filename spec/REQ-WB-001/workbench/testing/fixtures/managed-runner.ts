@@ -1,10 +1,13 @@
 import { test as base, expect, chromium, type Page, type TestInfo, type APIRequestContext } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
+import {DbGatePage} from '../support/dbgate.ts';
 import { resolveManagedPage, type Attachment, type BrowserBinding } from '../support/managed.ts';
 export { expect };
-type Execution={runId:string;testDefinitionId:string;sourceCaseId:string;testKey:string;sourceSteps:Record<string,string>;app:Attachment;db:Attachment;dbUiUrl:string};
+type Execution={runId:string;testDefinitionId:string;sourceCaseId:string;testKey:string;sourceSteps:Record<string,string>;app:Attachment;db:Attachment;dbUiUrl:string;dbUiKind?:string;dbgateConnectionName?:string};
 const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 export class ManagedRunner {
+ private dbgate?:DbGatePage;
+ private queryLine=4;
  private queryRows:Record<string,unknown>[]=[];
  private index=0;private bindingSeq=0;private identities=new WeakMap<Page,BrowserBinding>();
  constructor(readonly appPage:Page,readonly dbPage:Page,private execution:Execution,private request:APIRequestContext,private info:TestInfo){this.identities.set(appPage,execution.app);this.identities.set(dbPage,execution.db);}
@@ -25,6 +28,11 @@ export class ManagedRunner {
   }
  }
  async query(sql:string,line=4){
+  this.queryLine=line;
+  if(this.execution.dbUiKind==='dbgate'){
+   if(!this.dbgate){this.dbgate=new DbGatePage(this.dbPage,expect,(label,operation,expected)=>this.capture(this.queryLine,label,this.dbPage,operation,expected));await this.dbgate.open(this.execution.dbUiUrl,this.execution.dbgateConnectionName!);}
+   const result=await this.dbgate.query(sql);this.queryRows=result.rows;return (await this.dbgate.results().count())?this.dbgate.results().innerText():result.messages;
+  }
   await this.capture(line,'db-open',this.dbPage,()=>this.dbPage.goto(this.execution.dbUiUrl));
   await this.capture(line,'sql-input',this.dbPage,()=>this.dbPage.getByTestId('sql-editor').fill(sql));
   const waiting=this.dbPage.waitForResponse(r=>r.request().method()==='POST'&&/\/query$/.test(new URL(r.url()).pathname));
@@ -37,7 +45,7 @@ export class ManagedRunner {
   expect(['A','B']).toContain(role);
   await this.query(`UPDATE test_accounts SET role_code='${role}' WHERE username='scenario_user';`);
   await this.query("SELECT role_code,state FROM test_accounts WHERE username='scenario_user';");
-  await this.capture(4,'db-role',this.dbPage,async()=>{await expect(this.dbPage.getByTestId('db-results')).toContainText(role);const actual=this.queryRows[0]?.role_code;expect(actual).toBe(role);return actual;},role);
+  await this.capture(4,'db-role',this.dbPage,async()=>{await expect(this.dbgate?this.dbgate.results():this.dbPage.getByTestId('db-results')).toContainText(role);const actual=this.queryRows[0]?.role_code;expect(actual).toBe(role);return actual;},role);
   await this.capture(4,'app-open',this.appPage,()=>this.appPage.goto(url));
   if(await this.appPage.getByTestId('logout').isVisible())await this.capture(4,'logout',this.appPage,()=>this.appPage.getByTestId('logout').click());
   await this.capture(4,'username',this.appPage,()=>this.appPage.getByTestId('login-username').fill('scenario_user'));
@@ -56,7 +64,7 @@ export class ManagedRunner {
   if(outcome==='saved'){
    await this.capture(6,'saved',this.appPage,async()=>{await expect(this.appPage.getByTestId('document-saved')).toBeVisible();return this.appPage.getByTestId('document-saved').isVisible();},true);
    await this.query("SELECT content FROM test_documents WHERE document_key='scenario_document';",6);
-   await this.capture(6,'persisted-content',this.dbPage,async()=>{await expect(this.dbPage.getByTestId('db-results')).toContainText('edited');const actual=this.queryRows[0]?.content;expect(actual).toBe('edited');return actual;},'edited');
+   await this.capture(6,'persisted-content',this.dbPage,async()=>{await expect(this.dbgate?this.dbgate.results():this.dbPage.getByTestId('db-results')).toContainText('edited');const actual=this.queryRows[0]?.content;expect(actual).toBe('edited');return actual;},'edited');
   }else{expect(outcome).toBe('denied');await this.capture(6,'denied',this.appPage,async()=>{await expect(this.appPage.getByTestId('document-content')).not.toBeEditable();return this.appPage.getByTestId('document-content').isEditable();},false);}
  }
 }

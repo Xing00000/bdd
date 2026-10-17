@@ -93,6 +93,29 @@ test('verification rejects an unknown Git revision before creating a run', async
   assert.equal((await env.core.store.all('SELECT * FROM runs')).length, 0);
 });
 
+test('legacy single-project source baseline can verify without resubmitting sourceRef after migration',async t=>{
+ const env=await setup(t),ready=await env.completed(),value=JSON.stringify({sourceRef:env.sourceRef,resolvedCommit:env.sourceRef,repositoryRef:env.dir});
+ await env.core.store.run("INSERT INTO baselines(id,requirement_id,feature_id,kind,manifest_json,sha256,valid) VALUES(?,?,?,'source',?,?,1)",['legacy-source',env.req.id,env.req.featureId,value,sha(value)]);
+ const runner=createPlaywrightRunner({root,artifactRoot:env.dir,baseUrl:'http://127.0.0.1:1'}),runs=createRuns({store:env.core.store,browser:noBrowser,runner,root,artifactRoot:env.dir,baseUrl:'http://127.0.0.1:1',resolveSource:env.resolveSource,emit(){}});t.after(()=>runs.close());
+ const result=await runs.verify(env.req.id,{testBaselineId:ready.baseline!.id,selection:{mode:'ALL_REQUIRED',sourceCaseIds:[]}});
+ const report=await runs.wait(result.runId);assert.equal(report.environment.projects[0].resolvedCommit,env.sourceRef);assert.equal(report.environment.projects[0].projectId,env.req.projectId);assert.equal(report.sourceRef,env.sourceRef);
+});
+
+test('invalidating a running verification preserves its actual worker completion time without reviving validity',async t=>{
+ const env=await setup(t),ready=await env.completed();
+ const discovery=createPlaywrightRunner({root,artifactRoot:env.dir,baseUrl:'http://127.0.0.1:1'});
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ const runner:TestRunnerPort={prepare:discovery.prepare,async execute(){await gate;return {code:1,stdout:'',stderr:'explicit controlled worker exit'};},async close(){release();await discovery.close();}};
+ const runs=createRuns({store:env.core.store,browser:noBrowser,runner,root,artifactRoot:env.dir,baseUrl:'http://127.0.0.1:1',resolveSource:env.resolveSource,emit(){}});t.after(()=>runs.close());
+ const run=await runs.verify(env.req.id,{testBaselineId:ready.baseline!.id,sourceRef:env.sourceRef,selection:{mode:'ALL_REQUIRED',sourceCaseIds:[]}});
+ await env.core.store.run("UPDATE runs SET status='INVALID' WHERE id=?",[run.runId]);
+ assert.equal((await runs.report(run.runId)).environment.execution?.finishedAt,undefined);
+ release();const report=await runs.wait(run.runId);
+ assert.equal(report.status,'INVALID');assert.equal(report.coverageComplete,false);
+ assert.equal(report.environment.execution.status,'INVALID');assert.equal(report.environment.execution.exitCode,1);
+ assert(Number.isFinite(Date.parse(report.environment.execution.finishedAt)));
+});
+
 test('independent replay discovers managed fixture from an immutable saved raw script', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'workbench-replay-discovery-')), runner = createPlaywrightRunner({root, artifactRoot: dir, baseUrl: 'http://127.0.0.1:1'});
   t.after(async () => {await runner.close(); await rm(dir, {recursive: true, force: true});});

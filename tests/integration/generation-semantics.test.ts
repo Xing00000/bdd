@@ -47,6 +47,87 @@ test('genuine page actions and observed assertions are discoverable without laun
   assert.equal(receipt.productE2E, 'NOT_RUN');
 });
 
+test('switch proof covers every successful dispatch and respects break, fallthrough and return',async()=>{
+ const validate=await validator();
+ const action="await page.getByTestId('save').click();",outcome="await expect(page.getByTestId('result')).toHaveText('saved');";
+ const prefix="const role=await page.getByTestId('role').innerText();";
+ for(const body of [
+  `${prefix}switch(role){case 'A':${action}break;case 'B':${action}break;default:throw Error('Unsupported role');}${outcome}`,
+  `${prefix}switch(role){case 'A':case 'B':${action}${outcome}return;default:throw Error('Unsupported role');}`,
+  `switch('A'){case 'A':${action}${outcome}break;default:break;}`,
+ ]){const receipt=await validate(spec(body));assert.equal(receipt.passed,true,JSON.stringify(receipt.diagnostics));}
+ for(const body of [
+  `${prefix}switch(role){case 'A':${action}${outcome}break;}`,
+  `${prefix}switch(role){case 'A':${action}${outcome}break;default:break;}`,
+  `${prefix}switch(role){case 'A':${action}${outcome}break;case 'B':${action}break;default:throw Error('Unsupported role');}`,
+  `${prefix}switch(role){case 'A':if(role==='A')break;${action}${outcome}break;default:throw Error('Unsupported role');}`,
+  `${prefix}switch(role){case 'A':${action}return;case 'B':${action}break;default:throw Error('Unsupported role');}${outcome}`,
+  `${prefix}let stop=false;switch(role){case 'A':stop=true;break;default:break;}if(stop)return;${action}${outcome}`,
+  `${prefix}let stop=false;switch(role){case 'A':if(await page.getByTestId('stop').isVisible())stop=true;break;default:break;}if(stop)return;${action}${outcome}`,
+ ]){const receipt=await validate(spec(body));assert.equal(receipt.checks.typecheck,true,JSON.stringify(receipt.diagnostics));assert.equal(receipt.passed,false,'Every successful switch path needs real operations and assertions');}
+});
+
+test('catch entry never reuses state from before a possibly mutating try',async()=>{
+ const validate=await validator();
+ const action="await page.getByTestId('save').click();",outcome="await expect(page.getByTestId('result')).toHaveText('saved');";
+ for(const body of [
+  `let stop=false;try{stop=true;throw Error('x');}catch{}if(stop)return;${action}${outcome}`,
+  `let stop=false;const fail=async()=>{stop=true;throw Error('x');};try{await fail();}catch{}if(stop)return;${action}${outcome}`,
+  `let stop=0;try{stop++;throw Error('x');}catch{}if(stop)return;${action}${outcome}`,
+  `try{stop=true;throw Error('x');}catch{}if(stop)return;${action}${outcome}`,
+ ]){
+  const helper=body.startsWith('try')?'let stop=false;':'';
+  const receipt=await validate(spec(body,helper));
+  assert.equal(receipt.checks.typecheck,true,JSON.stringify(receipt.diagnostics));
+  assert.equal(receipt.passed,false,'Caught mutations cannot hide a successful path that skips operations and assertions');
+ }
+ for(const body of [
+  `try{throw Error('x');}catch{${action}${outcome}}`,
+  `try{throw Error('x');}catch{}${action}${outcome}`,
+  `const expected='saved';try{await page.screenshot();}catch{}${action}await expect(page.getByTestId('result')).toHaveText(expected);`,
+ ]){
+  const receipt=await validate(spec(body));
+  assert.equal(receipt.passed,true,JSON.stringify(receipt.diagnostics));
+ }
+});
+
+test('official BDD invocations resolve reachable registered steps and preserve outcome proof',async()=>{
+ const validate=await validator();
+ const rawText=`import {test} from './semantic.steps.ts';
+test('semantic a',{annotation:{type:'workbenchTestId',description:'semantic-a'}},async({Given,When,Then})=>{
+ await Given('the editor is open');await When('the value is "saved"');await Then('the result is "saved"');
+});`;
+ const steps=(outcome:string,pattern="'the result is {string}'")=>`import {test,createBdd} from 'playwright-bdd';
+import {expect} from '@playwright/test';export {test};const {Given,When,Then}=createBdd(test);
+Given('the editor is open',async({page})=>{await page.goto('http://fixture.invalid');});
+When('the value is {string}',async({page},value:string)=>{await page.getByTestId('editor').fill(value);});
+Then(${pattern},async({page},expected:string)=>{${outcome}});`;
+ const real="await expect(page.getByTestId('result')).toHaveText(expected);";
+ const check=(raw:string,source:string,extra:{path:string;rawText:string}[]=[])=>validate(raw,{files:[{path:'generated/semantic.steps.ts',rawText:source},...extra]});
+ for(const pattern of ["'the result is {string}'",'/^the result is "([^\\"]*)"$/']){
+  const receipt=await check(rawText,steps(real,pattern));assert.equal(receipt.passed,true,JSON.stringify(receipt.diagnostics));assert.equal(receipt.productE2E,'NOT_RUN');
+ }
+ const and=await check(rawText.replace('{Given,When,Then}','{Given,When,And}').replace('await Then(','await And('),steps(real));assert.equal(and.passed,true,JSON.stringify(and.diagnostics));
+ for(const outcome of ["await Promise.resolve();","const value='saved';","expect('saved').toBe('saved');",`try{${real}}catch{}`]){
+  const receipt=await check(rawText,steps(outcome));assert.equal(receipt.passed,false,'BDD outcomes must retain executed observable assertions');
+ }
+ const unawaited=await check(rawText.replace("await Then(","Then("),steps(real));assert.equal(unawaited.passed,false);
+ const ambiguous=await check(rawText,steps(real)+`\nThen('the result is {string}',async({page},expected:string)=>{${real}});`);assert.equal(ambiguous.passed,false);
+ const noOutcome=steps(real).split('Then(\'the result')[0];
+ const detached=`import {test} from './semantic.steps.ts';import {createBdd} from 'playwright-bdd';import {expect} from '@playwright/test';const {Then}=createBdd(test);Then('the result is {string}',async({page},expected:string)=>{${real}});`;
+ const unreachable=await check(rawText,noOutcome,[{path:'generated/unimported.steps.ts',rawText:detached}]);assert.equal(unreachable.passed,false,'Unimported registrations never prove an invoked step');
+ const spoof=steps(real).replace("import {test,createBdd}","import {test as base,createBdd}").replace('export {test};',"const test=base.extend({Then:async({},use)=>{await use(async()=>{});}});export {test};");
+ const spoofed=await check(rawText,spoof);assert.equal(spoofed.checks.typecheck,true,JSON.stringify(spoofed.diagnostics));assert.equal(spoofed.passed,false,'Overridden BDD invokers cannot borrow registered assertions');
+ const useOverride=await check(rawText,steps(real)+"\ntest.use({Then:async({},use)=>{await use(async()=>{});}});");assert.equal(useOverride.checks.typecheck,true,JSON.stringify(useOverride.diagnostics));assert.equal(useOverride.passed,false,'test.use cannot replace a proven BDD invoker');
+ const metadata=await check(rawText+"\ntest.use({$test:[({},use)=>use(test),{scope:'test',box:true}]});",steps(real));assert.equal(metadata.passed,true,JSON.stringify(metadata.diagnostics));
+ const fakeTest=await check(rawText+"\ntest.use({$test:[async({},use)=>{await use(Object.assign(test,{step:async()=>undefined}));},{scope:'test',box:true}]});",steps(real));assert.equal(fakeTest.checks.typecheck,true,JSON.stringify(fakeTest.diagnostics));assert.equal(fakeTest.passed,false,'Metadata cannot replace the real test.step dispatcher');
+ const mutable=await check(rawText,steps(real).replace('const {Given,When,Then}','let {Given,When,Then}').replace("Then('the result", "Then=(()=>{}) as typeof Then;Then('the result"));assert.equal(mutable.passed,false,'Reassigned registrars do not register callbacks');
+ for(const statement of ["import type {Marker} from './hidden.steps.ts';","import {type Marker} from './hidden.steps.ts';","export type {Marker} from './hidden.steps.ts';"]){
+  const typeOnly=rawText.replace("import {test} from './semantic.steps.ts';",`import {test} from 'playwright-bdd';${statement}`);
+  const receipt=await validate(typeOnly,{files:[{path:'generated/hidden.steps.ts',rawText:steps(real)+'\nexport type Marker=string;'}]});assert.equal(receipt.checks.typecheck,true,JSON.stringify(receipt.diagnostics));assert.equal(receipt.passed,false,'Type-only imports/exports never load runtime registrations');
+ }
+});
+
 test('resolved local helpers count only executed callbacks and preserve final outcome assertions', async () => {
   const validate = await validator();
   const helper = `import type {Page} from '@playwright/test';

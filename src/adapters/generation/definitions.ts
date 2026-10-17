@@ -5,6 +5,18 @@ import type { GenerationInput } from './types.js';
 
 export type Definition = { keyword: string; pattern: string; slotId: string; file: string; line: number; column: number };
 export const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+export const stepDefinitionKeywords=new Set(['Given','When','Then','Step']);
+/** Static patterns shared by generation and source proof; never evaluates uploaded code. */
+export function staticStepPattern(node?:ts.Expression):{text:string;value:string|RegExp}|undefined{
+  if(!node)return;
+  if(ts.isStringLiteral(node)||ts.isNoSubstitutionTemplateLiteral(node))return {text:JSON.stringify(node.text),value:node.text};
+  if(ts.isRegularExpressionLiteral(node)){const end=node.text.lastIndexOf('/');return {text:node.text,value:new RegExp(node.text.slice(1,end),node.text.slice(end+1))};}
+  if(ts.isNewExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='RegExp'&&node.arguments?.length&&node.arguments.length<=2
+    &&node.arguments.every(arg=>ts.isStringLiteral(arg)||ts.isNoSubstitutionTemplateLiteral(arg))){
+    const values=node.arguments.map(arg=>(arg as ts.StringLiteral).text);
+    return {text:`new RegExp(${values.map(value=>JSON.stringify(value)).join(',')})`,value:new RegExp(values[0],values[1])};
+  }
+}
 export function syntax(raw: string, file: string): ts.SourceFile {
   const source = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const options: ts.CompilerOptions = { noEmit: true, noResolve: true, target: ts.ScriptTarget.Latest };
@@ -31,18 +43,12 @@ export function definitions(input: GenerationInput['stepDefinitions']) {
     };
     const literal = (node?: ts.Expression): string | undefined => node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : undefined;
     const patternText = (node?: ts.Expression): string | undefined => {
-      if (!node) return;
-      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return JSON.stringify(node.text);
-      if (ts.isRegularExpressionLiteral(node)) return node.text;
-      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'RegExp'
-        && node.arguments?.length && node.arguments.length <= 2 && node.arguments.every(a => literal(a) !== undefined))
-        return `new RegExp(${node.arguments.map(a => JSON.stringify(literal(a))).join(',')})`;
-      return;
+      return staticStepPattern(node)?.text;
     };
     const visit = (node: ts.Node) => {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const keyword = node.expression.text;
-        if (['Given', 'When', 'Then', 'Step'].includes(keyword)) {
+        if (stepDefinitionKeywords.has(keyword)) {
           const pattern = patternText(node.arguments[0]);
           if (!pattern) fail(node, '步驟 pattern 必須是靜態字串、RegExp literal 或靜態 new RegExp；不執行上傳程式推算 pattern');
           const point = source.getLineAndCharacterOfPosition(node.getStart(source));

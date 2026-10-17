@@ -27,10 +27,14 @@ export default class EvidenceReporter implements Reporter {
  async onEnd(result:FullResult){
   if(!this.results.length)return;
   const manifest=JSON.parse(fs.readFileSync('test-results/bdd/manifest.json','utf8'));
-  const expected=manifest.cases.map((c:{testKey:string})=>c.testKey);
+  const excludedScenarioIds=JSON.parse(process.env.WB_BDD_EXCLUDED_SCENARIOS??'[]') as string[];
+  if(!Array.isArray(excludedScenarioIds)||excludedScenarioIds.some(id=>typeof id!=='string'||!manifest.cases.some((c:{scenarioId:string})=>c.scenarioId===id)))throw Error('Invalid BDD scenario exclusion scope');
+  const excluded=new Set(excludedScenarioIds),expected=manifest.cases.filter((c:{scenarioId:string})=>!excluded.has(c.scenarioId)).map((c:{testKey:string})=>c.testKey);
+  if(this.results.some(r=>excludedScenarioIds.some(id=>String(r.testKey).startsWith(`REQ-WB-001/${id}/`))))throw Error('An excluded CLI scenario executed inside the scoped run');
   const passed=canReportPass(result.status,expected,this.results);
   fs.mkdirSync('test-results/bdd',{recursive:true});
-  fs.writeFileSync('test-results/bdd/evidence-chain.json',JSON.stringify({runId:process.env.WB_HARNESS_RUN_ID,scope:'ALL_REQUIRED',productE2E:passed?'PASSED':result.status==='failed'?'FAILED':'INCOMPLETE',coverageComplete:passed,expectedTestKeys:expected,executedTestKeys:this.results.map(r=>r.testKey),unexecutedTestKeys:expected.filter((key:string)=>!this.results.some(r=>r.testKey===key)),sourceManifest:manifest,results:this.results},null,2));
+  const scope=excludedScenarioIds.length?'ALL_REQUIRED_EXCEPT_CLI':'ALL_REQUIRED';
+  fs.writeFileSync('test-results/bdd/evidence-chain.json',JSON.stringify({runId:process.env.WB_HARNESS_RUN_ID,scope,excludedScenarioIds,excludedTestKeys:manifest.cases.filter((c:{scenarioId:string})=>excluded.has(c.scenarioId)).map((c:{testKey:string})=>c.testKey),productE2E:passed?'PASSED':result.status==='failed'?'FAILED':'INCOMPLETE',coverageComplete:passed,expectedTestKeys:expected,executedTestKeys:this.results.map(r=>r.testKey),unexecutedTestKeys:expected.filter((key:string)=>!this.results.some(r=>r.testKey===key)),sourceManifest:manifest,results:this.results},null,2));
   if(result.status==='passed'&&!passed)return {status:'failed' as const};
  }
 }

@@ -1,6 +1,8 @@
 // Source-case review notes: expectations and oracles inspected against the direct TypeScript callbacks.
 // This is review metadata, never an instruction plan or runtime step implementation.
 export const scenarioReviews={
+ '030':['Create independent requirement from fixed sidebar; add and select sibling Gherkin','No project prerequisite; expanded node has distinct children; computed fixed position survives scrolling and selected URL survives reload'],
+ '031':['Link two canonical local code project directories to one requirement and run pwd in both real PTYs','Document identities remain unchanged with requirement ownership; each actual PTY prints the selected registered directory; projects are settings resources'],
  '001':['Git-tracked bootstrap and explicit confirm/complete/start flow','Before confirmation sources stay unchanged; after both confirmations TESTS precedes IMPLEMENTATION'],
  '002':['Independent BrowserContext reads saved Gherkin','Second reader input value equals exact saved bytes'],
  '003':['Confirm Gherkin then request SD through UI','New SD version, architecture/DDL/DML sections; development stays disabled'],
@@ -28,5 +30,6 @@ export const scenarioReviews={
  '025':['Explicit test-a/test-b/test-a-extra mappings saved','Exact spec/hash, a→two tests preserved, b separate; historical source stays pinned after new Gherkin head'],
  '026':['All six syntactically valid but invalid mapping inputs','Specific MAPPING_INVALID diagnostic/test or source ID; no guessed mappings; entire valid source/projections unchanged'],
  '027':['Unassociated independent recording saved and replayed','Nullable requirement/no mapping, exact raw, real executed replay and unchanged target CI'],
+ '029':['Real DbGate query and explicit expected values with nested failure runs','Actual grid values, SQL, expected/actual and image hashes share run/source identity; SQL errors, mismatches and unavailable results never pass'],
  '028':['Pending source list then real completion/pin/select a through UI','Exact two selected test IDs and observed starts; b has no result and NOT_RUN; both real JPEG/canvas/managed tuples and report screenshot hashes match same run; selected pass never marks ALL_REQUIRED or VERIFIED']
 };

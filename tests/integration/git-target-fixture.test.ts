@@ -15,6 +15,7 @@ test('Target website enforces real A/B sessions, persistent edits and management
   const app = createTargetApp({ file, password });
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
   const db = new DatabaseSync(file); t.after(() => db.close());
+  assert.equal((db.prepare('PRAGMA journal_mode').get() as {journal_mode:string}).journal_mode,'delete','Host website and Docker DbGate must not rely on shared WAL-index memory');
   assert.equal((await app.inject({ method: 'POST', url: '/api/login', payload: { username: 'scenario_user', password: 'wrong' } })).statusCode, 401);
   const loginA = await app.inject({ method: 'POST', url: '/api/login', payload: { username: 'scenario_user', password } });
   assert.equal(loginA.statusCode, 200); assert.equal(loginA.json().role, 'A');

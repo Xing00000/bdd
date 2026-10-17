@@ -139,3 +139,32 @@ test('LLM completion cannot rewrite approved SD or export outside its feature di
   assert.deepEqual(await core.getRequirement(r.id),before);
  }
 });
+
+test('multi-project Git receipts remain distinct and CI receives the selected project and complete pinned vector',async t=>{
+ const {core,r,g,sd,project,generation,workspace,git,legacySkeleton}=await setup(t);
+ const second=await core.createProject({name:'Backend',workspaceRef:project.workspaceRef+'/backend'});
+ await core.setRequirementProjects(r.id,[project.id,second.id]);
+ await core.confirm(r.id,'sd',{versionId:sd.versionId,rawSha256:sd.rawSha256});
+ let execution:any;
+ const ext=createExtensions({core,generation,workspace,git,emit:()=>{},executeTargetCi:async(id,body)=>{execution={id,body};return {accepted:true};}});
+ await legacySkeleton();await ext.complete(r.id,{});await ext.beginDevelopment(r.id);
+ await ext.pinSource(r.id,{projects:[{projectId:project.id,sourceRef:'HEAD'},{projectId:second.id,sourceRef:'other'}]});
+ git.save=async({repo}:any)=>({branch:'main',commit:repo===project.workspaceRef?'a'.repeat(40):'b'.repeat(40)});
+ await ext.saveGit(r.id,undefined,project.id);await ext.saveGit(r.id,undefined,second.id);
+ const receipts=await core.store.all('SELECT project_id,commit_sha FROM git_snapshots');assert.equal(receipts.length,2);
+ assert.equal(receipts.find(row=>row.project_id===project.id)!.commit_sha,'a'.repeat(40));assert.equal(receipts.find(row=>row.project_id===second.id)!.commit_sha,'b'.repeat(40));
+ await assert.rejects(ext.runCi(r.id),code('PROJECT_REQUIRED'));
+ await ext.runCi(r.id,undefined,second.id);
+ assert.equal(execution.id,r.id);assert.equal(execution.body.projectId,second.id);assert.equal(execution.body.sourceRef,'b'.repeat(40));
+ assert.deepEqual(execution.body.projects,[{projectId:project.id,sourceRef:'HEAD'},{projectId:second.id,sourceRef:'b'.repeat(40)}].sort((a,b)=>a.projectId.localeCompare(b.projectId)));
+ assert.equal(execution.body.executor,'target_ci');assert.equal(execution.body.selection.mode,'ALL_REQUIRED');
+});
+
+test('snapshot validates the execution project before reading Git or changing the spec head',async t=>{
+ const {core,ext,r,project,git}=await setup(t),second=await core.createProject({name:'Second',workspaceRef:project.workspaceRef+'/second'});
+ await core.setRequirementProjects(r.id,[project.id,second.id]);
+ let reads=0;git.readSnapshot=async()=>{reads++;throw Error('Project must be validated before Git');};
+ const before=await core.getRequirement(r.id),versions=await core.store.all('SELECT id FROM document_versions');
+ for(const projectId of [undefined,'not-linked'])await assert.rejects(ext.snapshot({requirementId:r.id,projectId}),code('PROJECT_REQUIRED'));
+ assert.equal(reads,0);assert.equal((await core.getRequirement(r.id)).documents.spec.versionId,before.documents.spec.versionId);assert.deepEqual(await core.store.all('SELECT id FROM document_versions'),versions);
+});

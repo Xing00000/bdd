@@ -4,11 +4,12 @@ export type SourceCase = {
   caseId?: string; caseKey?: string; case_key?: string; testKey?: string; requirementKey?: string;
   [key: string]: unknown;
 };
-export type LlmOptions = { baseUrl: string; apiKey: string; model: string } | { kind: 'cli'; executable: string; model?: string };
-export type GenerationOptions = { root: string; artifactRoot: string; llm?: LlmOptions };
+export type LlmOptions = { executable: string; model?: string };
+export type TerminalContext={projectId:string;requirementId:string;featureId:string};
+export type GenerationOptions = { root: string; artifactRoot: string; llm?: LlmOptions; terminal?:import('../../ports/runtime.ts').TerminalRuntimePort;onTerminal?:(event:TerminalContext&{terminalId:string;workspaceRef:string})=>void };
 export type GenerationInput = { requirementKey:string; featureKey:string; sd:string; feature: string; stepDefinitions: string | StepDefinitionFile | StepDefinitionFile[]; sourceCases: SourceCase[] };
 export type GenerationResult = { rawText: string; manifest: Record<string, any>; files: { path: string; rawText: string }[]; specPath: string };
-export type LlmInput = { gherkin: string; context?: unknown };
+export type LlmInput = { gherkin: string; context?: unknown;terminalContext?:TerminalContext };
 export type CompletionInput = LlmInput & { sd: string; skeleton: string; skeletonManifest?: Record<string, unknown> };
 export type LlmResult = {
   status: 'completed' | 'needs_input'; rawText?: string; questions: string[];

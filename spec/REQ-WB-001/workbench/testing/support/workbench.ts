@@ -8,7 +8,8 @@ import { SelectionProbe } from './selection.ts';
 import { resolveManagedPage, type Attachment } from './managed.ts';
 import type { SQLInputValue } from 'node:sqlite';
 import { FixtureDatabase, sha } from './database.ts';
-import { sourceFeature, sourceSd, specText, malformedFeature, malformedSpec, fixtureSql, failingSpecText,completionContext } from '../fixtures/content.ts';
+import {DbGatePage} from './dbgate.ts';
+import { sourceFeature, sourceSd, specText, malformedFeature, malformedSpec, fixtureSql, failingSpecText,completionContext,designContext,dbgateSpecText } from '../fixtures/content.ts';
 const phases:Record<string,string>={'Gherkin確認':'GHERKIN','SD確認':'SD','test generation/completion':'TESTS',implementation:'IMPLEMENTATION','verification/report':'VERIFICATION'};
 export class Workbench {
   db:FixtureDatabase;
@@ -21,6 +22,9 @@ export class Workbench {
   sourcesBefore='';
   repoBefore='';
   remote?:Browser;
+  dbGate?:DbGatePage;
+  dbGateRemote?:Browser;
+  dbGateSession?:string;
   target?:Page;
   other?:BrowserContext;
   targetUrl:string;
@@ -83,9 +87,14 @@ export class Workbench {
     for(const d of body.diagnostics){if(code==='SYNTAX_INVALID'){this.check(typeof(d.file??body.file)).toBe('string');this.check(d.line).toBeGreaterThan(0);this.check(d.column).toBeGreaterThan(0);}this.check(d.reason.length).toBeGreaterThan(0);}
   }
   async provideCompletionContext(){
-    const field=this.page.getByLabel('測試補齊 context');
+    const field=this.page.getByLabel('設計與測試 context');
     await this.page.locator('details').filter({has:field}).locator('summary').click();
     await field.fill(JSON.stringify(completionContext()));
+  }
+  async provideDesignContext(){
+    const field=this.page.getByLabel('設計與測試 context');
+    await this.page.locator('details').filter({has:field}).locator('summary').click();
+    await field.fill(JSON.stringify(designContext()));
   }
   async advance(){
     const order=['GHERKIN','SD','TESTS','IMPLEMENTATION','VERIFICATION'];
@@ -94,7 +103,7 @@ export class Workbench {
       if(stage==='VERIFICATION'||stage==='VERIFIED')return;
       if(stage==='GHERKIN')await this.page.getByTestId('confirm-gherkin').click();
       else if(stage==='SD')await this.page.getByTestId('confirm-sd').click();
-      else if(stage==='TESTS'){await this.page.getByTestId('step-definitions-upload').setInputFiles('spec/REQ-WB-001/workbench/testing/fixtures/target.steps.ts');await this.provideCompletionContext();await this.page.getByTestId('generate-tests').click();await this.page.getByTestId('complete-tests').click();await this.check(this.page.getByTestId('test-readiness')).toHaveText('COMPLETED',{timeout:60_000});await this.page.getByTestId('start-development').click();}
+      else if(stage==='TESTS'){await this.page.getByTestId('step-definitions-upload').setInputFiles('spec/REQ-WB-001/workbench/testing/fixtures/target.steps.ts');await this.provideCompletionContext();await this.page.getByTestId('generate-tests').click();await this.page.getByTestId('complete-tests').click();await this.check(this.page.getByTestId('test-readiness')).toHaveText('COMPLETED',{timeout:this.info.timeout});await this.page.getByTestId('start-development').click();}
       else if(stage==='IMPLEMENTATION')await this.requestVerification();
       else throw Error('Unknown workflow stage '+stage);
       await this.check.poll(()=>this.db.all('SELECT stage FROM features WHERE id=?',[String(this.vars.featureId)])[0].stage).toBe(order[order.indexOf(stage)+1]);
@@ -105,6 +114,14 @@ export class Workbench {
     // This target fixture intentionally asserts A while the real account is B; the outer scenario verifies its failed report.
     const raw=failingSpecText(this.targetUrl);this.checkSyntax(raw);
     this.db.replaceFixtureSpec(raw);this.vars={...this.vars,...this.db.vars};this.db.baseline();
+  }
+  async dbgateRun(mode:Parameters<typeof dbgateSpecText>[0]){
+    const db=new FixtureDatabase(process.env.WB_METADATA_DB!,this.targetUrl,process.env.WB_TARGET_DB!);this.secondary.push(db);
+    db.stage('IMPLEMENTATION');db.replaceFixtureSpec(dbgateSpecText(mode));db.baseline();
+    const run=await this.request(`/requirements/${db.vars.requirement}/verify`,{testBaselineId:db.vars.baseline,sourceRef:this.vars.sourceRef,selection:{mode:'ALL_REQUIRED',sourceCaseIds:[]}},[200,201,202]);
+    const id=String(run.runId??run.id);let report:any;
+    await this.check.poll(async()=>{const response=await this.page.request.get(`/runs/${id}/report`);this.check(response.ok()).toBe(true);report=await response.json();return report.status;},{timeout:90000}).toMatch(/^(PASSED|FAILED|INCOMPLETE|INVALID)$/);
+    return report;
   }
   documentSource(db:FixtureDatabase){return JSON.stringify(['gherkin','sd'].map(k=>db.all('SELECT v.* FROM document_heads h JOIN document_versions v ON v.id=h.version_id WHERE h.document_id=?',[db.vars[k+'Doc']])[0]));}
   async saveRecording(unassociated:boolean){
@@ -151,14 +168,20 @@ export class Workbench {
     this.check(tests.length).toBeGreaterThanOrEqual(2);this.vars.productDiscoveredTests=tests.length;
   }
   async queryUi(sql:string){
-    await this.page.goto(`/projects/${this.vars.project}/db/${this.vars.connection}`);
+    if(!this.dbGate){
+      const session=await this.request(`/db-connections/${this.vars.connection}/browser`,{},[200,201]);
+      this.dbGateSession=String(session.id);this.dbGateRemote=await chromium.connect(String(session.playwrightEndpoint));
+      const attachment=session as Attachment;
+      const page=this.tracker.wrapPage(await resolveManagedPage(this.dbGateRemote,attachment),attachment);
+      this.dbGate=new DbGatePage(page,this.check);
+      await this.dbGate.open(process.env.WB_DBGATE_URL!,String(this.vars.targetDb).split('/').at(-1)!);
+    }
     for(const statement of sql.split(';').map(s=>s.trim()).filter(Boolean)){
-      await this.page.getByTestId('sql-editor').fill(statement+';');
-      const waiting=this.page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===`/db-connections/${this.vars.connection}/query`);
-      await this.page.getByTestId('sql-run').click();const response=await waiting;this.check(response.ok()).toBe(true);const result=await response.json();this.vars.dbRows=result.rows??[];this.check(Array.isArray(this.vars.dbRows)).toBe(true);
-      await this.check(this.page.getByTestId('sql-execution-state')).toHaveText('completed');
+      const result=await this.dbGate.query(statement+';');this.last=result;this.vars.dbRows=result.rows;
+      this.check(Array.isArray(this.vars.dbRows)).toBe(true);
     }
   }
+  dbGateResults(){if(!this.dbGate)throw Error('Open DbGate first');return this.dbGate.results();}
   async targetLogin(){
     if(!this.target)this.target=this.tracker.wrapPage(await this.context.newPage());
     await this.target.goto(this.targetUrl);
@@ -211,9 +234,19 @@ export class Workbench {
     this.last=rows;
   }
   async close(){
+    // A single outer Playwright worker does not serialize background runs.
+    // Wait for this scenario's real workers, including invalidated ones.
+    const owned=[this.db,...this.secondary].flatMap(db=>db.all('SELECT id FROM runs WHERE project_id=? AND id!=?',[db.vars.project,db.vars.historicalRun]).map(row=>String(row.id)));
+    if(owned.length)await rawExpect.poll(async()=>{
+      const unfinished=[];
+      for(const id of owned){const response=await this.page.request.get(`/runs/${id}/report`);rawExpect(response.ok()).toBe(true);const report=await response.json();if(!report.environment?.execution?.finishedAt)unfinished.push(id);}
+      return unfinished;
+    },{timeout:90000,message:'Owned run workers must finish before the next scenario reuses the target database'}).toEqual([]);
     await this.selection?.close();
     try{await this.tracker.flush();}catch(error){if(this.info.status==='passed')throw error;}
     await this.info.attach('step-evidence',{body:JSON.stringify({testId:this.info.testId,annotations:this.info.annotations,records:this.records,actions:this.tracker.actions},null,2),contentType:'application/json'});
-    await this.other?.close();await this.remote?.close();for(const db of this.secondary)db.close();this.db.close();
+    await this.other?.close();await this.remote?.close();await this.dbGateRemote?.close();
+    if(this.dbGateSession){const response=await this.page.request.delete(`/browser-sessions/${this.dbGateSession}`);rawExpect(response.ok(),'close DbGate session').toBe(true);}
+    for(const db of this.secondary)db.close();this.db.close();
   }
 }

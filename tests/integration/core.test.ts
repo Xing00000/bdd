@@ -45,7 +45,9 @@ test('migration preserves documented initial schema and applies feature workflow
   const section = sd.split('### 7.1 ')[1].split('### 7.3 ')[0];
   const expected = [...section.matchAll(/~~~sql\n([\s\S]*?)\n~~~/g)].map(m => m[1]).join('\n\n');
   assert.equal(schema, expected);
-  assert.equal((await core.store.all("SELECT count(*) n FROM sqlite_schema WHERE type='table'"))[0].n, 29);
+  assert.equal((await core.store.all("SELECT count(*) n FROM sqlite_schema WHERE type='table'"))[0].n, 30);
+  assert.equal((await core.store.all('PRAGMA table_info(requirements)')).some(row=>row.name==='project_id'),false);
+  assert.equal((await core.store.all('SELECT project_id FROM requirement_projects'))[0].project_id,project.id);
   assert.equal((await core.store.all('PRAGMA foreign_keys'))[0].foreign_keys, 1);
   assert.equal((await core.store.all('PRAGMA journal_mode'))[0].journal_mode, 'wal');
   assert.match(core.sqliteVersion, /^3\./);

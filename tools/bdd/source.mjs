@@ -4,7 +4,7 @@ import ts from 'typescript';
 import { generateMessages } from '@cucumber/gherkin';
 import { IdGenerator, SourceMediaType } from '@cucumber/messages';
 export const reviewPath='spec/REQ-WB-001/review.json';
-const review=JSON.parse(fs.readFileSync(reviewPath,'utf8'));
+export const review=JSON.parse(fs.readFileSync(reviewPath,'utf8'));
 export const feature=review.featurePath;
 export const sd=review.sdPath;
 export const approved={feature:review.featureSha256,sd:review.sdSha256};
@@ -29,7 +29,7 @@ export function sourceCases(){
     if(!caseId)throw Error('Empty case_id');
     return {requirementId:'REQ-WB-001',scenarioId,caseId,scenarioLine:scenario.location.line,exampleLine:row?.line??null,pickleLine:row?.line??scenario.location.line,testKey:`REQ-WB-001/${scenarioId}/${caseId}`,expandedSteps:pickle.steps.map(s=>s.text)};
   });
-  if(scenarios.size!==28||cases.length!==44||new Set(cases.map(c=>c.testKey)).size!==44)throw Error('Approved 28/44 source coverage mismatch');
+  if(scenarios.size!==review.scenarioCount||cases.length!==review.expandedCaseCount||new Set(cases.map(c=>c.testKey)).size!==review.expandedCaseCount||JSON.stringify([...new Set(cases.map(c=>c.scenarioId))].sort())!==JSON.stringify([...review.scenarioIds].sort()))throw Error('Approved source coverage mismatch');
   return cases;
 }
 export function sourceSteps(){
@@ -59,7 +59,7 @@ export function readBddData(text){
   return section.trim().split('\n').map(line=>JSON.parse(line.trim().replace(/,$/,'')));
 }
 export function convert(raw,cases){
-  const metadata=readBddData(raw);if(metadata.length!==44)throw Error('Native generated case count is not 44');
+  const metadata=readBddData(raw);if(metadata.length!==cases.length)throw Error('Native generated case count differs from approved source');
   const source=ts.createSourceFile('native.spec.js',raw,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
   const calls=new Map();
   const walk=node=>{if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='test')calls.set(source.getLineAndCharacterOfPosition(node.getStart(source)).line+1,node);ts.forEachChild(node,walk);};walk(source);

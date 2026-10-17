@@ -22,28 +22,31 @@ export class FixtureDatabase {
     const suffix = randomUUID();
     this.vars = Object.fromEntries(['project','requirement','featureId','gherkinDoc','sdDoc','specDoc','recordingDoc','gherkinVersion','sdVersion','specVersion','specSkeletonVersion','testAExtra','scenario','caseA','caseB','testA','testB','connection','baseline','historicalRun'].map(k => [k, k+'-'+suffix]));
     this.insert('projects',{id:this.vars.project,name:'E2E '+suffix,workspace_ref:process.env.WB_TARGET_REPO??resolve('.test-fixtures/workspace')});
-    this.insert('requirements',{id:this.vars.requirement,project_id:this.vars.project,requirement_key:'REQ-DEMO-001'});
+    this.insert('requirements',{id:this.vars.requirement,requirement_key:'REQ-DEMO-001'});
+    this.insert('requirement_projects',{requirement_id:this.vars.requirement,project_id:this.vars.project});
     this.insert('features',{id:this.vars.featureId,requirement_id:this.vars.requirement,feature_key:'demo',stage:'GHERKIN'});
     for (const [doc,kind,purpose,version,raw] of [
       ['gherkinDoc','gherkin','requirement','gherkinVersion',feature],
       ['sdDoc','sd','requirement','sdVersion',sd],
 
     ]) {
-      this.insert('documents',{id:this.vars[doc],project_id:this.vars.project,requirement_id:this.vars.requirement,feature_id:this.vars.featureId,kind,purpose,file_name:kind==='gherkin'?'demo.feature':kind==='sd'?'demo.sd.md':'demo.spec.ts'});
+      this.insert('documents',{id:this.vars[doc],project_id:null,requirement_id:this.vars.requirement,feature_id:this.vars.featureId,kind,purpose,file_name:kind==='gherkin'?'demo.feature':kind==='sd'?'demo.sd.md':'demo.spec.ts'});
       this.insert('document_versions',{id:this.vars[version],document_id:this.vars[doc],version_no:1,raw_text:raw,raw_sha256:sha(raw),parser_name:kind==='sd'?null:kind==='gherkin'?'@cucumber/gherkin':'typescript',parser_version:kind==='sd'?null:kind==='gherkin'?'39.1.0':'5.9.3',projection_schema_version:1,source_gherkin_version_id:kind==='gherkin'?null:this.vars.gherkinVersion,created_at:new Date().toISOString()});
       this.insert('document_heads',{document_id:this.vars[doc],version_id:this.vars[version]});
     }
-    this.insert('documents',{id:this.vars.specDoc,project_id:this.vars.project,requirement_id:this.vars.requirement,feature_id:this.vars.featureId,kind:'spec',purpose:'target_ci',file_name:'demo.spec.ts'});
+    this.insert('documents',{id:this.vars.specDoc,project_id:null,requirement_id:this.vars.requirement,feature_id:this.vars.featureId,kind:'spec',purpose:'target_ci',file_name:'demo.spec.ts'});
     const skeletonRaw="import { test } from '@playwright/test';\n"+['test-a','test-b','test-a-extra'].map(id=>`test('${id}',{annotation:{type:'workbenchTestId',description:'${id}'}},async()=>{throw Error('UnimplementedStepError: source fixture skeleton');});\n`).join('');
     const mappings=[{testKey:'test-a',scenarioId:'AC-DEMO-001',caseId:'a'},{testKey:'test-a-extra',scenarioId:'AC-DEMO-001',caseId:'a'},{testKey:'test-b',scenarioId:'AC-DEMO-001',caseId:'b'}];
-    const skeletonManifest=JSON.stringify({stage:'SKELETON',sourceGherkinVersionId:this.vars.gherkinVersion,gherkinSha256:sha(feature),sdSha256:sha(sd),specSha256:sha(skeletonRaw),mappings,tests:['test-a','test-b','test-a-extra']});
+    const bundleDirectory='spec/REQ-DEMO-001/demo',specPath=`${bundleDirectory}/demo.feature.spec.ts`;
+    const bundleFiles=[{path:specPath,rawText:skeletonRaw},{path:`${bundleDirectory}/demo.feature`,rawText:feature},{path:`${bundleDirectory}/demo.sd.md`,rawText:sd},...completionContext().files.map(file=>({path:`${bundleDirectory}/${file.path}`,rawText:file.rawText}))];
+    const skeletonManifest=JSON.stringify({stage:'SKELETON',bundleDirectory,specPath,bundleFiles,sourceGherkinVersionId:this.vars.gherkinVersion,gherkinSha256:sha(feature),sdSha256:sha(sd),specSha256:sha(skeletonRaw),mappings,tests:['test-a','test-b','test-a-extra']});
     this.insert('document_versions',{id:this.vars.specSkeletonVersion,document_id:this.vars.specDoc,version_no:1,raw_text:skeletonRaw,raw_sha256:sha(skeletonRaw),parser_name:'typescript',parser_version:'5.9.3',projection_schema_version:1,source_gherkin_version_id:this.vars.gherkinVersion,test_stage:'SKELETON',test_manifest_json:skeletonManifest,test_manifest_sha256:sha(skeletonManifest),created_at:new Date().toISOString()});
     if(missingExpected)this.vars.specVersion=this.vars.specSkeletonVersion;
     else{
       const raw=specText(targetUrl,true), manifest=JSON.stringify({stage:'COMPLETED',sourceSkeletonVersionId:this.vars.specSkeletonVersion,sourceSkeletonSha256:sha(skeletonRaw),sourceSkeletonManifestSha256:sha(skeletonManifest),sourceGherkinVersionId:this.vars.gherkinVersion,gherkinSha256:sha(feature),sdSha256:sha(sd),specSha256:sha(raw),mappings,tests:['test-a','test-b','test-a-extra']});
       this.insert('document_versions',{id:this.vars.specVersion,document_id:this.vars.specDoc,version_no:2,raw_text:raw,raw_sha256:sha(raw),parser_name:'typescript',parser_version:'5.9.3',projection_schema_version:1,source_gherkin_version_id:this.vars.gherkinVersion,test_stage:'COMPLETED',source_skeleton_version_id:this.vars.specSkeletonVersion,test_manifest_json:manifest,test_manifest_sha256:sha(manifest),created_at:new Date().toISOString()});
     }
-    this.db.prepare('UPDATE document_versions SET execution_config_json=? WHERE id=?').run(JSON.stringify({completionContext:{context:completionContext()}}),this.vars.specSkeletonVersion);
+    if(!missingExpected)this.db.prepare('UPDATE document_versions SET execution_config_json=? WHERE id=?').run(JSON.stringify({completionContext:{context:completionContext()}}),this.vars.specSkeletonVersion);
     this.insert('document_heads',{document_id:this.vars.specDoc,version_id:this.vars.specVersion});
     this.insert('documents',{id:this.vars.recordingDoc,project_id:this.vars.project,requirement_id:null,kind:'spec',purpose:'recording',file_name:'recording.spec.ts'});
     this.insert('scenarios',{id:this.vars.scenario,requirement_id:this.vars.requirement,scenario_key:'AC-DEMO-001'});
@@ -70,7 +73,7 @@ export class FixtureDatabase {
       this.insert('test_definitions',{id,spec_version_id:version,test_key:'test-a-extra',title:'test-a-extra',source_line:this.sourceLine(version,'test-a-extra'),source_column:1});
       this.insert('test_case_mappings',{test_definition_id:id,source_case_id:this.vars.caseA});
     }
-    this.insert('target_connections',{id:this.vars.connection,project_id:this.vars.project,sqlite_file_ref:targetDb,environment_label:'test',app_base_url:targetUrl});
+    this.insert('target_connections',{id:this.vars.connection,project_id:this.vars.project,sqlite_file_ref:targetDb,environment_label:'test',app_base_url:targetUrl,dbgate_url:process.env.WB_DBGATE_URL??null,dbgate_connection_name:process.env.WB_DBGATE_URL?targetDb.split('/').at(-1)!:null});
   }
   insert(table:string,row:Record<string,SQLInputValue>){
     const fields=Object.keys(row);
@@ -119,17 +122,17 @@ export class FixtureDatabase {
   snapshot(){
     const p=this.vars.project,r=this.vars.requirement;
     return JSON.stringify({
-      versions:this.all('SELECT v.* FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE d.project_id=? ORDER BY v.id',[p]),
-      heads:this.all('SELECT h.* FROM document_heads h JOIN documents d ON d.id=h.document_id WHERE d.project_id=? ORDER BY h.document_id',[p]),
+      versions:this.all('SELECT v.* FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE (d.project_id=? OR d.requirement_id IN (SELECT requirement_id FROM requirement_projects WHERE project_id=?)) ORDER BY v.id',[p,p]),
+      heads:this.all('SELECT h.* FROM document_heads h JOIN documents d ON d.id=h.document_id WHERE (d.project_id=? OR d.requirement_id IN (SELECT requirement_id FROM requirement_projects WHERE project_id=?)) ORDER BY h.document_id',[p,p]),
       scenarios:this.all('SELECT sv.* FROM scenario_versions sv JOIN scenarios s ON s.id=sv.scenario_id WHERE s.requirement_id=? ORDER BY sv.gherkin_version_id,sv.ordinal',[r]),
-      steps:this.all('SELECT st.* FROM steps st JOIN step_groups g ON g.id=st.group_id JOIN document_versions v ON v.id=g.gherkin_version_id JOIN documents d ON d.id=v.document_id WHERE d.project_id=? ORDER BY st.id',[p]),
+      steps:this.all('SELECT st.* FROM steps st JOIN step_groups g ON g.id=st.group_id JOIN document_versions v ON v.id=g.gherkin_version_id JOIN documents d ON d.id=v.document_id WHERE (d.project_id=? OR d.requirement_id IN (SELECT requirement_id FROM requirement_projects WHERE project_id=?)) ORDER BY st.id',[p,p]),
       cases:this.all('SELECT c.* FROM source_cases c JOIN scenarios s ON s.id=c.scenario_id WHERE s.requirement_id=? ORDER BY c.id',[r]),
       cells:this.all('SELECT e.* FROM example_cells e JOIN source_cases c ON c.id=e.source_case_id JOIN scenarios s ON s.id=c.scenario_id WHERE s.requirement_id=? ORDER BY e.source_case_id,e.column_ordinal',[r]),
-      testDefinitions:this.all('SELECT t.* FROM test_definitions t JOIN document_versions v ON v.id=t.spec_version_id JOIN documents d ON d.id=v.document_id WHERE d.project_id=? ORDER BY t.id',[p]),
+      testDefinitions:this.all('SELECT t.* FROM test_definitions t JOIN document_versions v ON v.id=t.spec_version_id JOIN documents d ON d.id=v.document_id WHERE (d.project_id=? OR d.requirement_id IN (SELECT requirement_id FROM requirement_projects WHERE project_id=?)) ORDER BY t.id',[p,p]),
       exampleTables:this.all('SELECT e.* FROM example_tables e JOIN scenarios s ON s.id=e.scenario_id WHERE s.requirement_id=? ORDER BY e.id',[r]),
       exampleColumns:this.all('SELECT col.* FROM example_columns col JOIN example_tables e ON e.id=col.table_id JOIN scenarios s ON s.id=e.scenario_id WHERE s.requirement_id=? ORDER BY col.table_id,col.ordinal',[r]),
-      stepGroups:this.all('SELECT g.* FROM step_groups g JOIN document_versions v ON v.id=g.gherkin_version_id JOIN documents d ON d.id=v.document_id WHERE d.project_id=? ORDER BY g.id',[p]),
-      mappings:this.all('SELECT m.* FROM test_case_mappings m JOIN test_definitions t ON t.id=m.test_definition_id JOIN document_versions v ON v.id=t.spec_version_id JOIN documents d ON d.id=v.document_id WHERE d.project_id=? ORDER BY m.test_definition_id,m.source_case_id',[p])
+      stepGroups:this.all('SELECT g.* FROM step_groups g JOIN document_versions v ON v.id=g.gherkin_version_id JOIN documents d ON d.id=v.document_id WHERE (d.project_id=? OR d.requirement_id IN (SELECT requirement_id FROM requirement_projects WHERE project_id=?)) ORDER BY g.id',[p,p]),
+      mappings:this.all('SELECT m.* FROM test_case_mappings m JOIN test_definitions t ON t.id=m.test_definition_id JOIN document_versions v ON v.id=t.spec_version_id JOIN documents d ON d.id=v.document_id WHERE (d.project_id=? OR d.requirement_id IN (SELECT requirement_id FROM requirement_projects WHERE project_id=?)) ORDER BY m.test_definition_id,m.source_case_id',[p,p])
     });
   }
   close(){this.db.close();}

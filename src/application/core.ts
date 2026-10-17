@@ -45,7 +45,7 @@ export async function createCore(metadataFile: string) {
   };
   const stageGuard = (id: string, stage: string): SqlCommand => ({ sql: 'SELECT id FROM features WHERE id=? AND stage=?', params: [id, stage], mode: 'all', expectRows: 1 });
   const document = (id: string) => one('SELECT * FROM documents WHERE id=?', [id], 'Document');
-  const requirement = (id: string) => one('SELECT * FROM requirements WHERE id=?', [id], 'Requirement');
+  const requirement = (id: string) => one('SELECT * FROM requirements WHERE id=? AND deleted_at IS NULL', [id], 'Requirement');
   const feature = (id: string) => one('SELECT * FROM features WHERE id=?', [id], 'Feature');
   async function selectFeature(id:string,featureId?:string) {
     await requirement(id);
@@ -81,9 +81,11 @@ export async function createCore(metadataFile: string) {
     for (const c of await store.all('SELECT * FROM confirmations WHERE feature_id=?', [f.id]))
       confirmations[c.kind] = { versionId: c.version_id, rawSha256: c.raw_sha256, confirmedAt: c.confirmed_at };
     const b = (await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='tests' AND valid=1 ORDER BY rowid DESC LIMIT 1", [f.id]))[0];
-    return { id: r.id as string, projectId: r.project_id as string, requirementKey: r.requirement_key as string, featureId:f.id as string,featureKey:f.feature_key as string,features,stage: f.stage as string, documents, confirmations,
+    const projects=await linkedProjects(id);
+    return { id: r.id as string, projectId: projects.length===1?projects[0].id:null, projects,requirementKey: r.requirement_key as string,isExample:Boolean(r.is_default_example), featureId:f.id as string,featureKey:f.feature_key as string,features,stage: f.stage as string, documents, confirmations,
       baseline: b ? { id: b.id, sha256: b.sha256, valid: !!b.valid, manifest: JSON.parse(b.manifest_json) } : null };
   }
+  async function linkedProjects(id:string){return (await store.all('SELECT p.* FROM projects p JOIN requirement_projects rp ON rp.project_id=p.id WHERE rp.requirement_id=? ORDER BY p.rowid',[id])).map(p=>({id:String(p.id),name:String(p.name),workspaceRef:String(p.workspace_ref)}));}
   const invalidation = (id: string, kind: string): SqlCommand[] => {
     const result: SqlCommand[] = [];
     if (kind === 'gherkin') result.push({ sql: 'DELETE FROM confirmations WHERE feature_id=?', params: [id] });
@@ -188,7 +190,8 @@ export async function createCore(metadataFile: string) {
     if (d.kind === 'sd' || standard || sourceId) {
       if (!sourceId) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'A source Gherkin version is required' }]);
       const source = (await store.all('SELECT v.*,d.kind,d.project_id,d.requirement_id,d.feature_id FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=?', [sourceId]))[0];
-      if (!source || source.kind !== 'gherkin' || source.project_id !== d.project_id || source.requirement_id !== d.requirement_id || (d.feature_id && source.feature_id!==d.feature_id))
+      const relatedProject=d.project_id===null||!!(await store.all('SELECT project_id FROM requirement_projects WHERE requirement_id=? AND project_id=?',[d.requirement_id,d.project_id])).length;
+      if (!source || source.kind !== 'gherkin' || !relatedProject || source.requirement_id !== d.requirement_id || (d.feature_id && source.feature_id!==d.feature_id))
         invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Source Gherkin belongs to a different document kind, project or requirement' }]);
       if (d.kind === 'sd' || standard) {
         const guard: SqlCommand = { sql: "SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=c.version_id WHERE c.feature_id=? AND c.kind='gherkin' AND c.version_id=? AND c.raw_sha256=? AND v.raw_sha256=c.raw_sha256", params: [d.feature_id, sourceId, source.raw_sha256], mode: 'all', expectRows: 1 };
@@ -327,6 +330,28 @@ export async function createCore(metadataFile: string) {
     return { requirementId, gherkinVersionId: sourceId, specVersionId: specVersionId ?? null, testBaselineId: query.testBaselineId ?? r.baseline?.id ?? null, readiness,
       scenarios: [...new Set(rendered.map(c => c.scenarioId))].map(id => ({ scenarioId: id, title: rendered.find(c => c.scenarioId === id)!.title, cases: rendered.filter(c => c.scenarioId === id) })), cases: rendered };
   }
+  const defaultExampleGherkin=`Feature: To-do list example
+  @AC-SAMPLE-001
+  Scenario: Add a to-do item
+    Given the to-do list is empty
+    When the user adds an item titled "Buy milk"
+    Then the list shows "Buy milk"
+`;
+  async function ensureDefaultExample(){return mutation(async()=>{
+    const existing=await store.all('SELECT id FROM requirements WHERE is_default_example=1');
+    if(existing.length)return {created:false,requirementId:String(existing[0].id)};
+    const prefix='REQ-SAMPLE-001';let requirementKey=prefix,suffix=1;
+    while((await store.all('SELECT id FROM requirements WHERE requirement_key=?',[requirementKey])).length){suffix++;requirementKey=`${prefix}-${suffix}`;}
+    const requirementId=randomUUID(),featureId=randomUUID(),gherkinDocumentId=randomUUID(),sdDocumentId=randomUUID(),specDocumentId=randomUUID(),gherkinVersionId=randomUUID(),createdAt=new Date().toISOString();
+    const parsed=parseGherkin(defaultExampleGherkin,'todo-list.feature');
+    const commands:SqlCommand[]=[insert('requirements',{id:requirementId,requirement_key:requirementKey,is_default_example:1}),insert('features',{id:featureId,requirement_id:requirementId,feature_key:'todo-list',stage:'GHERKIN'}),
+      insert('documents',{id:gherkinDocumentId,project_id:null,requirement_id:requirementId,feature_id:featureId,kind:'gherkin',purpose:'requirement',file_name:'todo-list.feature'}),
+      insert('documents',{id:sdDocumentId,project_id:null,requirement_id:requirementId,feature_id:featureId,kind:'sd',purpose:'requirement',file_name:'todo-list.sd.md'}),
+      insert('documents',{id:specDocumentId,project_id:null,requirement_id:requirementId,feature_id:featureId,kind:'spec',purpose:'target_ci',file_name:'todo-list.feature.spec.ts'}),
+      insert('document_versions',{id:gherkinVersionId,document_id:gherkinDocumentId,version_no:1,raw_text:defaultExampleGherkin,raw_sha256:sha256(defaultExampleGherkin),parser_name:'@cucumber/gherkin',parser_version:'39.1.0',projection_schema_version:1,created_at:createdAt}),
+      insert('document_heads',{document_id:gherkinDocumentId,version_id:gherkinVersionId}),...await projectionCommands(parsed,gherkinVersionId,requirementId)];
+    await store.batch(commands);return {created:true,requirementId};
+  });}
   return {
     store, sqliteVersion: store.sqliteVersion,
     async listProjects() { return (await store.all('SELECT * FROM projects ORDER BY rowid')).map(p => ({ id: p.id, name: p.name, workspaceRef: p.workspace_ref })); },
@@ -335,29 +360,46 @@ export async function createCore(metadataFile: string) {
       const id = randomUUID(); await store.batch([insert('projects', { id, name: input.name, workspace_ref: input.workspaceRef })]);
       return { id, name: input.name, workspaceRef: input.workspaceRef };
     }); },
-    async listRequirements(projectId: string) { await one('SELECT id FROM projects WHERE id=?', [projectId], 'Project'); return Promise.all((await store.all('SELECT * FROM requirements WHERE project_id=? ORDER BY rowid', [projectId])).map(async r => ({id:r.id,projectId:r.project_id,requirementKey:r.requirement_key,features:(await store.all('SELECT id,feature_key featureKey,stage FROM features WHERE requirement_id=? ORDER BY rowid',[r.id]))}))); },
-    createRequirement(projectId: string, input: { requirementKey: string }) { return mutation(async () => {
-      await one('SELECT id FROM projects WHERE id=?', [projectId], 'Project');
+    async listRequirements(projectId?: string) { if(projectId)await one('SELECT id FROM projects WHERE id=?', [projectId], 'Project'); return Promise.all((await store.all('SELECT r.* FROM requirements r'+(projectId?' JOIN requirement_projects rp ON rp.requirement_id=r.id WHERE rp.project_id=? AND r.deleted_at IS NULL':' WHERE r.deleted_at IS NULL')+' ORDER BY r.rowid',projectId?[projectId]:[])).map(async r => ({id:r.id,requirementKey:r.requirement_key,isExample:Boolean(r.is_default_example),projects:await linkedProjects(r.id),features:(await store.all('SELECT id,feature_key featureKey,stage FROM features WHERE requirement_id=? ORDER BY rowid',[r.id]))}))); },
+    ensureDefaultExample,
+    deleteDefaultExample(id:string){return mutation(async()=>{const row=(await store.all('SELECT id FROM requirements WHERE id=? AND is_default_example=1 AND deleted_at IS NULL',[id]))[0];if(!row)fail(404,'NOT_FOUND','Default example not found');await store.run("UPDATE requirements SET deleted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND is_default_example=1 AND deleted_at IS NULL",[id]);return {id,deleted:true};});},
+    createRequirement(projectId: string|null, input: { requirementKey: string;projectIds?:string[] }) { return mutation(async () => {
+      const projectIds=input.projectIds??(projectId?[projectId]:[]);
+      if(!Array.isArray(projectIds)||projectIds.some(id=>typeof id!=='string')||new Set(projectIds).size!==projectIds.length)fail(400,'INVALID_PROJECTS','projectIds must be a unique array');
+      for(const id of projectIds)await one('SELECT id FROM projects WHERE id=?',[id],'Project');
       if (!input.requirementKey?.trim()) fail(400, 'INVALID_REQUIREMENT', 'requirementKey is required');
-      if ((await store.all('SELECT id FROM requirements WHERE project_id=? AND requirement_key=?', [projectId, input.requirementKey])).length) fail(409, 'REQUIREMENT_EXISTS', 'requirementKey already exists in this project');
-      const id = randomUUID(),featureId=randomUUID(), commands = [insert('requirements', { id, project_id: projectId, requirement_key: input.requirementKey }),insert('features',{id:featureId,requirement_id:id,feature_key:input.requirementKey,stage:'GHERKIN'})];
-      for (const kind of ['gherkin', 'sd', 'spec']) commands.push(insert('documents', { id: randomUUID(), project_id: projectId, requirement_id: id, feature_id:featureId, kind, purpose: kind === 'spec' ? 'target_ci' : 'requirement', file_name: kind === 'gherkin' ? `${input.requirementKey}.feature` : kind === 'sd' ? `${input.requirementKey}.sd.md` : `${input.requirementKey}.feature.spec.ts` }));
+      if ((await store.all('SELECT id FROM requirements WHERE requirement_key=?', [input.requirementKey])).length) fail(409, 'REQUIREMENT_EXISTS', 'requirementKey already exists');
+      const id = randomUUID(),featureId=randomUUID(), commands = [insert('requirements', { id, requirement_key: input.requirementKey }),...projectIds.map(projectId=>insert('requirement_projects',{requirement_id:id,project_id:projectId})),insert('features',{id:featureId,requirement_id:id,feature_key:input.requirementKey,stage:'GHERKIN'})];
+      for (const kind of ['gherkin', 'sd', 'spec']) commands.push(insert('documents', { id: randomUUID(), project_id: null, requirement_id: id, feature_id:featureId, kind, purpose: kind === 'spec' ? 'target_ci' : 'requirement', file_name: kind === 'gherkin' ? `${input.requirementKey}.feature` : kind === 'sd' ? `${input.requirementKey}.sd.md` : `${input.requirementKey}.feature.spec.ts` }));
       await store.batch(commands); return getRequirement(id);
     }); },
+    setRequirementProjects(id:string,projectIds:string[]){return mutation(async()=>{
+      await requirement(id);
+      if(!Array.isArray(projectIds)||projectIds.some(id=>typeof id!=='string')||new Set(projectIds).size!==projectIds.length)fail(400,'INVALID_PROJECTS','projectIds must be a unique array');
+      for(const id of projectIds)await one('SELECT id FROM projects WHERE id=?',[id],'Project');
+      const previous=await linkedProjects(id);
+      if(JSON.stringify(previous.map(p=>p.id).sort())!==JSON.stringify([...projectIds].sort())){
+        const features=await store.all('SELECT * FROM features WHERE requirement_id=?',[id]);
+        await store.batch([{sql:'DELETE FROM requirement_projects WHERE requirement_id=?',params:[id]},...projectIds.map(projectId=>insert('requirement_projects',{requirement_id:id,project_id:projectId})),...features.flatMap(f=>[
+          ...invalidation(f.id,'sd'),{sql:"UPDATE features SET stage=CASE WHEN stage='GHERKIN' THEN stage ELSE 'SD' END WHERE id=?",params:[f.id]},
+        ])]);
+      }
+      return {id,projects:await linkedProjects(id)};
+    });},
     getRequirement, selectFeature, getVersion, structure, scenarioTests,
     createFeature(requirementId:string,input:{featureKey:string}) {return mutation(async()=>{
       const r=await requirement(requirementId);
       if(typeof input.featureKey!=='string'||!input.featureKey.trim()||/[\/\\\0]/.test(input.featureKey))fail(400,'INVALID_FEATURE','A featureKey without path separators is required');
       if((await store.all('SELECT id FROM features WHERE requirement_id=? AND feature_key=?',[requirementId,input.featureKey])).length)fail(409,'FEATURE_EXISTS','Feature already exists');
       const id=randomUUID(),commands=[insert('features',{id,requirement_id:requirementId,feature_key:input.featureKey,stage:'GHERKIN'})];
-      for(const [kind,suffix] of [['gherkin','.feature'],['sd','.sd.md'],['spec','.feature.spec.ts']])commands.push(insert('documents',{id:randomUUID(),project_id:r.project_id,requirement_id:requirementId,feature_id:id,kind,purpose:kind==='spec'?'target_ci':'requirement',file_name:input.featureKey+suffix}));
+      for(const [kind,suffix] of [['gherkin','.feature'],['sd','.sd.md'],['spec','.feature.spec.ts']])commands.push(insert('documents',{id:randomUUID(),project_id:null,requirement_id:requirementId,feature_id:id,kind,purpose:kind==='spec'?'target_ci':'requirement',file_name:input.featureKey+suffix}));
       await store.batch(commands);return getRequirement(requirementId,id);
     });},
     saveVersion(documentId: string, payload: SaveVersionInput) { return mutation(() => saveVersionUnsafe(documentId, payload)); },
     createScript(input: { projectId: string; requirementId?: string | null; purpose: 'recording' | 'integration'; rawText: string; actions?: Record<string, any>[]; sourceGherkinVersionId?: string | null; mappings?: Record<string, any>[]; executionConfig?: Record<string, unknown>; fileName?: string }) { return mutation(async () => {
       await one('SELECT id FROM projects WHERE id=?', [input.projectId], 'Project');
       if (!['recording', 'integration'].includes(input.purpose)) fail(400, 'INVALID_PURPOSE', 'Script purpose must be recording or integration');
-      if (input.requirementId) await one('SELECT id FROM requirements WHERE id=? AND project_id=?', [input.requirementId, input.projectId], 'Requirement');
+      if (input.requirementId) await one('SELECT requirement_id FROM requirement_projects WHERE requirement_id=? AND project_id=?', [input.requirementId, input.projectId], 'Requirement project');
       if (!input.requirementId && (input.sourceGherkinVersionId || input.mappings?.length)) invalid(input.fileName ?? 'script.spec.ts', 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Source mappings require an actual requirement association' }]);
       const id = randomUUID(), d = { id, project_id: input.projectId, requirement_id: input.requirementId ?? null, kind: 'spec', purpose: input.purpose, file_name: input.fileName ?? `${input.purpose}.spec.ts` };
       const result = await saveVersionUnsafe(id, { rawText: input.rawText, sourceGherkinVersionId: input.sourceGherkinVersionId, actions: input.actions, executionConfig: input.executionConfig,

@@ -11,11 +11,11 @@ export class SqliteTargetAdapter implements TargetDatabasePort {
   private requestId = 0;
   private closed = false;
   private readonly workspaceRoot: string;
-  constructor(workspaceRoot: string) { this.workspaceRoot = workspaceRoot; }
+  constructor(workspaceRoot: string,private readonly registeredRoots:()=>Promise<string[]>=async()=>[]) { this.workspaceRoot = workspaceRoot; }
 
   private async request(file: string, operation: 'schema' | 'query', sql?: string, params?: unknown[]): Promise<unknown> {
     if (this.closed) throw new RuntimeAdapterError('RUNTIME_CLOSED', 'Target DB runtime is closed', 409);
-    const canonical = await existingWorkspacePath(this.workspaceRoot, file, 'file');
+    const canonical = await existingWorkspacePath(this.workspaceRoot, file, 'file',await this.registeredRoots());
     if (this.closed) throw new RuntimeAdapterError('RUNTIME_CLOSED', 'Target DB runtime is closed', 409);
     let state = this.workers.get(canonical);
     if (!state) {

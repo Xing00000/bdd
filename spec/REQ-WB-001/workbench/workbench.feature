@@ -1,12 +1,12 @@
 # language: en
-# 待使用者確認；目前只允許Gherkin與簡短階段說明，不含step、spec.ts、SD或產品實作。
-# 核心範圍：28個Scenario ID、44個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
+# 需求為主要工作入口，專案綁定本機程式碼目錄。
+# 核心範圍：31個Scenario ID、47個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
 Feature: 多人共用的BDD軟體開發工作台
-  人類共用專案與集中文件
+  以需求為工作入口，需求可關聯多個綁定本機目錄的程式碼專案
   依Gherkin確認、SD確認、測試產生、開發、驗證的順序工作
 
   Background:
-    Given 已選擇工作台的共用專案
+    Given 已選擇工作台的需求
 
   @AC-WB-001
   Scenario: 本工作台自身依Git中的確認流程開發
@@ -18,15 +18,15 @@ Feature: 多人共用的BDD軟體開發工作台
     And 本專案的規格與文件與確認紀錄與測試全部保存在Git
 
   @AC-WB-002
-  Scenario: 多人使用共用專案與集中文件
-    Given 兩位使用者開啟同一個共用專案
-    When 一位使用者在專案保存Gherkin或SD文件
-    Then 另一位使用者可在該專案讀取相同文件內容
+  Scenario: 多人處理同一需求與集中文件
+    Given 兩位使用者開啟同一個需求
+    When 一位使用者在需求保存Gherkin或SD文件
+    Then 另一位使用者可在該需求讀取相同文件內容
 
   @AC-WB-003
   Scenario: 人類確認Gherkin後才產生SD
-    Given 工作台顯示專案處於Gherkin確認階段且已有Gherkin草稿
-    When 人類按下確認Gherkin並要求產生SD
+    Given 工作台顯示所選Gherkin處於確認階段且已有草稿
+    When 人類按下確認Gherkin並透過網頁terminal的互動CLI要求產生SD
     Then 工作台流程狀態顯示SD確認且開啟SD編輯
     And 產生對應Gherkin的SD草稿供人類確認
     And SD包含程式架構以及本次資料庫DDL與DML內容
@@ -44,7 +44,7 @@ Feature: 多人共用的BDD軟體開發工作台
   @AC-WB-005
   Scenario: LLM補齊測試規格
     Given 已產生對應確認文件的測試骨架
-    When LLM補齊操作步驟與預期結果的測試內容
+    When 使用者透過網頁terminal的互動CLI要求LLM補齊操作步驟與預期結果的測試內容
     Then 補齊的測試仍對應人類已確認的驗收條件
     And 缺少預期結果資訊時列出待補內容而不自行改寫驗收條件
 
@@ -57,10 +57,10 @@ Feature: 多人共用的BDD軟體開發工作台
     And 開發完成後可開始驗證該次開發成果
 
   @AC-WB-007
-  Scenario: 實際操作專案SQLite資料庫
-    Given 共用專案已有SQLite資料庫連線
-    When 使用者瀏覽schema與資料並執行本次SD內的DDL或DML
-    Then 工作台顯示實際schema與資料及SQL執行結果
+  Scenario: 透過DbGate實際操作專案SQLite資料庫
+    Given 共用專案已設定DbGate網頁入口與SQLite測試資料庫連線
+    When 使用者透過DbGate瀏覽schema與資料並執行本次SD內的DDL或DML
+    Then DbGate顯示該測試資料庫的實際schema與資料及SQL執行結果
     And 重新讀取資料庫時可看到實際變更
 
   @AC-WB-008
@@ -159,9 +159,9 @@ Feature: 多人共用的BDD軟體開發工作台
 
   # 以下DB情境只操作被測專案的測試資料庫，不表示操作正式資料庫。
   @AC-WB-017
-  Scenario: spec透過Playwright操作網頁版DB並斷言測試資料
+  Scenario: spec透過Playwright操作DbGate並斷言測試資料
     Given 被測專案的測試資料庫有帳號"scenario_user"且角色為"A"與狀態為"active"
-    When spec使用Playwright開啟工作台網頁版DB介面並查詢"scenario_user"
+    When spec使用Playwright開啟專案的DbGate網頁介面並查詢"scenario_user"
     Then spec斷言實際查詢資料的角色為"A"且狀態為"active"
     And 每個Playwright操作與斷言步驟保存截圖並對應Scenario與step
     And 只有實際資料斷言符合預期才算該步驟通過
@@ -170,12 +170,12 @@ Feature: 多人共用的BDD軟體開發工作台
   Scenario: 修改被測帳號角色後重新登入驗證允許與拒絕的操作
     Given 被測專案的測試帳號"scenario_user"在測試資料庫角色為"A"且已登入被測網站
     And 被測網站角色"A"僅可閱讀測試文件而角色"B"可編輯測試文件但不可管理帳號
-    When spec使用Playwright透過工作台網頁版DB將"scenario_user"角色由"A"改為"B"並保存
+    When spec使用Playwright透過專案的DbGate網頁介面將"scenario_user"角色由"A"改為"B"並保存
     And spec重新查詢測試資料並斷言角色已實際變成"B"
     And spec登出被測網站的舊登入狀態並以"scenario_user"重新登入
     And spec在被測網站將"scenario_document"內容改為"edited"並開啟管理帳號頁面
     Then spec斷言新登入頁面可看到角色"B"的編輯入口且文件保存成功
-    And spec透過網頁版DB斷言"scenario_document"的實際內容為"edited"
+    And spec透過DbGate網頁介面斷言"scenario_document"的實際內容為"edited"
     And spec斷言管理帳號頁面顯示拒絕且帳號資料沒有因此變更
     And spec在前置資料確認與DB變更後及重新登入後保存截圖
     And spec在每個主要操作與斷言步驟保存截圖並關聯實際結果
@@ -191,7 +191,7 @@ Feature: 多人共用的BDD軟體開發工作台
   @AC-WB-020
   Scenario: 重跑前重建明確的測試資料與登入初始狀態
     Given 上一次執行已將測試帳號"scenario_user"改為角色"B"且測試文件內容已變更
-    When spec開始下一次執行並透過網頁版DB將該測試帳號角色設為"A"與"scenario_document"內容設為"initial"
+    When spec開始下一次執行並透過DbGate網頁介面將該測試帳號角色設為"A"與"scenario_document"內容設為"initial"
     And spec結束被測網站上一輪的登入狀態
     Then spec斷言測試資料庫中的角色為"A"且"scenario_document"內容為"initial"
     And Playwright保存本次前置資料初始狀態的截圖
@@ -299,3 +299,36 @@ Feature: 多人共用的BDD軟體開發工作台
     And 各測試的實際斷言與每步截圖及成功或失敗結果均對應本次run與所選情境及案例
     And 只有所選案例的必要測試與斷言及證據完整通過才標示該案例通過
     And 所選案例通過不代表未執行的全專案案例已通過
+
+  @AC-WB-029
+  Scenario: Playwright透過DbGate驗證資料並將DB畫面納入測試報告
+    Given 專案已設定DbGate網頁入口且連接該專案的測試資料庫
+    And 測試已明確指定查詢SQL與預期欄位值
+    When spec使用Playwright在DbGate執行查詢並等待本次結果顯示
+    Then spec從DbGate結果表格讀取實際欄位值並斷言符合預期
+    And Playwright擷取本次DbGate查詢與結果表格的畫面
+    And 測試報告保存查詢SQL與預期值及實際值並可開啟對應DbGate截圖
+    And DbGate截圖與資料斷言對應同一次run與Gherkin情境及案例與step及被驗證程式版本
+    And 查詢失敗或資料不符時報告保留失敗結果與錯誤及DbGate畫面
+    And DbGate無法連線或結果未載入時明確顯示錯誤且不標示資料驗證通過
+    And 截圖保存成功本身不代表資料斷言通過
+
+  @AC-WB-030
+  Scenario: 左側固定需求選單展開各份Gherkin並切換專屬流程
+    Given 使用者開啟工作台首頁而未先選擇專案
+    When 使用者從左側固定需求選單新增需求
+    Then 新需求可直接開啟且不必先建立或選擇專案
+    When 使用者在該需求新增第二份Gherkin
+    Then 左側需求節點展開列出兩份Gherkin與各自狀態
+    When 使用者從左側點選其中一份Gherkin並捲動右側工作區
+    Then 左側需求選單維持固定且右側顯示所選Gherkin的文件與流程
+    And 重新載入後仍顯示相同需求及所選Gherkin
+
+  @AC-WB-031
+  Scenario: 同一需求關聯多個本機程式碼專案
+    Given 兩個程式碼專案已各自綁定不同的本機目錄
+    When 使用者在需求中關聯這兩個專案
+    Then 工作台保留一份需求與其Gherkin及專屬SD和BDD而不按專案複製需求
+    When 使用者在需求開發區切換目前操作專案並開啟terminal
+    Then 每個terminal的實際工作目錄等於所選專案綁定的本機目錄
+    And 專案管理位於固定選單的設定入口且需求不隸屬單一專案

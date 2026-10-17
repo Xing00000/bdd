@@ -1,15 +1,15 @@
 # SD：BDD 軟體開發工作台
 
-版本：0.6；日期：2026-10-17；需求：REQ-WB-001；Gherkin：`workbench.feature`；狀態：**pending approval，待使用者確認**。
+版本：0.8；日期：2026-10-18；需求：REQ-WB-001；Gherkin：`workbench.feature`；狀態：**依使用者本次明確指示實作需求導向、跨專案與固定左側需求選單**。
 
 本文件採用 `src/domain/sd-format.ts` 的統一章節，包含本 Gherkin 的架構、開發檔案、流程、DDL／DML、migration、部署產物與驗收契約。設計與實際執行結果分開；執行結果以 `test-results/` 的當次產物為準。
 
 ## 1. 核准基準與文件歸屬
 
-唯一需求來源為[同目錄 workbench.feature](workbench.feature)，共 **28 個 Scenario ID、44 個展開案例**，AC-WB-001～027 保留並新增 AC-WB-028。本次固定原文 SHA-256：
+唯一需求來源為[同目錄 workbench.feature](workbench.feature)，共 **31 個 Scenario ID、47 個展開案例**，AC-WB-001～031。本次固定原文 SHA-256：
 
 ~~~text
-88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66
+ac89e4ad70b6bf095b0fb87f067c793c366bde2aefffe7b10e6e2aac19402a39
 ~~~
 
 本功能的文件確認狀態由需求層的 [review.json](../review.json) 管理。SD 修改後必須重新確認其 hash；先前的確認不自動套用到本版。
@@ -33,8 +33,8 @@
 | Playwright Test、可替換的 TestGeneratorPort | 依使用者後續指定採 Gherkin → playwright-bdd → 確定性 TS adapter。codegen 只產骨架、明確 pending slots 與來源 manifest；之後 LLM 才產補齊快照。bddgen 9.2.1 原生輸出 .spec.js，adapter 的 TS 型別／識別 metadata 轉換須驗證沒有改變骨架行為；不能聲稱原生產 TS 或已完成驗收。[官方來源](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/src/generate/paths.ts) |
 | Playwright Screencast、Vue canvas | 沿用非 noVNC 方案；公開 page.screencast.start({ onFrame }) 提供 JPEG 畫格，服務自行整合 WS、輸入、語意錄製。API 自 v1.59 提供，後續鎖定相容修補版；沒有 FPS／延遲實測承諾。[官方 Screencast](https://playwright.dev/docs/api/class-screencast#screencast-start) |
 | xterm.js、node-pty | 前者呈現 terminal，後者管理實際 PTY；node-pty 不是沙箱，使用既有雲端工作區的隔離及執行能力。[xterm](https://xtermjs.org/docs/)、[node-pty](https://github.com/microsoft/node-pty) |
-| Terminal LLM CLI | 預設啟動已安裝且已登入的 `claude`；以 stdin 傳入需求資料，使用 `--print --output-format json --json-schema` 結構化輸出，停用工具、MCP 與 session 持久化。CLI 失敗／逾時明確回錯，不切換 provider。`WB_LLM_CLI_PATH` 指定執行檔，選填 `WB_LLM_MODEL`；不要求 API key。HTTP 僅在明確選擇 `WB_LLM_MODE=http` 時使用。 |
-| DB／LLM ports | 首版 SQLite；未來不同 DB 的 schema／query adapter 及不同 LLM provider 可替換，不先建通用 provider 管理或其他 DB 實作。 |
+| Terminal LLM CLI | 依使用者指定，LLM 只由網頁 terminal 的真實 PTY 啟動可互動 CLI。預設已登入的 Codex CLI，`WB_LLM_CLI_PATH` 可指定相容執行檔，模型沿用 CLI 設定或明確傳入 `WB_LLM_MODEL`。工作台不保留 HTTP LLM provider，不呼叫模型 API，也不要求 API key。使用者可輸入、回應 CLI 提示、繼續操作或中止。 |
+| DbGate | 使用官方 DbGate web 操作專案測試 SQLite，Playwright 從真實結果表格讀值、斷言及截圖。服務 URL、連線顯示名稱與憑證由設定提供；憑證不送入 UI 或報告。[官方設定](https://docs.dbgate.io/dbgate/customization/env-variables/index.html) |
 
 生成器重用官方 Gherkin parser／Pickles 與公開 Playwright Test API。step registry 在 codegen 只宣告確切 pattern、參數與 slot ID；未註冊或歧義會阻擋生成，已註冊但尚未補齊則可生成骨架。此類 stub 若被執行須拋明確 UnimplementedStepError，不得空函式、skip 或假斷言。codegen 的型別／discovery 成功不等於補齊完成或 E2E 通過。
 
@@ -117,6 +117,22 @@ test-results/bdd/            最新 manifest、中間檔與執行結果
 | `tools/` | build／start 配套；`deploy.mjs` 產生部署 bundle，`migrate.mjs` 為 bundle 執行器來源，細節見 §7.5。 |
 | `workbench.steps.ts`、`testing/` | 功能的驗收操作、斷言及專用工具；生成 spec 透過 BDD 註冊呼叫。 |
 | `deploy/` | 生成產物，不人工編輯、不存密碼、不混入測試 fixture。 |
+
+### 3.2 需求工作台、固定側欄與本機專案
+
+需求是主要工作單位，專案是綁定本機既有程式碼目錄的資源。`requirements` 不再持有 `project_id`；`requirement_projects` 是多對多關聯的唯一 owner。一份需求保有一組 Gherkin 功能，各功能各有專屬 SD、BDD、確認、階段、基線及結果。關聯兩個專案不複製需求或其文件。
+
+- 首頁 `/requirements` 顯示所有需求；可先建立需求，再關聯零個或多個專案。
+- 左側固定 sidebar 是主要導覽。各需求節點預設展開，列出各份 Gherkin 名稱與自己的階段；右側捲動不移走側欄。窄螢幕以固定按鈕開啟同一個側欄，具有鍵盤可操作的原生 details／summary 與連結。
+- 點選 Gherkin 進入 `/requirements/:id?featureId=:featureId`；重新載入仍使用該需求與 Gherkin。右側集中顯示相關專案、Gherkin、SD、BDD、開發、terminal、同次執行畫面及報告。
+- 專案管理放在側欄底部設定入口 `/projects`。專案必須綁定使用者明確提供的既有絕對目錄，以 realpath 正規化；不另外建立程式碼副本或空的 source 專案。相同 canonical 目錄不可重複註冊。
+- 需求中的目前操作專案只能選關聯專案。terminal 的 cwd 是該專案實際目錄；檔案編輯使用專案內相對路徑並拒絕 traversal、.git 及 symlink 越界。
+- 來源基線一次固定所有關聯專案的 project ID、目錄、真實 Git commit 與 tree。不同 revision 文字解析為相同 commit 不使結果失效；任何涉及專案的 commit 改變都使既有結果失效。未提交或不在指定 commit 內的程式碼不可冒充固定版本。
+- 跨專案驗證在同一需求／Gherkin 下執行；明確選擇主要網站的操作專案，保留所有關聯專案的版本向量。只固定一個專案不能代表整個跨專案需求的來源已固定。
+- 修改關聯專案會影響 SD 的開發目錄／資料庫／部署範圍，因此保留 Gherkin 確認，回到 SD（原 GHERKIN 階段維持），使 SD 確認及下游基線／結果失效。原文件與執行證據保留原識別。
+- 需求文件及其廣播以 requirement ID／feature ID 歸屬，不以目前選到哪個專案決定 owner。專案獨立錄製／整合測試仍歸自己的實際程式碼專案。
+
+本次開發檔案：`src/adapters/sqlite/requirements.ts`（migration 0004／0005）、`src/application/core.ts`（需求／關聯）、`extensions.ts`（多專案來源及目錄操作）、`runs.ts`（完整版本向量）、`src/adapters/workspace.ts`、runtime 與 Git 的已註冊專案路徑驗證、`src/http/server.ts`（全域需求 API／事件）、`ui/src/RequirementSidebar.vue`、`App.vue`、`style.css` 及本功能的專用驗收與回歸測試。
 
 ## 4. 階段、確認與失效
 
@@ -220,7 +236,7 @@ SaveDocument 先判斷文件種類與用途，取得 UTF-8 原文，在記憶體
 
 ## 7. 資料庫 DDL／DML 與 migration
 
-metadata.db 保存產品資料；target_connections 指向另一份被測專案 SQLite。DDL dialect 為 SQLite；產品使用 Node.js 24 的 node:sqlite，worker 回傳實際 sqliteVersion，不將未鎖定的 SQLite patch 版本寫成已驗證版本。可執行 schema owner 為 `src/adapters/sqlite/schema.ts`；目前 worker 只支援空 DB（user_version=0）初始化成 user_version=1，其他版本拒絕啟動。每個 connection 在 transaction 外啟用 foreign_keys；TEXT 主鍵明訂 NOT NULL，複合 FK 指向明確 PRIMARY KEY／UNIQUE。[SQLite FK](https://sqlite.org/foreignkeys.html)、[NULL 與唯一性](https://sqlite.org/lang_createtable.html)
+metadata.db 保存產品資料；target_connections 指向另一份被測專案 SQLite。DDL dialect 為 SQLite；產品使用 Node.js 24 的 node:sqlite，worker 回傳實際 sqliteVersion，不將未鎖定的 SQLite patch 版本寫成已驗證版本。可執行 schema owner 為 `src/adapters/sqlite/schema.ts`；migration registry 依序將既有 schema 0～4 升到 5；未知版本拒絕啟動。§7.1～7.2 為不可變的初始 migration SQL，現行完整模型須套用 §7.6、§7.7 及 DbGate migration，不可只執行初始 DDL。每個 connection 在 transaction 外啟用 foreign_keys；TEXT 主鍵明訂 NOT NULL，複合 FK 指向明確 PRIMARY KEY／UNIQUE。[SQLite FK](https://sqlite.org/foreignkeys.html)、[NULL 與唯一性](https://sqlite.org/lang_createtable.html)
 
 ### 7.1 原文、需求及 Gherkin 正規化
 
@@ -684,7 +700,38 @@ ALTER TABLE requirements DROP COLUMN stage;
 
 Legacy 每項需求原本僅有一組文件與階段，遷移時保留原需求 ID 作為第一份 feature ID，名稱使用原 requirement_key；新 feature 使用獨立 UUID。所有舊確認的 version/hash、文件 head、baseline、run 保持原值，只補上歸屬。`requirements.stage` 在 backfill 後移除，`features.stage` 是唯一 owner。既有資料若不符合新 UNIQUE／FK，交易失敗並回復，不丟棄資料。
 
+### 7.7 獨立需求與跨專案 migration（schema version 4／5）
+
+可執行 DDL／DML owner 是 `src/adapters/sqlite/requirements.ts` 的 `0004_requirement_projects`。新需求不需要先有專案；既有需求 ID、文件版本、確認與所有執行證據保留。原單一專案關係轉入 `requirement_projects`，不同舊需求即使編號相同也不自行合併或改號；新建需求檢查編號重複。
+
+核心 DDL 與資料移轉契約：
+
+~~~sql
+CREATE TABLE requirement_projects (
+ requirement_id TEXT NOT NULL REFERENCES requirements(id),
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ PRIMARY KEY(requirement_id,project_id)
+);
+CREATE TABLE requirements_new (
+ id TEXT PRIMARY KEY NOT NULL,
+ requirement_key TEXT NOT NULL CHECK(length(trim(requirement_key))>0)
+);
+INSERT INTO requirement_projects SELECT id,project_id FROM requirements;
+INSERT INTO requirements_new SELECT id,requirement_key FROM requirements;
+~~~
+
+同一 migration 重建 documents 與 runs：需求的 gherkin／sd／target_ci 文件由 requirement／feature 擁有，project_id 為 NULL；獨立 recording／integration 仍須有 project_id。run 的 project_id 表示當次明確選定的網站操作專案，所有涉及專案版本在不可變 environment snapshot 的 projects 陣列，不把該欄再當需求 owner。原先 `(requirement_id, project_id)` 的單一專案 FK 移除，以直接 requirement FK、feature 歸屬 trigger 與 use case 的關聯檢核取代。
+
+依 [SQLite 官方表格重建程序](https://www.sqlite.org/lang_altertable.html)，先在 transaction 外暫停 FK enforcement，再於單一 transaction 建新表、完整複製、交換表格並重建索引／trigger。提交前執行 foreign_key_check，任何非零違例透過 CHECK 使 migration 失敗並 rollback；finally 恢復 FK enforcement。這是 SQLite 重建表格所需程序，不能省略最後約束檢核。部署 bundle 產生同一組 migration DDL／DML 與可執行 SQL，既有 DB 升級仍須指定新的備份路徑。
+
+`0005_project_git_snapshots` 將 Git 收據的主鍵改為 `(spec_version_id, project_id)`，同一 BDD 版本可分別保存到不同關聯專案。既有收據依獨立文件專案或 repository_url 與已註冊 workspace_ref 的唯一精確對應回填，不依目前需求關聯推測歷史歸屬；無法唯一確認則拒絕升級。CI 必須指定執行專案並使用該專案收據，完整專案版本向量隨執行環境與 execution-context 保存。`src/domain/project-sources.ts` 是來源基線格式的唯一讀取與驗證 owner；舊版單專案基線只在仍有唯一關聯時解析，不改寫原始 JSON／hash。
+
+
 ## 8. 核心 API、事件與可觀察結果
+
+`GET /requirements` 列出全域需求及關聯專案／各 Gherkin 階段；`POST /requirements` 可不帶 projectIds 建立需求；`PUT /requirements/{id}/projects` 原子保存關聯及下游失效。`GET /requirements/{id}` 讀取所選 Gherkin 文件與全部相關專案。舊 project-scoped listing 僅按關聯過濾，同一需求不建立多份。UI 的 HTML navigation 與 JSON API 透過 Accept 與 Vary: Accept 區分，重新載入需求路徑不回傳 JSON 畫面。需求事件訂閱 `/events?requirementId=…`，不可因目前選擇其他專案而遺漏同一需求的 CLI／run 事件。
+
+source read/write、terminal 與 Git 匯出均明確指定關聯 projectId；pin-source 的 projects 必須完整且每個 projectId 只出現一次。verify 固定相同完整向量並明確指定網站操作 projectId，報告保留全部來源版本。
 
 以下為設計契約，不是已運作的 endpoints：
 
@@ -768,11 +815,17 @@ BrowserSession 與 PTY 分別有 created／running／closed 或 exited 狀態。
 
 重播預設建立新的 context，保留保存的起始 URL／明確前置計畫，不能假設人類先前 cookie 或臨時頁面永遠存在。人類錄製與 agent／程式觀看各自明確指定使用的 session；本次不新增控制權租約、忙碌排隊 UI、交接或閒置配額。環境不支援所需能力時回報真實不可用，不修改雲端安全設定。
 
+### 10.1 網頁 terminal 控制 LLM CLI
+
+GenerateSD／CompleteTests 固定該 feature 的來源版本、hash、head 與 context，將 `task.md`、`request.json` 寫入獨立工作目錄。`PtyTerminalAdapter.create(command)` 直接啟動 Codex 互動 CLI，以 workspace-write sandbox、on-request approval 與指定 cwd 執行；不使用 `exec` 非互動模式、不從背景 pipe 抽取模型回應。`llm.terminalOpened` 含 projectId／requirementId／featureId／terminalId 與工作目錄，需求頁自動把同一 PTY 接到 xterm，輸入、resize、中止均走既有 WebSocket。
+
+CLI 讀取任務並寫 `proposal.json`；工作台只接受該次目錄內非 symlink 的普通 JSON 檔（2 MiB 上限），再套用共同提案、SD 格式、來源 ID／hash、保留斷言與完成檢查。第一份提案成為不可變版本；CLI 保持可操作，後續手動修改不自動改寫已保存版本。JSON 錯誤、CLI 結束／取消、過時來源或檢查失敗均不得保存為完成。沒有固定背景逾時強制終止使用者的互動會話；使用者可由 terminal 關閉結束等待。原本 HTTP provider、API key／endpoint 設定與靜默 fallback 全部移除。
+
 ## 11. codegen 與 BDD 補齊設計
 
 ### 11.1 先保存 codegen 骨架
 
-輸入為確認的 Gherkin／SD version/hash、generator／adapter 版本，以及明確 step patterns／參數／slot 宣告。輸出為 SKELETON spec.ts、穩定 test IDs、來源 manifest 及待補狀態。本次應有 28 個 Scenario ID／44 個來源展開案例；它們不是 LLM 補齊後測試數的上限。
+輸入為確認的 Gherkin／SD version/hash、generator／adapter 版本，以及明確 step patterns／參數／slot 宣告。輸出為 SKELETON spec.ts、穩定 test IDs、來源 manifest 及待補狀態。本次應有 29 個 Scenario ID／45 個來源展開案例；它們不是 LLM 補齊後測試數的上限。
 
 骨架只含測試結構、Given/When/Then 分派或明確 completion slots、來源案例／step 對應；不含實際 locator、操作、業務斷言、DB fixture、重登入或截圖實作。為讓 bddgen 註冊 pattern 而存在的 stub 一旦執行必須拋 UnimplementedStepError；生成／list／型別檢查可成功，completionStatus 仍 PENDING，不能標成完整可執行驗收測試或 PASSED。
 
@@ -793,6 +846,21 @@ Git 保存版本歷程；目前功能目錄只保留同名 Gherkin、SD、steps�
 證據鏈為：需求／Scenario ID → 確認 Gherkin/SD version/hash → codegen skeleton version/hash/slots → completion version/hash／明確映射 → 固定完成 baseline＋程式版本 → run scope／所選 cases／完整 E(r) → 實際 test → session/context/page／source step/action → actual/expected／截圖／結果。LLM 提案與生成殼都不能取代執行證據。
 
 ## 12. DB UI、人類流程測試及報告
+
+### 12.0 DbGate 連線與部署
+
+Metadata migration `0003_dbgate_connection` 在同一交易增加 `target_connections.dbgate_url` 與 `dbgate_connection_name`；不建立 seed DML，原連線資料保留。SQL 為：
+
+~~~sql
+ALTER TABLE target_connections ADD COLUMN dbgate_url TEXT;
+ALTER TABLE target_connections ADD COLUMN dbgate_connection_name TEXT;
+~~~
+
+每個連線記錄實際 DbGate URL 與顯示名稱。`POST /db-connections/{id}/browser` 開啟該入口的 managed browser；需求頁／資料庫頁可觀看及操作。run 的 DB page 使用所綁連線的 DbGate；失敗不得轉用其他頁冒充成功。Basic Auth 從受信任 server 設定注入 browser context，限制到所設定 origin，API 及報告只提供非秘密 URL／名稱／頁面識別。
+
+專用 fixture 由 `tools/dbgate.mjs` 啟動 Docker，隨機 loopback port、隨機帳密、固定 SQLite 連線及測試 DB mount。`tools/dbgate.Dockerfile` 固定上游 7.3.2 manifest digest，重新編譯其 better-sqlite3 native module 並以真實 `:memory:` SQL probe 確認後產出 image；因實際 ARM image 內含 x86-64 addon，不能把該載入錯誤忽略。應用不使用自創資料表畫面取代 DbGate 驗收。Docker 服務生命週期由 fixture server 擁有，結束時停止 container；正式環境可指定既有 DbGate。
+
+AC-WB-029：指定 SQL 與預期欄位值 → 在 DbGate 編輯器執行 → 從結果表格讀取實際值並斷言 → 保存查詢及結果畫面 → 報告連結同 run／Scenario／case／step／commit 的 SQL、expected、actual、截圖與錯誤。查詢失敗、連線失敗、資料不符及截圖遺失都不能當作通過。
 
 ### 12.1 被測 DB 操作與 fixture
 
@@ -827,12 +895,12 @@ role A 只能讀文件，B 能改文件但不能管理帳號。這兩條真實 a
 
 | AC／時點 | Playwright 操作與斷言 |
 |---|---|
-| 017 | dbPage 開工作台 DB UI，查 scenario_user，斷言 role=A/state=active；每個操作及斷言保存圖 |
-| 018 DB 變更 | 從 DB UI 改 A→B、保存、重新查回並斷言 B；保存後與重查後留圖 |
+| 017 | dbPage 開 DbGate，查 scenario_user，斷言 role=A/state=active；每個操作及斷言保存圖 |
+| 018 DB 變更 | 從 DbGate 改 A→B、保存、重新查回並斷言 B；保存後與重查後留圖 |
 | 018 登入 | appPage 登出舊登入，再以同帳號登入；斷言 B 編輯入口，留登出／登入／登入後圖 |
-| 018 允許／拒絕 | 改文件 edited 並斷言成功，再從 DB UI 查回 edited；開管理帳號頁斷言拒絕且帳號資料未改 |
+| 018 允許／拒絕 | 改文件 edited 並斷言成功，再從 DbGate 查回 edited；開管理帳號頁斷言拒絕且帳號資料未改 |
 | 019 | 網頁或 DB assertion 不符時先保存失敗當下頁面與 expected／actual／source step，再保留原錯誤 |
-| 020 | 每次重跑先從 DB UI 還原帳號 A／active、文件 initial，結束舊登入，查回初始狀態並截圖才重跑 |
+| 020 | 每次重跑先從 DbGate 還原帳號 A／active、文件 initial，結束舊登入，查回初始狀態並截圖才重跑 |
 
 拒絕管理帳號操作的資料比較基準是「已改 B、拒絕操作之前」，不誤拿原先 A 值當未變更基準。fixture 初始化計畫與測試 baseline 綁定；驗證只執行該計畫。不能用 Node 直接 SQL 取代 feature 要求的 DB UI 流程。
 
@@ -877,6 +945,9 @@ driver 對每個操作／assertion 記 runId、testDefinitionId、sourceCaseId�
 | AC-WB-025 | §6.2、§7.2 明確 tests／來源映射及多對一 |
 | AC-WB-026 | §6.2、§7.2 缺失／重複／不存在引用的拒絕 |
 | AC-WB-027 | §5、§7.2、§9.3 無關聯自錄仍可保存與重播 |
+| AC-WB-029 | §12.0 真實 DbGate；§12.3 SQL／資料斷言／失敗證據與報告鏈 |
+| AC-WB-030 | §3.2 固定需求側欄、獨立需求入口、Gherkin 選取與重新載入 |
+| AC-WB-031 | §3.2、§7.7 需求多對多專案關聯、本機目錄及真實 terminal cwd |
 | AC-WB-028 | §4 待補／完成分界；§7.4 完整選取集合；§8.1 清單到執行；§9.1 同 run/test/session/page；§12.3 局部與全案結果 |
 
 待確認項目：本版 SD 與來源 Gherkin 的綁定、§3.1 開發檔案責任、§7.5 部署生成規格、案例對完整 test 集合的選取，以及 §14 的測試介面契約。未完成確認的 SD 不可作為已確認測試基線。產品 E2E 的結果僅由實際執行證據判定。
@@ -886,18 +957,22 @@ driver 對每個操作／assertion 記 runId、testDefinitionId、sourceCaseId�
 ### 來源與執行
 
 - `workbench.feature` 是驗收來源，`workbench.sd.md` 是專屬設計來源；確認 hash 存在需求層的 `../review.json`。
-- 同目錄的 `workbench.feature.spec.ts` 載入 `testing/support/fixtures.ts`；BDD 設定註冊 `workbench.steps.ts` 中的操作與斷言，共 44 個案例。
+- 同目錄的 `workbench.feature.spec.ts` 載入 `testing/support/fixtures.ts`；BDD 設定註冊 `workbench.steps.ts` 中的操作與斷言，共 45 個案例。
 - `test-results/bdd/manifest.json` 記錄目前來源、生成 spec、實作檔案的 hash 與案例映射；重新生成後，須重新完成工具檢查才能執行 E2E。
 - `playwright.config.ts` 載入 `bdd.config.ts`。`npm run test:checks` 檢查測試接線，`npm test` 執行產品驗收；缺必要環境時回傳 exit 2 / NOT_RUN。
 - `sut.step()` 綁定來源步驟與執行證據，callback 直接包含操作與斷言。fixture 中的 SKELETON 輸入用於驗證產品的測試生成及未補齊拒絕行為。
 
 ### 專用環境與 fixture
 
-必須提供 WB_BASE_URL、WB_TARGET_BASE_URL、WB_METADATA_DB、WB_TARGET_DB、WB_TARGET_PASSWORD、WB_SOURCE_REF、WB_TARGET_REPO。前兩個是真實工作台／被測網站；metadata DB 必須由產品 migration 初始化成 §7 的 schema。DB／target Git 都只能指向 repo 下 .test-fixtures/ 的專用資料，metadata 檔名必須 .e2e.sqlite。target repo 是可丟棄、含可執行 CI 的專用 repo；測試不 push。target DB／網站要先具備 SD §12 test_accounts、test_documents 與 scenario_user 密碼，可用產品的 `init-fixtures` 與 `serve-fixtures` 建立專用環境，見 根目錄 `README.md`。
+必須提供 WB_BASE_URL、WB_TARGET_BASE_URL、WB_METADATA_DB、WB_TARGET_DB、WB_TARGET_PASSWORD、WB_SOURCE_REF、WB_TARGET_REPO、WB_DBGATE_URL。前兩個是真實工作台／被測網站；metadata DB 必須由產品 migration 初始化成 §7 的 schema。DB／target Git 都只能指向 repo 下 .test-fixtures/ 的專用資料，metadata 檔名必須 .e2e.sqlite。target repo 是可丟棄、含可執行 CI 的專用 repo；測試不 push。target DB／網站要先具備 SD §12 test_accounts、test_documents 與 scenario_user 密碼，可用產品的 `init-fixtures` 與 `serve-fixtures` 建立專用環境，見 根目錄 `README.md`。
 
 FixtureDatabase 僅安排隔離的 Given 前置資料。當受測保存／確認／補齊／流程／SQL 操作開始後，使用真實 UI/API；不能直接改 SQLite 假裝產品完成操作。角色 A/B 的變更、重查、重登入、文件保存與拒絕管理頁驗證均由 DB UI／被測網站進行。歷史 FAILED run 只是 AC016 的失效前置資料，不當成本輪執行證據。工具 unit test 在專用暫存 DB 執行 SD DDL，以核對 fixture 的欄位與 FK；它不是產品 migration 或產品 E2E。
 
-每個 scenario 配置獨立 project/requirement ID；44 tests 使用一個 worker，避免共用 scenario_user 的角色與登入互相干擾。多使用者讀取用另一 BrowserContext。測試初始 fixtures 會占用專用 DB，重跑可使用全新 DB fixture；不清除使用者的資料。
+每個 scenario 配置獨立 project/requirement ID；45 tests 使用一個 worker，避免共用 scenario_user 的角色與登入互相干擾。多使用者讀取用另一 BrowserContext。測試初始 fixtures 會占用專用 DB，重跑可使用全新 DB fixture；不清除使用者的資料。
+
+DbGate 以固定 digest 的官方 image 為基礎，tools/dbgate.Dockerfile 重新編譯 SQLite native driver 並執行 SELECT 1。deploy 生成同份 Dockerfile，metadata migration 0003 保存專案的入口及 connection name；登入資訊僅存在服務環境，僅傳入相同 origin 的 Playwright context。SQL 查詢、錯誤及資料不符均保存真實 DbGate 畫面，不能以截圖成功判為資料通過。
+
+生成 SD／補齊測試會開啟 Codex 互動 PTY，透過 llm.terminalOpened 接上頁面 TerminalPane；輸入、resize、中止由同一 terminal session 控制。提案由隔離工作目錄 proposal.json 載入後執行既有來源／格式／映射檢查；CLI 結束而無提案則回報錯誤。移除 HTTP LLM provider 與 API key 設定。
 
 ### HTTP DTO
 
@@ -938,7 +1013,7 @@ WS 的 run.testStarted 事件帶 runId/testKey。browser.frame 先送 JSON envel
 | 文件／流程 | workflow-stage、gherkin-editor、sd-editor、spec-editor、confirm-gherkin、confirm-sd、generate-sd、generate-tests、complete-tests、test-readiness、start-development、stage-allowed-artifacts、stage-locked-artifacts、source-editor、run-verification、confirmed-gherkin、confirmed-sd、test-baseline、step-definitions-upload、generated-spec-source/path、generated-manifest、llm-needs-input。 |
 | 鎖定保存嘗試 | open-artifact-save 開啟保存候選對話；artifact-save-kind 選文件；artifact-save-candidate 收候選原文；artifact-save-attempt 實際送保存；artifact-save-error 顯示「此階段不可修改該產物」。候選不是有效文件編輯，locked editor 保持鎖定。AC015 檢查 UI 提示及原 DB/投影/來源不變，也檢查真實 409。 |
 | 回退 | return-artifact 選 artifact 中文 label，return-stage 送回退；之後 UI 與資料庫 stage 一致，重新確認前不能前進。 |
-| DB | sql-editor、sql-run、sql-execution-state、db-results、db-schema-refresh、db-schema。 |
+| DbGate | 工作台 open-dbgate 開啟同一 managed browser；DbGate 7.3.2 的 ConnectionList_container、TabsPanel_buttonNewObject、NewObjectModal_query、QueryTab_executeButton、MessageView_tableWrap、SqlObjectList_container／refreshButton。Ace 編輯器輸入 SQL，Finished 與本次訊息及實際結果表格共同判定完成；錯誤列不視為通過。 |
 | PTY | open-terminal、terminal-session-id、terminal-input、terminal-output。測試輸入的命令只含 base64 token，輸出必須出現解碼後 marker，避免把 shell echo 當程序輸出。 |
 | 瀏覽器／錄製 | browser-canvas、browser-url、browser-session-id、browser-stream-state、record-start/stop、recording-state/script/purpose、record-locator、record-assertion-type、record-expected、record-add-assertion；自錄輸入真的經 canvas pointer/keyboard 送至 managed page。 |
 | 情境執行 | scenario-tests；scenario-case-a/b 各含 case-test-ids、case-readiness、case-execution-status、case-select、case-run；run-selected-cases、source-ref、pin-source、pinned-source-ref、run-browser-canvas。後者 data-run-id/test-definition-id/case-result-id/session-id/context-ref/page-id/binding-seq/frame-sha256 必須對應已呈現 frame。 |

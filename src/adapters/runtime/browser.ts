@@ -37,11 +37,12 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
     return this.launched;
   }
 
-  async create(input: { projectId: string; workspaceRef?: string; targetUrl?: string }): Promise<BrowserAttachment> {
+  async create(input: { projectId: string; workspaceRef?: string; targetUrl?: string;httpCredentials?:{username:string;password:string} }): Promise<BrowserAttachment> {
     requiredText(input.projectId, 'projectId');
     if (input.targetUrl) navigationUrl(input.targetUrl);
     const { browser, endpoint } = await this.launch();
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false,
+      ...(input.httpCredentials?{httpCredentials:input.httpCredentials}:{}) });
     const session: Session = {
       id: randomUUID(), contextRef: randomUUID(), context, endpoint, activePageId: '',
       pages: new Map(), pageIds: new WeakMap(), listeners: new Set(), frameSequence: 0, frameScheduled: false,
