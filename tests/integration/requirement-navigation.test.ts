@@ -14,16 +14,19 @@ test('fixed sidebar creates independent requirements, expands Gherkin navigation
  const sidebar=page.getByTestId('requirement-sidebar');await sidebar.getByRole('button',{name:'新增需求',exact:true}).click();await page.getByLabel('需求編號').fill('REQ-NAV');await page.getByRole('button',{name:'建立',exact:true}).click();
  await expect(page.getByRole('heading',{name:'REQ-NAV',exact:true})).toBeVisible();const requirements=await server.core.listRequirements();assert.equal(requirements.length,1);assert.deepEqual(requirements[0].projects,[]);
  await page.getByRole('button',{name:'新增 Gherkin',exact:true}).click();await page.getByLabel('Gherkin 名稱（不含副檔名）').fill('checkout');await page.getByRole('button',{name:'建立',exact:true}).click();
- const node=sidebar.getByTestId('sidebar-requirement-'+requirements[0].id);await expect(node.locator('ul a')).toHaveCount(2);await expect(node).toHaveAttribute('open','');
- await node.getByRole('link',{name:/REQ-NAV/}).last().click();await expect(page.getByTestId('feature-select').locator('option:checked')).toContainText('REQ-NAV');
- await node.getByRole('link',{name:/checkout/}).click();await expect(page.getByTestId('feature-select').locator('option:checked')).toContainText('checkout');
+ const node=sidebar.getByTestId('sidebar-requirement-'+requirements[0].id),stages=node.locator('.sidebar-stage');await expect(stages).toHaveCount(5);await expect(node).toHaveAttribute('open','');
+ await stages.nth(0).locator('ul a').first().click();await expect(page.getByTestId('feature-select').locator('option:checked')).toContainText('REQ-NAV');await expect(page).toHaveURL(/workflowStage=GHERKIN/);await expect(page.getByTestId('workflow-stage-content')).toHaveAttribute('data-stage','GHERKIN');await expect(page.getByTestId('gherkin-editor')).toBeVisible();
+ await stages.nth(1).locator('summary').click();await stages.nth(1).locator('ul a').last().click();await expect(page.getByTestId('feature-select').locator('option:checked')).toContainText('checkout');await expect(page).toHaveURL(/workflowStage=SD/);await expect(page.getByTestId('workflow-stage-content')).toHaveAttribute('data-stage','SD');await expect(page.getByTestId('sd-editor')).toBeVisible();
+ for(const [index,key,testId] of [[2,'TESTS','spec-editor'],[3,'IMPLEMENTATION','source-editor'],[4,'VERIFICATION','scenario-tests']] as const){await stages.nth(index).locator('summary').click();await stages.nth(index).locator('ul a').last().click();await expect(page.getByTestId('workflow-stage-content')).toHaveAttribute('data-stage',key);await expect(page.getByTestId(testId)).toBeVisible();}
+ const tabs=page.getByTestId('workspace-tabs');await expect(tabs.locator('.workspace-tab')).toHaveCount(8);await tabs.getByRole('button',{name:'REQ-NAV · 需求確認 · REQ-NAV',exact:true}).click();await expect(page).toHaveURL(/workflowStage=GHERKIN/);
+ await tabs.locator('.workspace-tab.active').getByRole('button',{name:/關閉/}).click();await expect(page).toHaveURL(/workflowStage=SD/);await expect(tabs.locator('.workspace-tab')).toHaveCount(7);
  const url=page.url();await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));assert.equal(await sidebar.evaluate(element=>getComputedStyle(element).position),'fixed');assert.equal((await sidebar.boundingBox())!.y,0);
  await page.reload();assert.equal(page.url(),url);await expect(page.getByTestId('feature-select').locator('option:checked')).toContainText('checkout');
  for(const width of [320,768,1024,1440]){
   await page.setViewportSize({width,height:900});if(width<=800){await page.getByRole('button',{name:'展開需求選單'}).click();await expect(sidebar).toBeInViewport();await page.getByRole('button',{name:'關閉需求選單'}).click();}
   await expect(page.getByTestId('feature-select')).toBeVisible();
  }
- await page.setViewportSize({width:1440,height:900});await sidebar.getByRole('link',{name:'專案管理',exact:false}).click();await expect(page.getByRole('heading',{name:'專案管理',exact:true})).toBeVisible();assert.deepEqual(errors,[]);
+ await page.setViewportSize({width:1440,height:900});await server.core.store.run("UPDATE features SET stage='VERIFIED' WHERE requirement_id=?",[requirements[0].id]);await page.goto(address+`/requirements/${requirements[0].id}`);await expect(page.getByTestId('workflow-stage-content')).toHaveAttribute('data-stage','VERIFICATION');await expect(page.getByTestId('scenario-tests')).toBeVisible();await sidebar.getByRole('link',{name:'專案管理',exact:false}).click();await expect(page.getByRole('heading',{name:'專案管理',exact:true})).toBeVisible();assert.deepEqual(errors,[]);
 });
 
 test('fixed Terminal menu opens an interactive PTY in the selected local project directory',async t=>{
@@ -36,7 +39,7 @@ test('fixed Terminal menu opens an interactive PTY in the selected local project
  await page.getByRole('link',{name:/Terminal workspace/}).click();await expect(page.getByRole('heading',{name:'Terminal workspace',exact:true})).toBeVisible();
  await page.getByTestId('sidebar-terminal').click();await expect(page).toHaveURL(/\/projects\/[^/]+\/terminal$/);await expect(page.getByTestId('terminal-project-select')).toHaveValue(/.+/);
  await page.getByTestId('open-terminal').click();await expect(page.getByTestId('terminal-session-id')).not.toBeEmpty();await page.getByTestId('terminal-input').fill('pwd');await page.getByTestId('terminal-input').press('Enter');
- await expect(page.getByTestId('terminal-output')).toContainText(workspace,{timeout:10000});assert.deepEqual(errors,[]);
+ await expect(page.getByTestId('terminal-output')).toContainText(workspace,{timeout:10000});await page.getByRole('link',{name:'專案管理',exact:false}).click();await page.getByRole('link',{name:/Terminal workspace/}).click();await page.getByRole('button',{name:'瀏覽器與錄製'}).click();await page.getByRole('button',{name:'開啟瀏覽器會話'}).click();await expect(page).toHaveURL(/\/projects\/[^/]+\/browser\/[^/]+$/);const browserPath=page.url();await page.getByTestId('sidebar-terminal').click();await page.getByTestId('workspace-tabs').getByRole('button',{name:'Terminal workspace · 瀏覽器',exact:true}).click();await expect(page).toHaveURL(browserPath);await page.getByRole('button',{name:'關閉會話'}).click();assert.deepEqual(errors,[]);
 });
 
 test('default example is visible, user-deletable, and stays deleted after application restart',async t=>{
