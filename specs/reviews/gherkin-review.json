@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "phase": "gherkin_review",
+  "status": "pending",
+  "featurePath": "specs/workbench.feature",
+  "featureSha256": "86d554273183a5d88e66d7592b405063f308a7928c2e85d006674e85338f8ff7",
+  "scenarioCount": 31,
+  "expandedCaseCount": 35,
+  "baseCommit": "a1dffc11c9e29664a15287574a59c83d272864cc",
+  "reviewBranch": "spec/workbench-gherkin-review",
+  "approval": null,
+  "approver": null,
+  "approvedAt": null,
+  "sdStatus": "not_started_pending_gherkin_confirmation",
+  "implementationStatus": "stopped_unapproved_partial_files_preserved_outside_repository",
+  "note": "提交與靜態檔案檢查不是使用者批准。未執行Gherkin或產品測試。"
+}
