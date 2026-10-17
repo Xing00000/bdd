@@ -1,6 +1,6 @@
 # language: en
 # 待使用者確認；目前只允許Gherkin與簡短階段說明，不含step、spec.ts、SD或產品實作。
-# 核心範圍：27個Scenario ID、43個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
+# 核心範圍：28個Scenario ID、44個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
 Feature: 多人共用的BDD軟體開發工作台
   人類共用專案與集中文件
   依Gherkin確認、SD確認、測試產生、開發、驗證的順序工作
@@ -283,3 +283,19 @@ Feature: 多人共用的BDD軟體開發工作台
     And 不要求補造需求或Scenario ID以通過標準生成測試的映射檢核
     And 使用者可重新開啟該腳本並重播
     And 該腳本仍獨立於標準專案CI且不會自動新增或修改target Git的CI測試
+
+  @AC-WB-028
+  Scenario: 點選Gherkin案例執行並在右側觀看同次測試過程與結果
+    Given 專案已有Gherkin情境"AC-DEMO-001"及Examples案例"a"與"b"的spec.ts骨架與明確測試映射
+    And 案例"a"對應測試"test-a"與"test-a-extra"且案例"b"對應測試"test-b"
+    And 這些測試目前只有尚未由LLM補齊的codegen殼
+    When 使用者開啟工作台的Gherkin測試清單
+    Then 清單列出該情境與案例"a"及"b"及各自對應的test ID
+    And 只有codegen殼的測試顯示待補齊且不可標示已通過
+    When 使用者在測試已由LLM補齊且測試基線與程式版本已固定後點選案例"a"並按下執行
+    Then 工作台建立本次run且runner只執行對應的spec.ts測試"test-a"與"test-a-extra"
+    And 未選取的"test-b"本次不執行也不標示通過
+    And 右側內嵌瀏覽器即時呈現本次run目前測試所用的同一session與page的真實操作
+    And 各測試的實際斷言與每步截圖及成功或失敗結果均對應本次run與所選情境及案例
+    And 只有所選案例的必要測試與斷言及證據完整通過才標示該案例通過
+    And 所選案例通過不代表未執行的全專案案例已通過

@@ -1,18 +1,18 @@
 # SD：BDD 軟體開發工作台
 
-版本：0.3；日期：2026-10-17；需求：REQ-WB-001；狀態：**pending approval，待使用者確認**。
+版本：0.4；日期：2026-10-17；需求：REQ-WB-001；狀態：**pending approval，待使用者確認**。
 
-本次僅設計與提交文件；所有 DDL／DML 都是文件中的設計，未執行。沒有產品實作、產生 spec.ts、安裝依賴、build 或 E2E。磁碟檢查：本雲端 /workspace 可用約 30 GB，沒有操作使用者電腦或建立其他執行環境。
+本輪只修訂這一份 SD；其中 DDL／DML 僅為設計，未執行。未生成或修改測試、安裝依賴、實作產品、build、執行 E2E、commit 或 push。原雲端的骨架與完整測試草稿及備份均保留；既有 27／43 工具證據屬舊需求基準，不能作為本次 28／44 的驗證結果。
 
 ## 1. 核准基準與文件歸屬
 
-唯一需求來源為[同目錄 workbench.feature](workbench.feature)，共 **27 個 Scenario ID、43 個展開案例**，AC-WB-001～027 全部保留。定稿原文 SHA-256：
+唯一需求來源為[同目錄 workbench.feature](workbench.feature)，共 **28 個 Scenario ID、44 個展開案例**，AC-WB-001～027 保留並新增 AC-WB-028。本次固定原文 SHA-256：
 
 ~~~text
-211b167e1a7041acfc864a7907d24707e320790f2d8ad77b8a957e55c87bdc44
+88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66
 ~~~
 
-使用者對此版本回覆「定稿」，並已同意更新 SD 及 commit／push 原分支 spec/workbench-gherkin-review。確認來源為本次委派附帶的原對話（thread 01a0fc94-e0dc-7217-9b9a-a555b7aae032）；原話及 hash 記於[review.json](review.json)。不虛構確認時間或尚未存在的核准 commit。feature 原有待確認註解保持定稿位元組不動，目前確認狀態以綁定此 hash 的紀錄為準。**Gherkin 定稿與文件推送均不是本 SD 核准**。
+使用者先以「補進」授權 AC-WB-028，接著對「接著可以對齊 SD 嗎？」回覆「可以」，授權進入本次 SD 修訂。來源為本次委派附帶原對話（thread 01a0fc94-e0dc-7217-9b9a-a555b7aae032），未提供的時間不補造。先前 SD 0.3 的確認只適用舊基準；本 SD 0.4 仍待確認。本輪只改 SD，不同步 [review.json](review.json)、README 或測試；它們目前記錄舊基準，不能當作本版核准。兩個測試 commit 等本版 SD 確認後才恢復，本輪不 commit／push。
 
 本 bdd 專案先以 Git 自舉：Gherkin、這一份當次 SD、確認 metadata、後續測試與產品程式全存 Xing00000/bdd。每次需求使用 `spec/<requirementId>/`；本次只保留 spec/REQ-WB-001/SD.md。doc/ 只供 ADR，目前不新增 ADR、requirements.md、另一份 SD 或需求索引。
 
@@ -28,12 +28,12 @@
 | Node.js 24 LTS、Fastify、WebSocket | 模組化單體承載 use case；HTTP 處理文件／流程／查詢，WS 傳 terminal I/O 與瀏覽器畫格；不先拆微服務。[Node 版本](https://nodejs.org/en/about/previous-releases)、[Fastify](https://fastify.dev/docs/latest/Reference/Server/) |
 | SQLite、node:sqlite adapter | metadata.db 與被測專案 DB 分開。DatabaseSync 同步呼叫放 worker／程序，避免阻塞 API。v24.19.0 官方文件標示 release candidate；相容性須在 SD 核准後鎖版驗證，不宣稱已驗證。[官方 API](https://github.com/nodejs/node/blob/v24.19.0/doc/api/sqlite.md) |
 | @cucumber/gherkin 與 TypeScript Compiler API | 前者取得 AST／Pickles／語法位置；後者取得 TS AST 與 syntactic diagnostics。皆只解析，不執行提交的程式；原文與正規化投影分開。[Gherkin](https://github.com/cucumber/gherkin)、[Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API) |
-| Playwright Test、可替換的 TestGeneratorPort | 使用 Gherkin Pickles、明確 step registry 及自有確定性 TS emitter，直接產生帶來源 manifest 的 spec.ts；不由 LLM 猜自然語意。既有 playwright-bdd 9.2.1 原生產 .spec.js，本案不靠改副檔名宣稱原生 TS 支援；可另實作 adapter，但本次未生成任何檔案。[bddgen 官方來源](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/src/generate/paths.ts) |
+| Playwright Test、可替換的 TestGeneratorPort | 依使用者後續指定採 Gherkin → playwright-bdd → 確定性 TS adapter。codegen 只產骨架、明確 pending slots 與來源 manifest；之後 LLM 才產補齊快照。bddgen 9.2.1 原生輸出 .spec.js，adapter 的 TS 型別／識別 metadata 轉換須驗證沒有改變骨架行為；不能聲稱原生產 TS 或已完成驗收。[官方來源](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/src/generate/paths.ts) |
 | Playwright Screencast、Vue canvas | 沿用非 noVNC 方案；公開 page.screencast.start({ onFrame }) 提供 JPEG 畫格，服務自行整合 WS、輸入、語意錄製。API 自 v1.59 提供，後續鎖定相容修補版；沒有 FPS／延遲實測承諾。[官方 Screencast](https://playwright.dev/docs/api/class-screencast#screencast-start) |
 | xterm.js、node-pty | 前者呈現 terminal，後者管理實際 PTY；node-pty 不是沙箱，使用既有雲端工作區的隔離及執行能力。[xterm](https://xtermjs.org/docs/)、[node-pty](https://github.com/microsoft/node-pty) |
 | DB／LLM ports | 首版 SQLite；未來不同 DB 的 schema／query adapter 及不同 LLM provider 可替換，不先建通用 provider 管理或其他 DB 實作。 |
 
-自有 generator 是本 SD 的待核准實作選擇：重用官方 Gherkin 語法與 Pickle 展開，不重造語法解析器；只負責明確 steps 到 Playwright Test TypeScript 的可追溯輸出。這比依賴第三方生成檔內部 metadata 或改名後仍須還原來源更直接。步驟表達式與 fixture 在 TESTS 階段固定，缺少匹配或實作即失敗。Playwright runner、斷言、截圖與報告使用公開 API。
+生成器重用官方 Gherkin parser／Pickles 與公開 Playwright Test API。step registry 在 codegen 只宣告確切 pattern、參數與 slot ID；未註冊或歧義會阻擋生成，已註冊但尚未補齊則可生成骨架。此類 stub 若被執行須拋明確 UnimplementedStepError，不得空函式、skip 或假斷言。codegen 的型別／discovery 成功不等於補齊完成或 E2E 通過。
 
 ## 3. 六邊形架構與資料流
 
@@ -51,7 +51,7 @@ flowchart LR
 | 模組／邊界 | 責任 |
 |---|---|
 | Domain | Requirement、DocumentVersion、Confirmation、Scenario、SourceCase、TestDefinition、Mapping、Baseline、Run；判定階段可寫產物、明確映射、版本綁定、下游失效與結果完整性 |
-| Application inbound ports | SaveDocument、ConfirmGherkin、ConfirmSD、ReturnToStage、GenerateTests、CompleteTests、StartDevelopment、Verify、SaveRecording、ReplayScript、BrowseDb、ExecuteSql、OpenTerminal |
+| Application inbound ports | SaveDocument、ConfirmGherkin、ConfirmSD、ReturnToStage、GenerateTests、CompleteTests、ListScenarioTests、StartDevelopment、VerifySelectedCases、Verify、SaveRecording、ReplayScript、BrowseDb、ExecuteSql、OpenTerminal |
 | DocumentStore／WorkflowStore | 一次交易保存原文、投影與 head；確認綁定版本／hash，查詢需求與文件 |
 | GherkinParser／TypeScriptParser／MappingValidator | 語法、來源位置、結構化投影與明確 ID 檢核；不執行輸入、不推導任意 TS 業務語意 |
 | GitRepository／CiRunner | 讀取 target Git 的指定 commit 原文，保存副本及真實 CI 結果；一般 DB 保存不寫入 target Git |
@@ -63,9 +63,9 @@ flowchart LR
 
 1. 保存 Gherkin → 語法／結構檢核 → 同交易寫原文及投影 → 人類確認該版本／hash。
 2. 產生／編輯 SD（含架構與 DDL／DML）→ SQLite 保存完整版本 → 人類確認該版本及所依賴 Gherkin。
-3. TESTS：展開 Gherkin、匹配 steps、產 spec.ts 與 manifest → LLM 補齊 → TS 語法及 ID 映射檢核 → 固定測試基線。
+3. TESTS：先展開 Gherkin、宣告 step slots、產生不可變 codegen 骨架快照與 manifest；之後 LLM 以該快照為來源另存補齊草稿／完成快照。完整檢核通過才固定完成測試基線，不覆寫骨架快照。
 4. IMPLEMENTATION：人類／agent 使用固定需求與測試開發程式 → 固定程式 commit／snapshot。
-5. VERIFICATION：只執行固定版本；Playwright 操作目標網站及工作台 DB UI，保存每步斷言、截圖及報告。
+5. VERIFICATION：使用者由 Gherkin／Examples 清單選案例，依固定完成基線解析全部對應 tests；runner 只執行該集合。右側觀看同一 run 當前 test/session/page 的真實操作，每步斷言、截圖及報告用同一識別鏈回傳。全案執行與選取執行的結果分開判定。
 6. 自錄腳本是平行的獨立產品資源：人類操作 viewer → 開始／停止 → 原文／動作另存 SQLite → 取指定版本實際重播；不自動成為標準 CI。
 
 ## 4. 階段、確認與失效
@@ -77,7 +77,7 @@ stateDiagram-v2
   SD --> TESTS: 人類確認SD版本/hash
   TESTS --> IMPLEMENTATION: 生成與補齊完成、固定測試基線
   IMPLEMENTATION --> VERIFICATION: 固定程式版本後提交驗證
-  VERIFICATION --> VERIFIED: 必要測試與證據完整且通過
+  VERIFICATION --> VERIFIED: 全案必要測試與證據完整且通過
   VERIFICATION --> VERIFICATION: 失敗或未完整
   SD --> GHERKIN: 退回修改Gherkin
   TESTS --> SD: 退回修改SD
@@ -91,9 +91,19 @@ stateDiagram-v2
 |---|---|---|
 | GHERKIN | Gherkin | SD、steps／spec、產品程式不開放產生或修改 |
 | SD | 當次 SD | 已確認 Gherkin、測試、產品程式 |
-| TESTS | spec.ts、steps、fixtures、測試所需設定與明確 manifest | 已確認 Gherkin、SD |
+| TESTS | 先 codegen 骨架快照；再獨立補齊快照、steps／fixtures／斷言；完成後固定基線 | 已確認 Gherkin、SD；已保存的骨架版本不覆寫 |
 | IMPLEMENTATION | 產品程式 | Gherkin、SD、測試基線 |
 | VERIFICATION／VERIFIED | 執行既定測試、保存實際結果／截圖／報告 | Gherkin、SD、測試與產品程式基線 |
+
+TESTS 內的先後子步驟為 CODEGEN → COMPLETION → READY，requirements.stage 仍用 TESTS，不增加產品人工核准關卡：
+
+| 子步驟／快照 | 可產生內容 | 清單顯示與前進條件 |
+|---|---|---|
+| CODEGEN／SKELETON | spec.ts 殼、step slots、test ID／case 映射與來源 hash；不含實際 UI/API/DB 操作、斷言或截圖實作 | PENDING_COMPLETION（待補齊）、execution=NOT_RUN；不能標 PASSED 或作為標準驗收 run 的可執行基線 |
+| COMPLETION／COMPLETION_DRAFT | LLM 另存操作、locator、斷言、fixtures、DB UI 驗證與證據實作，引用原骨架版本/hash | 有待補 slot／questions 就維持待補齊，不進入產品開發 |
+| READY／COMPLETED | 已補齊的 spec 與相依檔案經語法、明確映射、型別、discovery 與必要 slot 檢查後固定 | 可開始 implementation；實際執行結果仍為 NOT_RUN，完成測試撰寫不要求尚未開發的產品先綠燈 |
+
+VERIFICATION 的單次選取 run 可以 PASSED，但只有 ALL_REQUIRED 範圍完整通過才能使需求進入 VERIFIED；局部通過維持 verification/report，不替未選案例製造結果。上游變更仍適用下列回退／失效規則。
 
 API、LLM patch、Git 匯出與 workspace／PTY 的檔案寫入都經相同產物寫入規則。鎖定基線是不可寫快照；可修改工作目錄只包含該階段產物，不以 UI disabled 當作保障。違反時回 409 ARTIFACT_LOCKED_IN_STAGE 並保持原內容。既定測試透過 DB UI 執行 fixture DML 是驗證副作用，沒有修改固定測試定義。
 
@@ -128,7 +138,7 @@ SaveDocument 先判斷文件種類與用途，取得 UTF-8 原文，在記憶體
 - Gherkin：官方 parser 的 AST／Pickles 及 parseError；記檔名、1-based 行列與原因。需求 ID 來自所選需求／檔案 metadata，不聲稱 Gherkin 原生有需求欄位。Scenario ID 來自明確 tag；保留 keyword、文字、順序、位置、Background、DocString／DataTable 與 Examples。Pickle 的 parser-generated AST id 只在本次解析內使用，不能當穩定業務 ID。[官方架構](https://github.com/cucumber/gherkin/blob/main/README.md)、[generateMessages](https://github.com/cucumber/gherkin/blob/main/javascript/src/generateMessages.ts)
 - spec.ts：TypeScript Compiler API 建立 SourceFile／AST；使用隔離的記憶體 CompilerHost 與 Program.getSyntacticDiagnostics，不 emit、不執行輸入。diagnostic.start 用 getLineAndCharacterOfPosition 加 1，message 用 flattenDiagnosticMessageText；只接受語法診斷無錯誤的版本。語法有效不等於型別檢查、import 可解析、Playwright discovery 或執行成功。[官方 Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)、[公開 Program 型別](https://github.com/microsoft/TypeScript/blob/v5.9.3/src/compiler/types.ts)
 - SD：保存完整文字與來源 Gherkin version/hash；本輪未新增 SD 語意或 SQL 執行檢核需求。
-- 標準生成 spec 另做明確 ID 映射檢核；integration／recording 不強迫補入不存在的需求關聯。其 TS 原文仍做相同語法解析。
+- 標準 spec 的骨架與補齊版本都做明確 ID 映射檢核；保存為語法有效版本不表示補齊完成。骨架、補齊草稿、完成快照分別記 stage 與 manifest hash，完成版引用來源骨架。integration／recording 不強迫補入需求關聯或先經 LLM 補齊；其 TS 原文仍做語法解析。
 
 成功時用單一 SQLite transaction 寫 document_versions、相應結構資料、來源映射，再更新 document_heads。投影、FK、映射或最後階段檢查任一失敗均 ROLLBACK；舊有效原文、投影及來源保持不變。拒絕的草稿留在編輯器回應，不寫成新有效版本；初次保存失敗也不建立空 head。
 
@@ -206,11 +216,24 @@ CREATE TABLE document_versions (
   parser_version TEXT,
   projection_schema_version INTEGER NOT NULL CHECK(projection_schema_version > 0),
   source_gherkin_version_id TEXT REFERENCES document_versions(id),
+  test_stage TEXT CHECK(test_stage IN ('SKELETON','COMPLETION_DRAFT','COMPLETED')),
+  source_skeleton_version_id TEXT REFERENCES document_versions(id),
+  test_manifest_json TEXT,
+  test_manifest_sha256 TEXT CHECK(test_manifest_sha256 IS NULL OR length(test_manifest_sha256)=64),
   execution_config_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   UNIQUE(document_id, version_no),
   UNIQUE(id, document_id),
-  UNIQUE(id, raw_sha256)
+  UNIQUE(id, raw_sha256),
+  CHECK((test_manifest_json IS NULL AND test_manifest_sha256 IS NULL)
+    OR (test_manifest_json IS NOT NULL AND test_manifest_sha256 IS NOT NULL)),
+  CHECK(
+    (test_stage IS NULL AND source_skeleton_version_id IS NULL)
+    OR (test_stage IS NOT NULL AND test_stage='SKELETON'
+        AND source_skeleton_version_id IS NULL AND test_manifest_json IS NOT NULL)
+    OR (test_stage IS NOT NULL AND test_stage IN ('COMPLETION_DRAFT','COMPLETED')
+        AND source_skeleton_version_id IS NOT NULL AND test_manifest_json IS NOT NULL)
+  )
 );
 CREATE TABLE document_heads (
   document_id TEXT PRIMARY KEY NOT NULL REFERENCES documents(id),
@@ -381,6 +404,7 @@ CREATE TABLE runs (
   project_id TEXT NOT NULL REFERENCES projects(id),
   requirement_id TEXT,
   origin TEXT NOT NULL CHECK(origin IN ('target_ci','integration','recording')),
+  execution_scope TEXT NOT NULL CHECK(execution_scope IN ('SELECTED_CASES','ALL_REQUIRED','INDEPENDENT')),
   baseline_id TEXT REFERENCES baselines(id),
   script_version_id TEXT REFERENCES document_versions(id),
   connection_id TEXT REFERENCES target_connections(id),
@@ -393,9 +417,21 @@ CREATE TABLE runs (
     ('NOT_RUN','RUNNING','PASSED','FAILED','INCOMPLETE','INVALID')),
   FOREIGN KEY(requirement_id, project_id) REFERENCES requirements(id, project_id),
   CHECK(
-    (origin='target_ci' AND requirement_id IS NOT NULL AND baseline_id IS NOT NULL)
-    OR (origin IN ('integration','recording') AND script_version_id IS NOT NULL)
+    (origin='target_ci' AND requirement_id IS NOT NULL AND baseline_id IS NOT NULL
+      AND execution_scope IN ('SELECTED_CASES','ALL_REQUIRED'))
+    OR (origin IN ('integration','recording') AND script_version_id IS NOT NULL
+      AND execution_scope='INDEPENDENT')
   )
+);
+CREATE TABLE run_source_cases (
+  run_id TEXT NOT NULL REFERENCES runs(id),
+  source_case_id TEXT NOT NULL REFERENCES source_cases(id),
+  PRIMARY KEY(run_id, source_case_id)
+);
+CREATE TABLE run_test_selection (
+  run_id TEXT NOT NULL REFERENCES runs(id),
+  test_definition_id TEXT NOT NULL REFERENCES test_definitions(id),
+  PRIMARY KEY(run_id, test_definition_id)
 );
 CREATE TABLE case_results (
   id TEXT PRIMARY KEY NOT NULL,
@@ -404,19 +440,42 @@ CREATE TABLE case_results (
   runtime_test_key TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN
     ('NOT_RUN','RUNNING','PASSED','FAILED','INCOMPLETE','INVALID')),
-  UNIQUE(run_id, runtime_test_key)
+  UNIQUE(run_id, runtime_test_key),
+  UNIQUE(run_id, test_definition_id),
+  UNIQUE(id, run_id),
+  FOREIGN KEY(run_id, test_definition_id)
+    REFERENCES run_test_selection(run_id, test_definition_id)
+);
+CREATE TABLE run_browser_bindings (
+  run_id TEXT PRIMARY KEY NOT NULL REFERENCES runs(id),
+  case_result_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  context_ref TEXT NOT NULL,
+  page_id TEXT NOT NULL,
+  binding_seq INTEGER NOT NULL CHECK(binding_seq > 0),
+  FOREIGN KEY(case_result_id, run_id) REFERENCES case_results(id, run_id)
 );
 CREATE TABLE step_results (
   id TEXT PRIMARY KEY NOT NULL,
   case_result_id TEXT NOT NULL REFERENCES case_results(id),
   source_step_id TEXT REFERENCES steps(id),
+  browser_session_id TEXT,
+  browser_context_ref TEXT,
+  browser_page_id TEXT,
+  binding_seq INTEGER,
   action_index INTEGER NOT NULL CHECK(action_index > 0),
   expected_json TEXT,
   actual_json TEXT,
   status TEXT NOT NULL CHECK(status IN
     ('NOT_RUN','RUNNING','PASSED','FAILED','INCOMPLETE','INVALID')),
   error_text TEXT,
-  UNIQUE(case_result_id, action_index)
+  UNIQUE(case_result_id, action_index),
+  CHECK(
+    (browser_session_id IS NULL AND browser_context_ref IS NULL
+      AND browser_page_id IS NULL AND binding_seq IS NULL)
+    OR (browser_session_id IS NOT NULL AND browser_context_ref IS NOT NULL
+      AND browser_page_id IS NOT NULL AND binding_seq IS NOT NULL AND binding_seq > 0)
+  )
 );
 CREATE TABLE screenshots (
   id TEXT PRIMARY KEY NOT NULL,
@@ -432,13 +491,17 @@ test_case_mappings 的複合主鍵只阻止完全相同 pair 重複；source_cas
 
 case_results 以 test 為一列，不能用 UNIQUE(run, scenario, case) 把多對一測試擠成一個結果；情境報告透過映射聚合每個必要 test。獨立錄製無 Gherkin 映射時保留 runtime_test_key，source_step_id 可 NULL，以動作序號追蹤。圖片 bytes 在 artifact 目錄，SQLite 保存引用／hash，不覆蓋其他 run 的圖片。
 
+經工作台 codegen 的標準 spec，其 test_stage 必填；Gherkin／SD 及獨立 integration／recording 的此欄為 NULL。既有 target Git 匯入副本若沒有骨架來源，也保留 NULL 與真實 Git 引用，不補造 codegen 歷史；AC028 的可選取執行使用已完成的 BDD 基線，既有 CI 引用／結果保存能力維持。補齊草稿／完成版的 source_skeleton_version_id 必須指同一 logical document、同一來源 Gherkin 的 SKELETON；source hash 同時記於 test_manifest_json。一般 FK 只保證版本存在，stage、kind、需求及 root 關係由 application 驗證。JSON manifest 保存骨架／補齊來源、slot／test IDs 與相依檔 hash，原本關聯式情境／steps／Examples／mapping 繼續保存，不改成只存整包 JSON。
+
+run_source_cases 固定使用者選取的來源案例集合；run_test_selection 固定這次應執行的完整 test 集合；case_results 只能引用該 run 已選 test。其 nullable test_definition_id 僅保留獨立腳本未知標準 ID 的既有能力；從 Gherkin 清單啟動的標準 run 結果必須非 NULL；外部 CI 匯入的未知映射結果保留 runtime ID，但不能據此宣稱 AC028 或全案驗收通過。UNIQUE(run_id,test_definition_id) 保證每個固定 test 只有一個聚合結果，NULL 時仍靠 runtime_test_key 唯一。run_browser_bindings 只保存當前畫面綁定，切換時遞增 binding_seq；不是控制權租約或 audit 歷史。瀏覽器步驟的 session/context/page/seq 全部填入，非瀏覽器步驟全部 NULL，截圖透過 step_results 追到同 run/test/case。
+
 下列跨表語意由 application 在同一交易前／內檢查，不能宣稱普通 FK 已涵蓋：
 - Gherkin／SD／spec 的 kind、purpose、所屬 project／requirement、source_gherkin_version_id 類型及來源版本一致。
 - Gherkin／spec 的 parser_name、parser_version 必須有值；SD 可不指定語法解析器。
 - 確認的 version 必須是相同需求、相同 kind 的目前 head；SD 來源必須為目前已確認 Gherkin。
 - 每個 Gherkin 場景／step group／Examples 對應本版本同需求，普通／Outline 的 case 形狀正確；每個 Examples row 的所有欄值齊全，case_id cell 等於 case_key。
 - 標準測試的 manifest 覆蓋完整、test ID 與 AST 明確宣告相符、每筆 mapping 屬指定來源版本；重複原始映射在 INSERT 前報錯，不以 INSERT OR IGNORE 默默吞掉。
-- run 的 baseline、script／connection 及結果屬相同 project／來源；target_ci 的 git_snapshots 內容真實匹配 commit/path。
+- run 的 baseline、script／connection 及結果屬相同 project／來源；target_ci 的 git_snapshots 內容真實匹配 commit/path。選取的 source cases 及 tests 必須屬固定基線；標準 run 只接受 COMPLETED 快照，結果集合不得擴大到未選案例。
 - document_versions、scenario_versions 及其子投影一經成功保存即視為不可變；後續修改新增版本，head／當前確認／有效狀態是可更新的流程資料。
 
 ### 7.3 交易 DML、遷移及資料風險
@@ -450,10 +513,12 @@ BEGIN;
 INSERT INTO document_versions
   (id, document_id, version_no, raw_text, raw_sha256,
    parser_name, parser_version, projection_schema_version,
-   source_gherkin_version_id, created_at)
+   source_gherkin_version_id, test_stage, source_skeleton_version_id,
+   test_manifest_json, test_manifest_sha256, created_at)
 VALUES
   (:version_id, :document_id, :version_no, :raw_text, :raw_sha256,
-   :parser_name, :parser_version, 1, :source_gherkin_version_id, :utc_now);
+   :parser_name, :parser_version, 1, :source_gherkin_version_id,
+   :test_stage, :source_skeleton_version_id, :test_manifest_json, :test_manifest_sha256, :utc_now);
 -- 同一交易 INSERT scenario_versions／steps／Examples 或 test_definitions／mappings。
 -- 若任何解析投影／映射／FK／階段檢查失敗：ROLLBACK，不更新 head。
 INSERT INTO document_heads(document_id, version_id)
@@ -470,6 +535,26 @@ COMMIT;
 
 target DB 的當次 DDL／DML 必須在其 SD 列出真實 schema、影響欄位與資料、回復 SQL／備份前提。SQLite 一般交易失敗可 ROLLBACK，但 VACUUM 等命令不能一概放入交易；不可假設已提交的破壞性 DDL 或外部副作用能靠同一 ROLLBACK 還原。[SQLite transaction](https://sqlite.org/lang_transaction.html)、[VACUUM](https://sqlite.org/lang_vacuum.html)
 
+### 7.4 選取案例的固定執行集合
+
+令 S(r) 為本次所選 source_cases；E(r) 為固定完成基線內、明確映射到 S(r) 的所有不同 test_definition_id。選案例 a 時須包含 test-a 與 test-a-extra，不能只取第一筆 mapping。run 在完成版本、來源 hash、scope 與 discovery 集合檢核後才建立；run 與兩組選取資料同交易保存。
+
+~~~sql
+-- 本次 run/source_ref/baseline 及 run_source_cases 已以綁定參數寫入同一交易。
+INSERT INTO run_test_selection(run_id, test_definition_id)
+SELECT DISTINCT :run_id, t.id
+FROM baseline_documents bd
+JOIN baselines b ON b.id=bd.baseline_id
+JOIN document_versions v ON v.id=bd.document_version_id
+JOIN test_definitions t ON t.spec_version_id=v.id
+JOIN test_case_mappings m ON m.test_definition_id=t.id
+JOIN run_source_cases selected
+  ON selected.source_case_id=m.source_case_id AND selected.run_id=:run_id
+WHERE b.id=:baseline_id AND b.valid=1 AND v.test_stage='COMPLETED';
+~~~
+
+E(r) 為空、映射缺漏／歧義或選取案例不屬該基線即拒絕，不建立可被當成成功的空 run。多 test 對一 case 維持允許；若同一 test 同時代表選取與未選案例，選取執行回報 MAPPING_AMBIGUOUS，先於 TESTS 拆成可獨立選取的 tests，不偷偷擴大範圍。ALL_REQUIRED 使用基線的全部必要案例；INDEPENDENT 沿用獨立腳本執行，不強加 Gherkin 關聯。
+
 ## 8. 核心 API、事件與可觀察結果
 
 以下為設計契約，不是已運作的 endpoints：
@@ -483,8 +568,12 @@ target DB 的當次 DDL／DML 必須在其 SD 列出真實 schema、影響欄位
 | GET /documents/{id}/versions/{v}/structure | 需求／Scenario／steps／Examples 或 tests／mappings；版本固定 |
 | POST /requirements/{r}/confirm-gherkin、confirm-sd | versionId/hash → 確認並移至下一階段 |
 | POST /requirements/{r}/return | artifact kind → 所屬階段與下游失效 |
-| POST /requirements/{r}/generate-tests、complete-tests | 確認文件與明確 steps／LLM slots → 候選 spec 原文與 manifest／待補項 |
-| POST /requirements/{r}/start-development、verify | 固定測試／程式基線 → IMPLEMENTATION／run |
+| POST /requirements/{r}/generate-tests | 確認文件版本/hash、pattern／slot 宣告 → SKELETON version/hash 與 manifest；不載入補齊實作 |
+| POST /requirements/{r}/complete-tests | skeletonVersionId/hash、確認文件與補齊 context → 另存 COMPLETION_DRAFT／COMPLETED version/hash、sourceSkeleton 與 questions |
+| GET /requirements/{r}/scenario-tests | 固定 gherkinVersionId 與 skeleton snapshot 或 testBaselineId → Scenario／Examples、全部 test IDs、readiness；可附指定 run 結果 |
+| POST /requirements/{r}/start-development | 固定完成測試基線 → IMPLEMENTATION；骨架／待補稿不可前進 |
+| POST /requirements/{r}/verify | testBaselineId/hash、sourceRef、selection.mode 與 sourceCaseIds → runId、scope、完整 expectedTestDefinitionIds；只接受可驗證固定版本 |
+| GET /runs/{id}/viewer-binding | runId → 當前 testDefinitionId／caseResultId、sessionId、contextRef、pageId、bindingSeq；尚無頁面則明確未綁定 |
 | POST /repository-snapshots | repo／branch／commit／path → target spec 逐字副本；不寫 Git |
 | GET／POST /db-connections/{id}/schema、query | 真實 schema／SQL 與參數 → 真實資料／錯誤 |
 | POST /terminals、WS /terminals/{id} | workspace、input／resize／close ↔ 實際 output／exit |
@@ -494,18 +583,29 @@ target DB 的當次 DDL／DML 必須在其 SD 列出真實 schema、影響欄位
 | POST /scripts/{id}/versions/{v}/replay | 固定 DB 腳本版本／目標 → 實際 run；保存成功不是通過 |
 | GET /runs/{id}/report、/screenshots/{id} | 真實測試、來源映射、逐步結果、圖片及錯誤 |
 
-事件封套為 { eventId, projectId, requirementId?, documentVersionId?, sessionId?, runId?, testKey?, scenarioId?, stepId?, type, payload }。事件僅供 UI 與程序交換狀態，不做 audit 功能：
-document.saved／rejected、workflow.stageChanged、artifact.invalidated、test.generated／needsInput、browser.frame／pageChanged、recording.started／stopped／saved、terminal.output／exited、db.executed、run.stepFinished／completed。
+事件封套為 { eventId, projectId, requirementId?, documentVersionId?, runId?, testDefinitionId?, sourceCaseId?, sessionId?, contextRef?, pageId?, bindingSeq?, testKey?, scenarioId?, stepId?, actionIndex?, type, payload }。事件僅供 UI 與程序交換狀態，不做 audit 功能：
+document.saved／rejected、workflow.stageChanged、artifact.invalidated、test.skeletonGenerated／completionSaved／needsInput、run.testStarted／browserBound、browser.frame／pageChanged、recording.started／stopped／saved、terminal.output／exited、db.executed、run.stepFinished／completed。
 
 進度回應及報告區別 parser、mapping、typecheck、discovery、execution 各自的狀態；沒有執行的檢查顯示 NOT_RUN，不以共用「成功」圖示混為同一結果。
+
+### 8.1 從清單點選到執行與結果
+
+1. 清單由所選 Gherkin 版本的 scenarios／source_cases 與指定快照的 mapping 生成，列出 Scenario ID、case_id、全部 test IDs。只有骨架或補齊草稿時顯示「待補齊」，execution=NOT_RUN；不沿用舊版成功色。要求正式執行時回 TESTS_PENDING_COMPLETION，不啟動驗收 run。
+2. 完成 LLM 補齊、固定測試基線及程式版本後，使用者點案例 a。請求明訂 selection.mode=SELECTED_CASES 及非空 sourceCaseIds；ALL_REQUIRED 另用明確 mode，不以空選取暗示執行全案。application 依 §7.4 解析 E(r)，保存來源版本／hash、scope、選取 cases／tests 與 runner 設定快照。
+3. TestRunner adapter 在固定檔案與設定下 discovery，將每個穩定 testKey annotation 解析為唯一的 runner project／spec path／完整 title。以 Playwright 公開 --test-list 的完整條目與指定 project 執行；line/column 在此選項被忽略，不能拿它們當精確 test ID。準備 filter 後再 list 核對選取 ID 集合必須等於 E(r)，零個、多個歧義、缺少或多出 ID 均拒絕。不使用模糊 title grep、skip 或 --pass-with-no-tests 代替精確選取。[官方 CLI／Test list](https://playwright.dev/docs/test-cli#test-list)
+4. runner 固定所選 project，不透過 project dependencies 順便執行未選案例；必要 fixtures/hooks 屬所選 tests 的前置。每個實際 testStarted 再比對 E(r)，並由 managed fixture 發布該 run/test 的 browser 綁定；不得執行 test-b 來完成選取 a 的請求。這是測試集合控制，不新增使用者權限／忙碌處理。
+5. 右側訂閱當前綁定的實際畫格；case_result／step_result／screenshots 與事件皆附同 run、test、case、step、session/context/page 識別。每步 actual/expected 與結果回到清單及報告。未選 b 在本 run 顯示 selected=false、NOT_RUN，不建立 PASSED 結果。
+6. 報告以 E(r) 計算本次 run 成敗，另列全案必要集合與未執行數。origin=target_ci 表示測試定義以 target Git 為權威；實際執行器記於 run 快照，工作台的局部執行不冒充 target CI 全套成功。只有 ALL_REQUIRED 且全部必要結果完整通過可使需求 VERIFIED。
 
 ## 9. 同會話瀏覽器、親自錄製與重播
 
 ### 9.1 即時觀看及使用者輸入
 
-BrowserSession adapter 在既有雲端 workspace 內建立 managed browser/context；agent 與程式的 fixture 取得同一個 context／pages。以 sessionId/contextRef/pageId 明確尋址，viewer 訂閱被操作的同一 page，而非另開相同 URL。任意外部程式自行 launch 的 browser 不會自動接入；需使用 managed fixture 或實作其接入 adapter。
+BrowserSession adapter 在既有雲端 workspace 內建立 managed browser/context；agent、程式及測試 runner 的 fixture 依 sessionId/contextRef/pageId 取得同一個被操作會話。browser 可有多個 context，不要求 contexts().length=1。任意外部程式自行 launch 的 browser 不會自動接入；managed fixture／內部 resolver 負責接線，UI 不取得未保護的公開 debug endpoint。
 
 page.screencast.start({ onFrame }) → WS binary JPEG ＋ timestamp／viewportWidth／viewportHeight／pageId → Vue canvas。只保留最新待呈現畫格，避免畫面過時；畫格尺寸可能受既有 trace／video 設定影響。fps 選項只控制 path 影片輸出，不能拿它承諾 onFrame 即時速率。BrowserContext 是會話狀態容器，並非可嵌入畫面；本案不以 iframe 載入任意目標網站、不使用 noVNC。[官方 Screencast](https://playwright.dev/docs/api/class-screencast#screencast-start)
+
+AC-WB-028 的右側 viewer 綁定 activeRunId／currentTestDefinitionId／caseResultId／sessionId／contextRef／pageId／bindingSeq。runner 開始下一 test 或切換 appPage／dbPage 時更新綁定並遞增 seq；只接受與當前完整 tuple 相符的 frame。延遲到達的舊 run/test/page 畫格不覆蓋目前畫面；等待頁面、結束或中斷時顯示真實狀態，不把最後一張靜態圖繼續標成 live。多個所選 tests 可各自建立 context，viewer 追蹤目前實際 test 的 page；不另開相同 URL 模擬測試過程。此綁定資料只支援正確畫面關聯，不新增控制權交接或 audit。
 
 使用者在 viewer 親自點擊、鍵入、捲動及導覽：canvas 事件攜帶 pageId 與實際 viewport 座標，後端呼叫 page.mouse／keyboard／goto；不能把 letterbox 或 CSS 縮放後座標直接當目標座標。分頁／popup 有自己的 pageId，頁面切換後更新串流。導航欄、分頁選擇與 locator／assertion 編輯器屬工作台 UI；不是把遠端瀏覽器桌面硬嵌進網站。工作台 DB 頁不遞迴嵌入自己的 viewer。
 
@@ -535,22 +635,34 @@ BrowserSession 與 PTY 分別有 created／running／closed 或 exited 狀態。
 
 重播預設建立新的 context，保留保存的起始 URL／明確前置計畫，不能假設人類先前 cookie 或臨時頁面永遠存在。人類錄製與 agent／程式觀看各自明確指定使用的 session；本次不新增控制權租約、忙碌排隊 UI、交接或閒置配額。環境不支援所需能力時回報真實不可用，不修改雲端安全設定。
 
-## 11. 測試產生、LLM 與證據鏈
+## 11. codegen 快照、LLM 補齊快照與兩個測試 commit
 
-生成輸入：已確認 Gherkin version/hash、SD version/hash、明確 step registry／fixtures、generator 版本。生成輸出：spec.ts 原文、明確 test IDs、來源 manifest、案例／步驟位置。
+### 11.1 先保存 codegen 骨架
 
-本次 43 是來源展開案例數，不是固定測試數；LLM 補齊後可有更多不同 test ID 對同一來源案例，全部納入測試基線與報告。
+輸入為確認的 Gherkin／SD version/hash、generator／adapter 版本，以及明確 step patterns／參數／slot 宣告。輸出為 SKELETON spec.ts、穩定 test IDs、來源 manifest 及待補狀態。本次應有 28 個 Scenario ID／44 個來源展開案例；它們不是 LLM 補齊後測試數的上限。
 
-- parser 展開普通 Scenario 及 Scenario Outline／Examples；Background steps 加入對應執行案例。來源 case 使用穩定 scenario_key/case_key，保留 AST 位置及展開後值。
-- 確定性 emitter 產 Playwright Test 與逐步 driver 呼叫；每個輸出 test 在 manifest 帶 requirementId、gherkinVersionId/hash、scenarioKey、caseKey、step refs、spec path 與明確 testKey。不得靠測試名稱文字相似度比對。
-- 未定義 steps 阻擋生成；有定義但未實作就明確失敗，不能空函式、catch-all、skip、刪案例。既有 playwright-bdd 的 fail-on-gen 可作行為參考，未宣稱本專用 emitter 已完成。[官方選項](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/docs/configuration/options.md)
-- LLM 只在 TESTS 補 locator、操作、fixtures 及斷言；缺驗收資訊回 needs_input，不能更改已確認 feature／SD 或偷偷移除測試。可新增不同 test ID 補同一來源案例，並通過明確映射檢查。
-- 語法／映射完成之後，後續 TESTS 階段另做型別檢查及 Playwright discovery，全部必要 steps／預期結果補齊才固定 bundle；入庫語法通過本身不滿足這些條件。
-- IMPLEMENTATION 的 LLM 只改產品程式；發現需求或測試問題須 ReturnToStage，重新完成下游。VERIFICATION 不生成或修補測試。
+骨架只含測試結構、Given/When/Then 分派或明確 completion slots、來源案例／step 對應；不含實際 locator、操作、業務斷言、DB fixture、重登入或截圖實作。為讓 bddgen 註冊 pattern 而存在的 stub 一旦執行必須拋 UnimplementedStepError；生成／list／型別檢查可成功，completionStatus 仍 PENDING，不能標成完整可執行驗收測試或 PASSED。
 
-LlmProviderPort 為 generateSd(context)、completeTests(context)、proposeImplementation(context)；傳回提案 files／patches、questions、usage。application 檢查產物階段後保存，不將模型回覆直接當成已執行命令或成功結果。
+skeleton manifest 綁定 skeletonVersionId／raw hash、Gherkin／SD version/hash、generator 版本、testKey／sourceCase／step／slot IDs 及 manifest hash；codegen 的輸入 hash 不混入後階段的 world／操作／DB／截圖實作。保存後版本不可變，重新 codegen 建立另一快照，不直接覆寫既有殼或已補齊版本。未註冊或歧義的 step 阻擋生成；已註冊 pending slot 不因尚無產品實作而阻擋生成。[bddgen 缺 step 選項](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/docs/configuration/options.md)
 
-證據鏈為：需求／Scenario 穩定 ID → 已確認 Gherkin/SD version/hash → spec version/hash 與明確 mapping → 測試 baseline/hash → 被驗證 source commit/snapshot → run → 每個 test/case → source step/action → actual／expected／截圖／錯誤。Git CI 額外固定實際 tested commit，DB 腳本 run 固定 scriptVersionId。LLM 產生的對應只能是候選，不能取代執行證據。
+### 11.2 再由 LLM 另存補齊版本
+
+CompleteTests 明確指定 sourceSkeletonVersionId/hash 及其確認文件。LLM 產出另一份 COMPLETION_DRAFT／COMPLETED spec 快照或其 implementation modules，包含真正操作／locator／斷言／fixtures／DB UI 驗證／逐步截圖與報告接線；不得改寫骨架快照、批准文件、原 testKey／來源案例，或以刪測試補齊。可新增唯一 testKey 補同一來源 case，維持多對一及完整映射。
+
+補齊 manifest 保留來源 skeleton version/raw hash/manifest hash、確認文件版本、完整 test／step 映射及實作檔 hash。語法及明確映射有效的待補稿可保存為 COMPLETION_DRAFT；未解決 slot 或 questions 仍顯示待補齊。型別、discovery、所有必要操作與真實斷言及證據實作檢查完成後才標 COMPLETED、固定 baseline，開始產品開發。沒有產品時不要求先得到 E2E 綠燈；runtime 結果仍 NOT_RUN。
+
+AC005 的完整與缺預期資訊分支使用獨立輸入：缺資訊分支必須在 Gherkin／SD／context 全部找不到所需預期值，回傳 questions／needs_input 並保留待補狀態。不得一面提供可用的 expected 值，一面無條件要求 needs_input。這是補齊階段的測試資料問題，不阻擋 codegen。LlmProviderPort 仍為 generateSd、completeTests、proposeImplementation，輸出提案 files/patches、questions、usage；application 按階段保存，模型文字不作執行或成功證據。
+
+### 11.3 本 bdd 專案的兩個可比較 commit
+
+本版 SD 確認後才依使用者原授權恢復兩個 local commits，兩者固定相同的 28／44 feature 與已確認 SD hash，不改既有 Git 歷史，也沒有 push 授權：
+
+1. **Commit 1：codegen skeleton。** 必要套件／設定、明確 pending registry/stubs、生成殼、案例／step 映射與來源 hash、生成／list／型別／重現及 pending 拒絕假綠燈的工具證據。尚未落 Git 的已確認 feature／SD 基準一併保存以可重現。不得帶入完整 world、操作、斷言、DB、截圖或報告實作，codegen 也不得依賴它們。
+2. **Commit 2：LLM completion。** 在 commit 1 之上，新增獨立補齊版本／modules、fixtures、真實操作／斷言／DB UI／截圖及報告測試實作、完成狀態與對來源殼 hash 的引用。保留 commit 1 的骨架檔與快照；使用不同輸出目錄或版本檔，不能重跑 generator 蓋掉已保存殼或補齊碼。檢查及報告區分工具成功與產品 E2E 的 NOT_RUN／實際結果。
+
+產品的 SQLite 版本與本 repo 的 Git commits 是兩種保存機制；codegen→completion 的內容分界相同，不把「每次產品補齊都必須新增 Git commit」變成額外功能。已保存的完整舊稿與骨架備份只作可恢復參考，不自動當成本版完成基線；舊 27／43 證據須在新 SD 確認後重建。
+
+證據鏈為：需求／Scenario ID → 確認 Gherkin/SD version/hash → codegen skeleton version/hash/slots → completion version/hash／明確映射 → 固定完成 baseline＋程式版本 → run scope／所選 cases／完整 E(r) → 實際 test → session/context/page／source step/action → actual/expected／截圖／結果。LLM 提案與生成殼都不能取代執行證據。
 
 ## 12. DB UI、人類流程測試及報告
 
@@ -596,25 +708,25 @@ role A 只能讀文件，B 能改文件但不能管理帳號。這兩條真實 a
 
 拒絕管理帳號操作的資料比較基準是「已改 B、拒絕操作之前」，不誤拿原先 A 值當未變更基準。fixture 初始化計畫與測試 baseline 綁定；驗證只執行該計畫。不能用 Node 直接 SQL 取代 feature 要求的 DB UI 流程。
 
-driver 對每個操作／assertion 記 actionIndex、sourceStepId、pageId，於步驟完成後 page.screenshot()，以 testInfo.attach 附加並存 artifact/hash；前置圖標 precondition，失敗圖標 failure。截圖失敗不吞掉 assertion 錯誤，圖片成功也不使測試成功。[Screenshot API](https://playwright.dev/docs/api/class-page#page-screenshot)、[testInfo.attach](https://playwright.dev/docs/api/class-testinfo#test-info-attach)
+driver 對每個操作／assertion 記 runId、testDefinitionId、sourceCaseId、actionIndex、sourceStepId、sessionId/contextRef/pageId/bindingSeq，於步驟完成後 page.screenshot()，以 testInfo.attach 附加並存 artifact/hash；前置圖標 precondition，失敗圖標 failure。截圖失敗不吞掉 assertion 錯誤，圖片成功也不使測試成功。[Screenshot API](https://playwright.dev/docs/api/class-page#page-screenshot)、[testInfo.attach](https://playwright.dev/docs/api/class-testinfo#test-info-attach)
 
 ### 12.3 報告及不可假綠燈
 
-報告列來源種類、需求／Scenario／Examples、每個 test ID、原文與基線版本/hash、target commit／實際 tested commit 或 DB scriptVersion、環境與初始計畫、逐步 expected/actual、截圖與錯誤。多個 test 同一來源案例時全部列出，不能只保留其中一個結果。錄製／整合重播與標準 CI 分開列示。
+報告列 runId、execution_scope、所選 source cases、E(r)、實際執行 tests、全案必要數及未選未執行數；並列來源種類、需求／Scenario／Examples、各 test ID、骨架／完成版本與基線/hash、target commit／實際 tested commit 或 DB scriptVersion、環境與初始計畫、每步 expected/actual、session/context/page、截圖與錯誤。同一案例的全部映射 tests 都列出。未選 b 不產成功結果，不挪用其他 run 的成功。錄製／整合重播與標準 Git 測試分開列示。
 
-PASSED 需要固定版本的所有必要案例及測試實際執行、斷言通過、必要逐步／失敗證據完整。0 案例、遺漏案例／steps、未實作、無斷言、僅保存文件／截圖、未執行、缺證據、中斷或不同 commit 的舊結果都不能填通過。失敗為 FAILED，執行或證據不完整為 INCOMPLETE，上游改動後為 INVALID，尚未執行為 NOT_RUN。先保存真實結果再輸出 HTML／JSON，不讓 LLM 的成功文字決定結果。
+單次 run 的 PASSED 需要 E(r) 中全部必要 tests 實際執行、斷言通過、必要逐步／失敗證據完整；某選取 case 的全部映射 tests 都通過才標該 case 通過。SELECTED_CASES 即使 PASSED，coverageComplete 仍為 false，需求不變成 VERIFIED；只有 ALL_REQUIRED 完整通過才能代表全案通過。E(r) 為零、E(r) 內遺漏 test／steps、未實作、無斷言、僅保存文件／截圖、未執行、缺證據、中斷或不同 commit 的舊結果都不能填通過。未選案例不是局部 run 的遺漏，但必須保留全案未完整狀態。失敗為 FAILED，執行或證據不完整為 INCOMPLETE，上游改動後為 INVALID，尚未執行為 NOT_RUN。先保存真實結果再輸出 HTML／JSON，不讓 LLM 的成功文字決定結果。
 
 ## 13. 實作順序、文件覆蓋及待核准事項
 
-SD 核准後才進 TESTS：先建立明確 steps／fixtures、generator 與語法／映射檢核案例；完成型別檢查與 discovery 後固定測試。再依測試實作 domain／SQLite／Vue API UI、Git／PTY／browser／recorder／LLM adapters；最後固定程式與測試版本跑全部必要驗證並產報告。這是同一核心範圍的實作順序，不用分期刪掉 DB UI、親自錄製或真正重播。
+本 SD 0.4 核准後才恢復 TESTS：先做純 codegen 快照及第一個 commit，再做獨立 LLM 補齊快照／操作／斷言／fixtures／證據實作與第二個 commit；必要檢查完成後才固定完成測試基線。接著才依測試實作產品，最後固定版本驗證 AC028 的清單→選取→runner→右側畫面→同 run 結果鏈。這是既有核心的先後順序，不刪減 DB UI、錄製或重播。
 
 | AC | 本 SD 對應 |
 |---|---|
 | AC-WB-001 | §1 Git 自舉及本次核准基準；§4 階段 |
 | AC-WB-002 | §3 共用 Project／Store；§5 文件；§8 API |
 | AC-WB-003 | §4 確認 Gherkin→SD；§6 版本/hash；§7 DDL/DML |
-| AC-WB-004 | §2、§11 明確 steps 與 TS emitter／來源 manifest |
-| AC-WB-005 | §11 LLM 補齊及 needs_input |
+| AC-WB-004 | §2、§4、§11.1 純 codegen 骨架／pending slots／來源 manifest |
+| AC-WB-005 | §4、§11.2 獨立補齊快照、兩種輸入及 needs_input |
 | AC-WB-006 | §4、§11 固定測試後開發 |
 | AC-WB-007 | §7、§12 真實 SQLite schema／SQL／重新讀取 |
 | AC-WB-008 | §10 PTY 真實 I/O |
@@ -637,10 +749,11 @@ SD 核准後才進 TESTS：先建立明確 steps／fixtures、generator 與語�
 | AC-WB-025 | §6.2、§7.2 明確 tests／來源映射及多對一 |
 | AC-WB-026 | §6.2、§7.2 缺失／重複／不存在引用的拒絕 |
 | AC-WB-027 | §5、§7.2、§9.3 無關聯自錄仍可保存與重播 |
+| AC-WB-028 | §4 待補／完成分界；§7.4 完整選取集合；§8.1 清單到執行；§9.1 同 run/test/session/page；§12.3 局部與全案結果 |
 
-本次僅做文件靜態一致性檢查：feature 定稿 hash 不變、27/43 語法解析、AC 覆蓋、DDL 的鍵／FK／空值與交易設計檢閱、README／review metadata 相符；**未執行 SQL、型別檢查、生成、build 或 E2E**。DDL 可執行性、browser／recorder 整合及效能仍待後續階段真實驗證，不能把文件檢查當成產品通過。
+本輪僅做文件靜態一致性檢查：固定 28／44 feature 的 hash、AC001～028 覆蓋、骨架／補齊邊界、DDL 鍵／FK／空值及執行集合／viewer 關係；**未執行 SQL、型別檢查、生成、build 或 E2E，也未改測試／README／review metadata**。DDL、runner 精確選取、實際串流與報告仍待本 SD 確認後驗證。舊工具結果不能當成本版通過。
 
-請使用者審閱此版本 SD，重點為六邊形模組、SQLite 原文／投影／版本模型、明確映射、專用 TypeScript 生成 adapter，以及 Screencast＋自有網頁錄製的邊界。Vue、SQLite、獨立錄製與多對一已是確定需求；這次待確認的是實現設計。SD 仍 pending approval，未獲確認前不進入測試生成或產品開發。
+請審閱本版的兩個快照／commit 分界、案例到完整 test 集合的精確選取、右側同 run/current test/session/page，以及局部／全案結果判定。Vue、六邊形、SQLite、獨立錄製及多對一維持既有範圍。本版仍 pending approval；確認後才恢復兩個測試 commit，本輪不 commit／push。
 
 ## 官方依據索引（2026-10-17 查核）
 
@@ -651,5 +764,6 @@ SD 核准後才進 TESTS：先建立明確 steps／fixtures、generator 與語�
 - [SQLite CREATE TABLE／NULL](https://sqlite.org/lang_createtable.html)、[Foreign keys](https://sqlite.org/foreignkeys.html)、[Transaction](https://sqlite.org/lang_transaction.html)、[VACUUM](https://sqlite.org/lang_vacuum.html)。
 - [Playwright Screencast](https://playwright.dev/docs/api/class-screencast#screencast-start)、[pickLocator](https://playwright.dev/docs/api/class-page#page-pick-locator)、[BrowserContext](https://playwright.dev/docs/api/class-browsercontext)。
 - [Playwright codegen](https://playwright.dev/docs/codegen)、[Trace Viewer](https://playwright.dev/docs/trace-viewer)、[Screenshots](https://playwright.dev/docs/api/class-page#page-screenshot)、[Attachments](https://playwright.dev/docs/api/class-testinfo#test-info-attach)。
+- [Playwright CLI／Test list](https://playwright.dev/docs/test-cli#test-list)：--list、--test-list、--project、--no-deps 與定位語意。
 - [playwright-bdd 9.2.1 generation paths](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/src/generate/paths.ts)、[缺步驟設定](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/docs/configuration/options.md)。
 - [node-pty](https://github.com/microsoft/node-pty)、[xterm.js](https://xtermjs.org/docs/)、[GitHub CI variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables)。
