@@ -1,0 +1,7 @@
+$ node node_modules/playwright-bdd/dist/cli/index.js test --config playwright.negative.config.ts
+expectedExit=1
+actualExit=1
+Error: Multiple definitions matched scenario step.
+Step: Given ambiguous fixture step # .bddgen-negative/ambiguous.feature:3:1
+  - Given 'ambiguous fixture step' # tests/skeleton/negative.steps.ts:4
+  - Given 'ambiguous fixture step' # tests/skeleton/negative.steps.ts:5

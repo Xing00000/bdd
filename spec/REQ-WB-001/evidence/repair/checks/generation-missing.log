@@ -1,0 +1,11 @@
+$ node node_modules/playwright-bdd/dist/cli/index.js test --config playwright.negative.config.ts
+expectedExit=1
+actualExit=1
+Missing step definitions: 1
+
+Given('unregistered fixture step', async ({}) => {
+  // Step: Given unregistered fixture step
+  // From: .bddgen-negative/missing.feature:3:1
+});
+
+Use snippets above to create missing steps.

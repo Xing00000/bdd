@@ -1,0 +1,3 @@
+$ node node_modules/playwright-bdd/dist/cli/index.js test --config /workspace/bdd/.test-fixtures/native-bdd-proof/proof.config.ts
+expectedExit=0
+actualExit=0

@@ -1,0 +1,72 @@
+{
+  "scope": "TEST_IMPLEMENTATION_CHECKS",
+  "repairBaseCommit": "f8678bdc59dbcd582bb9cdb3cc8be4060a9e6efe",
+  "manifestPath": "spec/REQ-WB-001/evidence/repair/generation-manifest.json",
+  "manifestSha256": "2e589c6d013f7060b25a881e7087965289fa91d7e45489501d18615c6e98b1ad",
+  "reviewPath": "spec/REQ-WB-001/evidence/repair/case-review.json",
+  "reviewSha256": "a75f7914dc86c8b5be051325c67d2473afab95a4aaf65d23a89b5bc7ed65cf15",
+  "implementationStatus": "CHECKED",
+  "artifactStage": "COMPLETED",
+  "readinessDerivedFrom": "Generation, exact mapping, 44 source-case code reviews, traced outcome assertions, TypeScript, default discovery, unit rejection checks and actual native BDD positive/negative runtime probes",
+  "productE2E": "NOT_RUN",
+  "checks": [
+    {
+      "name": "generate",
+      "command": "node tools/completion/generate.mjs",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/repair/checks/generate.log",
+      "logSha256": "0fc4a82356dcbc829f998898956fcd69ccbad595a14633b4d3fec60044f529aa"
+    },
+    {
+      "name": "mapping-review",
+      "command": "node tools/completion/verify.mjs",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/repair/checks/mapping-review.log",
+      "logSha256": "63ca8e42aca7911bf268de21ad6e61d642b129038a692920d76bd307bbfcff9e"
+    },
+    {
+      "name": "default-list",
+      "command": "node node_modules/@playwright/test/cli.js test --list --reporter=list",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/repair/checks/default-list.log",
+      "logSha256": "aeb98293a6a9f116e81aa0d079916a4e6574f1994c04021d32132a10c2b1d0db"
+    },
+    {
+      "name": "typecheck",
+      "command": "node node_modules/typescript/bin/tsc --noEmit -p completion.tsconfig.json",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/repair/checks/typecheck.log",
+      "logSha256": "a9fbcb01bafe0a4aedf8a5845121af4267322e45b8e9423b03565d763dcebcdb"
+    },
+    {
+      "name": "tooling",
+      "command": "node --import ./tools/completion/register-ts.mjs --test tools/completion/tooling.test.mjs",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/repair/checks/tooling.log",
+      "logSha256": "a48872e420df956daea7636616120e997995da3d14757d29953286278083c853"
+    },
+    {
+      "name": "runtime-probes",
+      "command": "node tools/completion/probes.mjs",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/repair/checks/runtime-probes.log",
+      "logSha256": "9551a69c2391e311f32335e290d1e9dcabd00b1fd5e333503a6cf7ba622af494"
+    }
+  ],
+  "allToolChecksPassed": true,
+  "productPrerequisites": {
+    "actualExit": 2,
+    "expectedExit": 2,
+    "classification": "ENVIRONMENT_BLOCKED",
+    "productE2E": "NOT_RUN",
+    "executionAttempted": false,
+    "log": "spec/REQ-WB-001/evidence/repair/checks/product-prerequisites.log",
+    "logSha256": "c7c7054b1e97467499e0b6888e1fd85ae7266d93987b17af54a1fa4296dfbb67"
+  },
+  "browserInstallation": {
+    "receipt": "spec/REQ-WB-001/evidence/repair/browser-install.json",
+    "classification": "BLOCKED",
+    "httpStatus": 403,
+    "sandboxDisabled": false
+  }
+}

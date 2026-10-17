@@ -1,0 +1,3 @@
+$ node tools/completion/probes.mjs
+exitCode=0
+{"scope":"TEST_TOOL_LINKAGE_NOT_PRODUCT_E2E","nativeBddPositive":{"actualExit":0,"passed":1},"nativeBddNegative":{"actualExit":1,"failed":1},"missingGenerationRejected":true,"ambiguousGenerationRejected":true,"defaultPointsToCompleted":true,"defaultExecution":{"classification":"ENVIRONMENT_BLOCKED","actualExit":1,"failed":1,"passed":0,"skipped":0},"skeletonExecution":{"classification":"EXPECTED_UNIMPLEMENTED_FAILURE","actualExit":1,"failed":1,"passed":0,"skipped":0},"productE2E":"NOT_RUN"}

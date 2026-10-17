@@ -1,0 +1,3240 @@
+{
+  "schemaVersion": 2,
+  "artifactStage": "COMPLETION_DRAFT",
+  "completionStatus": "IMPLEMENTATION_CHECKS_PENDING",
+  "productE2E": "NOT_RUN",
+  "requirementId": "REQ-WB-001",
+  "featureSha256": "88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66",
+  "sdSha256": "a0bd73923884da67c0c71be2aaf945319fcb1a5bb380b7c704460989d3b565b4",
+  "sourceSkeleton": {
+    "commit": "95fb2960aa56cce22c17ad40b5cfa535da315a28",
+    "specPath": "generated/skeleton/REQ-WB-001/workbench.feature.spec.ts",
+    "specSha256": "43bab0c675190ce0cfbc6a8635aaf333cc7e5cbf0121010884d0fb073e3167c3",
+    "manifestPath": "spec/REQ-WB-001/evidence/generation-manifest.json",
+    "manifestSha256": "93b2b8c957f67ebf22349c42f6dd471a471ddaa263c3293b21c4325f2aa0ef14",
+    "codegenSnapshotSha256": "014fbc1639a3926ec0578c1649de6408f0acd81b41f492b847d258402028063e"
+  },
+  "previousCompletion": {
+    "commit": "f8678bdc59dbcd582bb9cdb3cc8be4060a9e6efe",
+    "manifestPath": "spec/REQ-WB-001/evidence/completion/generation-manifest.json",
+    "manifestSha256": "748806156ad5131af6b2e281df0975437331e4ab0f5d7fe9946db401df9ce08e"
+  },
+  "rawPath": ".bddgen-negative/completion-native/REQ-WB-001/workbench.feature.spec.js",
+  "rawSha256": "402a1fe92b8a913c71aa54f9afc200eb988885d37f0269b2a0905ee710c7f67d",
+  "specPath": "generated/completed/REQ-WB-001/workbench.feature.spec.ts",
+  "specSha256": "bf762f7809e8adaeb936a19bb2a257f7093e17f1a2530372cf916cf61abf30c9",
+  "generator": {
+    "name": "playwright-bdd",
+    "version": "9.2.1",
+    "command": "WB_COMPLETION_RAW=1 bddgen test --config completion.config.ts",
+    "exitCode": 0,
+    "adapter": "tools/generate.mjs",
+    "adapterSha256": "9a65aadb1d6042e5e81c25518555bee73a72ae5e1c9a660a2e11968d863d7a6c"
+  },
+  "implementationHashes": {
+    "completion.config.ts": "c8546f475917b6a3619db6d3032494f70d6cc7931462871ad689653b3a9830b6",
+    "completion.tsconfig.json": "37086c4b7a1a71b957f2ffe97f292ee32feff858b18c47c1b2c43751118d835a",
+    "package-lock.json": "8348afdd4e0b7c8af4cdf0e60bda9735c0557aa9e566186ab4e44e946745e9be",
+    "package.json": "90ec7f757cb0a0424a1ccf0c22be3ce1293131a793fb36f43835e7a6945cc235",
+    "playwright.config.ts": "1aa378deac069f18dfaa890e61232729d5ec3523dae92294d22b680d801fef7e",
+    "skeleton.config.ts": "aa18cac9d2c233165fcf000bbfffc942169af1d010f57cdca8a3cfbedd1c8a8f",
+    "tests/completion/CONTRACT.md": "d8e38d2924e927b6b20cf8c9d9a8af0aee08c390dde3352fb46ef4188efa5679",
+    "tests/completion/fixtures/content.ts": "d3548c633cab407fb6b93bc020dac0691f262bfc718880f26b52950b4b3e0090",
+    "tests/completion/fixtures/managed-runner.ts": "137a045ccd5d83084f8e7fa410db8ad854ac9d4259376843165f9322b8f7ca13",
+    "tests/completion/fixtures/target.steps.ts": "74148f8c28e69b548b470d76c1b72ebe3afa71c99da98b1247dcb3fdbc50e021",
+    "tests/completion/steps/workbench.steps.ts": "f7af6c864fbc0de95b509eeb71a952e0de193d70cfd5b777a07778bf17c4439a",
+    "tests/completion/support/database.ts": "0241af524eb19eaaabafd603263a3873a9817b4a431d8e48463649666f48df46",
+    "tests/completion/support/evidence.ts": "39dcd8d80a1465d4bd402728686fa17a589b729d744ab30fb23f5552df930e3b",
+    "tests/completion/support/fixtures.ts": "6f5375a96ade4d963960eaf607869d8c768d5495e9062de5da4dcdf740a2e107",
+    "tests/completion/support/managed.ts": "d9891dbb380b1cd98adc2f3c9c9908d0af5404207027a22295206278cf9ca32e",
+    "tests/completion/support/prerequisites.ts": "dc07100470795a72ee376807fbde4c10fe993c3f528027664783a0f1f0ea7b57",
+    "tests/completion/support/reporter.ts": "cd182024c61f0af1fb6a321c84174fce69ed1880ef13a5f9e2128e24351d76ca",
+    "tests/completion/support/selection.ts": "401cba16d42ed747101d80f58699af5e2249a758bbaeb7f45f1fc81409050141",
+    "tests/completion/support/workbench.ts": "9057e3b977becb4b27249455032d2c56e4fbf55c229c2227d2fdaa945ccfe2ec",
+    "tools/completion/analyze.mjs": "bf56d932e0e73aad1c73486314282b2266206a700078bbce667bf1d6e56080d5",
+    "tools/completion/checks.mjs": "b793fc13512dc943bd6c27801b033bf40d8561e35ce060f0486e74163c32f425",
+    "tools/completion/generate.mjs": "60381d58cdb5abebbfaafcdb6678aaf5c6604f1ac61f2b75d7e2fb4cff80c484",
+    "tools/completion/probes.mjs": "f332305b727aa12b092a39fff8a716b11e8ec5838791faa2bb5d4873b2914d7c",
+    "tools/completion/register-ts.mjs": "5efd5ac5971c82086ffb7cc4af8708877c0e36deb2dfcb98a9f3958def1b084a",
+    "tools/completion/reviews.mjs": "84cda94d15ed02980d6012b361887241cc9208744bc167efbca62a36cb5d02c7",
+    "tools/completion/run-e2e.mjs": "f4977f3262c643646645be3d472f85b094e29971757749719e3ccd3c4edac040",
+    "tools/completion/tooling.test.mjs": "8daad5029e43650c7724cff7141e0195ac7a05e8d4d0ac486fd45817cb4fef33",
+    "tools/completion/verify.mjs": "f50ddbbb9c5ffd492ab5b84c2931c79df1784c43d918b57e77245e7119e48bff"
+  },
+  "scenarioCount": 28,
+  "caseCount": 44,
+  "pendingSlots": 0,
+  "implementationProblems": [],
+  "questions": [],
+  "cases": [
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-001",
+      "caseId": "default",
+      "scenarioLine": 12,
+      "exampleLine": null,
+      "pickleLine": 12,
+      "testKey": "REQ-WB-001/AC-WB-001/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "本專案的Gherkin已寫入Xing00000的bdd Git儲存庫",
+        "使用者尚未確認這份Gherkin",
+        "本專案維持等待Gherkin確認且不產生SD或產品實作",
+        "使用者確認Gherkin後再確認對應SD",
+        "本專案才依序進入測試產生補齊與產品實作階段",
+        "本專案的規格與文件與確認紀錄與測試全部保存在Git"
+      ],
+      "generatedLine": 10,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 13,
+          "generatedLine": 11,
+          "keywordType": "Context",
+          "expandedText": "Given 本專案的Gherkin已寫入Xing00000的bdd Git儲存庫",
+          "background": false
+        },
+        {
+          "sourceLine": 14,
+          "generatedLine": 12,
+          "keywordType": "Action",
+          "expandedText": "When 使用者尚未確認這份Gherkin",
+          "background": false
+        },
+        {
+          "sourceLine": 15,
+          "generatedLine": 13,
+          "keywordType": "Outcome",
+          "expandedText": "Then 本專案維持等待Gherkin確認且不產生SD或產品實作",
+          "background": false
+        },
+        {
+          "sourceLine": 16,
+          "generatedLine": 14,
+          "keywordType": "Action",
+          "expandedText": "When 使用者確認Gherkin後再確認對應SD",
+          "background": false
+        },
+        {
+          "sourceLine": 17,
+          "generatedLine": 15,
+          "keywordType": "Outcome",
+          "expandedText": "Then 本專案才依序進入測試產生補齊與產品實作階段",
+          "background": false
+        },
+        {
+          "sourceLine": 18,
+          "generatedLine": 16,
+          "keywordType": "Outcome",
+          "expandedText": "And 本專案的規格與文件與確認紀錄與測試全部保存在Git",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-002",
+      "caseId": "default",
+      "scenarioLine": 21,
+      "exampleLine": null,
+      "pickleLine": 21,
+      "testKey": "REQ-WB-001/AC-WB-002/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "兩位使用者開啟同一個共用專案",
+        "一位使用者在專案保存Gherkin或SD文件",
+        "另一位使用者可在該專案讀取相同文件內容"
+      ],
+      "generatedLine": 19,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 22,
+          "generatedLine": 20,
+          "keywordType": "Context",
+          "expandedText": "Given 兩位使用者開啟同一個共用專案",
+          "background": false
+        },
+        {
+          "sourceLine": 23,
+          "generatedLine": 21,
+          "keywordType": "Action",
+          "expandedText": "When 一位使用者在專案保存Gherkin或SD文件",
+          "background": false
+        },
+        {
+          "sourceLine": 24,
+          "generatedLine": 22,
+          "keywordType": "Outcome",
+          "expandedText": "Then 另一位使用者可在該專案讀取相同文件內容",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-003",
+      "caseId": "default",
+      "scenarioLine": 27,
+      "exampleLine": null,
+      "pickleLine": 27,
+      "testKey": "REQ-WB-001/AC-WB-003/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台顯示專案處於Gherkin確認階段且已有Gherkin草稿",
+        "人類按下確認Gherkin並要求產生SD",
+        "工作台流程狀態顯示SD確認且開啟SD編輯",
+        "產生對應Gherkin的SD草稿供人類確認",
+        "SD包含程式架構以及本次資料庫DDL與DML內容",
+        "人類尚未確認SD時不進入產品開發"
+      ],
+      "generatedLine": 25,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 28,
+          "generatedLine": 26,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台顯示專案處於Gherkin確認階段且已有Gherkin草稿",
+          "background": false
+        },
+        {
+          "sourceLine": 29,
+          "generatedLine": 27,
+          "keywordType": "Action",
+          "expandedText": "When 人類按下確認Gherkin並要求產生SD",
+          "background": false
+        },
+        {
+          "sourceLine": 30,
+          "generatedLine": 28,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示SD確認且開啟SD編輯",
+          "background": false
+        },
+        {
+          "sourceLine": 31,
+          "generatedLine": 29,
+          "keywordType": "Outcome",
+          "expandedText": "And 產生對應Gherkin的SD草稿供人類確認",
+          "background": false
+        },
+        {
+          "sourceLine": 32,
+          "generatedLine": 30,
+          "keywordType": "Outcome",
+          "expandedText": "And SD包含程式架構以及本次資料庫DDL與DML內容",
+          "background": false
+        },
+        {
+          "sourceLine": 33,
+          "generatedLine": 31,
+          "keywordType": "Outcome",
+          "expandedText": "And 人類尚未確認SD時不進入產品開發",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-004",
+      "caseId": "default",
+      "scenarioLine": 36,
+      "exampleLine": null,
+      "pickleLine": 36,
+      "testKey": "REQ-WB-001/AC-WB-004/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "人類已確認專案Gherkin且工作台正顯示SD確認階段",
+        "已備妥Gherkin生成器設定與明確的step definitions",
+        "人類按下確認SD並要求產生測試",
+        "工作台流程狀態顯示test generation/completion",
+        "產生可由Playwright找到的spec.ts檔案",
+        "每個生成案例可對應來源Scenario及Examples列"
+      ],
+      "generatedLine": 34,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 37,
+          "generatedLine": 35,
+          "keywordType": "Context",
+          "expandedText": "Given 人類已確認專案Gherkin且工作台正顯示SD確認階段",
+          "background": false
+        },
+        {
+          "sourceLine": 38,
+          "generatedLine": 36,
+          "keywordType": "Context",
+          "expandedText": "And 已備妥Gherkin生成器設定與明確的step definitions",
+          "background": false
+        },
+        {
+          "sourceLine": 39,
+          "generatedLine": 37,
+          "keywordType": "Action",
+          "expandedText": "When 人類按下確認SD並要求產生測試",
+          "background": false
+        },
+        {
+          "sourceLine": 40,
+          "generatedLine": 38,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示test generation/completion",
+          "background": false
+        },
+        {
+          "sourceLine": 41,
+          "generatedLine": 39,
+          "keywordType": "Outcome",
+          "expandedText": "And 產生可由Playwright找到的spec.ts檔案",
+          "background": false
+        },
+        {
+          "sourceLine": 42,
+          "generatedLine": 40,
+          "keywordType": "Outcome",
+          "expandedText": "And 每個生成案例可對應來源Scenario及Examples列",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-005",
+      "caseId": "default",
+      "scenarioLine": 45,
+      "exampleLine": null,
+      "pickleLine": 45,
+      "testKey": "REQ-WB-001/AC-WB-005/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "已產生對應確認文件的測試骨架",
+        "LLM補齊操作步驟與預期結果的測試內容",
+        "補齊的測試仍對應人類已確認的驗收條件",
+        "缺少預期結果資訊時列出待補內容而不自行改寫驗收條件"
+      ],
+      "generatedLine": 43,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 46,
+          "generatedLine": 44,
+          "keywordType": "Context",
+          "expandedText": "Given 已產生對應確認文件的測試骨架",
+          "background": false
+        },
+        {
+          "sourceLine": 47,
+          "generatedLine": 45,
+          "keywordType": "Action",
+          "expandedText": "When LLM補齊操作步驟與預期結果的測試內容",
+          "background": false
+        },
+        {
+          "sourceLine": 48,
+          "generatedLine": 46,
+          "keywordType": "Outcome",
+          "expandedText": "Then 補齊的測試仍對應人類已確認的驗收條件",
+          "background": false
+        },
+        {
+          "sourceLine": 49,
+          "generatedLine": 47,
+          "keywordType": "Outcome",
+          "expandedText": "And 缺少預期結果資訊時列出待補內容而不自行改寫驗收條件",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-006",
+      "caseId": "default",
+      "scenarioLine": 52,
+      "exampleLine": null,
+      "pickleLine": 52,
+      "testKey": "REQ-WB-001/AC-WB-006/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "Gherkin與SD已確認且測試規格已補齊",
+        "使用者在工作台按下開始開發",
+        "工作台流程狀態顯示implementation",
+        "可使用確認文件與測試作為開發依據",
+        "開發完成後可開始驗證該次開發成果"
+      ],
+      "generatedLine": 50,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 53,
+          "generatedLine": 51,
+          "keywordType": "Context",
+          "expandedText": "Given Gherkin與SD已確認且測試規格已補齊",
+          "background": false
+        },
+        {
+          "sourceLine": 54,
+          "generatedLine": 52,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台按下開始開發",
+          "background": false
+        },
+        {
+          "sourceLine": 55,
+          "generatedLine": 53,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示implementation",
+          "background": false
+        },
+        {
+          "sourceLine": 56,
+          "generatedLine": 54,
+          "keywordType": "Outcome",
+          "expandedText": "And 可使用確認文件與測試作為開發依據",
+          "background": false
+        },
+        {
+          "sourceLine": 57,
+          "generatedLine": 55,
+          "keywordType": "Outcome",
+          "expandedText": "And 開發完成後可開始驗證該次開發成果",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-007",
+      "caseId": "default",
+      "scenarioLine": 60,
+      "exampleLine": null,
+      "pickleLine": 60,
+      "testKey": "REQ-WB-001/AC-WB-007/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "共用專案已有SQLite資料庫連線",
+        "使用者瀏覽schema與資料並執行本次SD內的DDL或DML",
+        "工作台顯示實際schema與資料及SQL執行結果",
+        "重新讀取資料庫時可看到實際變更"
+      ],
+      "generatedLine": 58,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 61,
+          "generatedLine": 59,
+          "keywordType": "Context",
+          "expandedText": "Given 共用專案已有SQLite資料庫連線",
+          "background": false
+        },
+        {
+          "sourceLine": 62,
+          "generatedLine": 60,
+          "keywordType": "Action",
+          "expandedText": "When 使用者瀏覽schema與資料並執行本次SD內的DDL或DML",
+          "background": false
+        },
+        {
+          "sourceLine": 63,
+          "generatedLine": 61,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台顯示實際schema與資料及SQL執行結果",
+          "background": false
+        },
+        {
+          "sourceLine": 64,
+          "generatedLine": 62,
+          "keywordType": "Outcome",
+          "expandedText": "And 重新讀取資料庫時可看到實際變更",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-008",
+      "caseId": "default",
+      "scenarioLine": 67,
+      "exampleLine": null,
+      "pickleLine": 67,
+      "testKey": "REQ-WB-001/AC-WB-008/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案工作區已開啟",
+        "使用者在PTY終端輸入命令並啟動專案程式",
+        "終端顯示該命令或程式的實際輸出",
+        "使用者可繼續透過同一終端輸入"
+      ],
+      "generatedLine": 65,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 68,
+          "generatedLine": 66,
+          "keywordType": "Context",
+          "expandedText": "Given 專案工作區已開啟",
+          "background": false
+        },
+        {
+          "sourceLine": 69,
+          "generatedLine": 67,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在PTY終端輸入命令並啟動專案程式",
+          "background": false
+        },
+        {
+          "sourceLine": 70,
+          "generatedLine": 68,
+          "keywordType": "Outcome",
+          "expandedText": "Then 終端顯示該命令或程式的實際輸出",
+          "background": false
+        },
+        {
+          "sourceLine": 71,
+          "generatedLine": 69,
+          "keywordType": "Outcome",
+          "expandedText": "And 使用者可繼續透過同一終端輸入",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-009",
+      "caseId": "agent",
+      "scenarioLine": 74,
+      "exampleLine": 81,
+      "pickleLine": 81,
+      "testKey": "REQ-WB-001/AC-WB-009/agent",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案已有Playwright瀏覽器會話",
+        "\"agent\"使用Playwright操作該會話的網頁",
+        "工作台內嵌畫面顯示該會話當前的網頁操作結果",
+        "顯示的是操作中的會話而不是事後trace報告"
+      ],
+      "generatedLine": 74,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 75,
+          "generatedLine": 75,
+          "keywordType": "Context",
+          "expandedText": "Given 專案已有Playwright瀏覽器會話",
+          "background": false
+        },
+        {
+          "sourceLine": 76,
+          "generatedLine": 76,
+          "keywordType": "Action",
+          "expandedText": "When \"agent\"使用Playwright操作該會話的網頁",
+          "background": false
+        },
+        {
+          "sourceLine": 77,
+          "generatedLine": 77,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台內嵌畫面顯示該會話當前的網頁操作結果",
+          "background": false
+        },
+        {
+          "sourceLine": 78,
+          "generatedLine": 78,
+          "keywordType": "Outcome",
+          "expandedText": "And 顯示的是操作中的會話而不是事後trace報告",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-009",
+      "caseId": "program",
+      "scenarioLine": 74,
+      "exampleLine": 82,
+      "pickleLine": 82,
+      "testKey": "REQ-WB-001/AC-WB-009/program",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案已有Playwright瀏覽器會話",
+        "\"程式\"使用Playwright操作該會話的網頁",
+        "工作台內嵌畫面顯示該會話當前的網頁操作結果",
+        "顯示的是操作中的會話而不是事後trace報告"
+      ],
+      "generatedLine": 81,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 75,
+          "generatedLine": 82,
+          "keywordType": "Context",
+          "expandedText": "Given 專案已有Playwright瀏覽器會話",
+          "background": false
+        },
+        {
+          "sourceLine": 76,
+          "generatedLine": 83,
+          "keywordType": "Action",
+          "expandedText": "When \"程式\"使用Playwright操作該會話的網頁",
+          "background": false
+        },
+        {
+          "sourceLine": 77,
+          "generatedLine": 84,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台內嵌畫面顯示該會話當前的網頁操作結果",
+          "background": false
+        },
+        {
+          "sourceLine": 78,
+          "generatedLine": 85,
+          "keywordType": "Outcome",
+          "expandedText": "And 顯示的是操作中的會話而不是事後trace報告",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-010",
+      "caseId": "default",
+      "scenarioLine": 85,
+      "exampleLine": null,
+      "pickleLine": 85,
+      "testKey": "REQ-WB-001/AC-WB-010/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "使用者已在工作台開啟可親自操作的內嵌瀏覽器",
+        "使用者按下開始錄製",
+        "使用者親自導覽網頁與點擊及輸入並選擇定位器與預期結果",
+        "使用者按下停止錄製",
+        "產生包含該次操作與斷言的可檢查Playwright TypeScript腳本草稿",
+        "停止後的新操作不再加入該次錄製",
+        "該草稿屬於使用者自錄腳本而不是自動新增的標準CI測試",
+        "不會自動更改Gherkin驗收條件"
+      ],
+      "generatedLine": 90,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 86,
+          "generatedLine": 91,
+          "keywordType": "Context",
+          "expandedText": "Given 使用者已在工作台開啟可親自操作的內嵌瀏覽器",
+          "background": false
+        },
+        {
+          "sourceLine": 87,
+          "generatedLine": 92,
+          "keywordType": "Action",
+          "expandedText": "When 使用者按下開始錄製",
+          "background": false
+        },
+        {
+          "sourceLine": 88,
+          "generatedLine": 93,
+          "keywordType": "Action",
+          "expandedText": "And 使用者親自導覽網頁與點擊及輸入並選擇定位器與預期結果",
+          "background": false
+        },
+        {
+          "sourceLine": 89,
+          "generatedLine": 94,
+          "keywordType": "Action",
+          "expandedText": "And 使用者按下停止錄製",
+          "background": false
+        },
+        {
+          "sourceLine": 90,
+          "generatedLine": 95,
+          "keywordType": "Outcome",
+          "expandedText": "Then 產生包含該次操作與斷言的可檢查Playwright TypeScript腳本草稿",
+          "background": false
+        },
+        {
+          "sourceLine": 91,
+          "generatedLine": 96,
+          "keywordType": "Outcome",
+          "expandedText": "And 停止後的新操作不再加入該次錄製",
+          "background": false
+        },
+        {
+          "sourceLine": 92,
+          "generatedLine": 97,
+          "keywordType": "Outcome",
+          "expandedText": "And 該草稿屬於使用者自錄腳本而不是自動新增的標準CI測試",
+          "background": false
+        },
+        {
+          "sourceLine": 93,
+          "generatedLine": 98,
+          "keywordType": "Outcome",
+          "expandedText": "And 不會自動更改Gherkin驗收條件",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-011",
+      "caseId": "default",
+      "scenarioLine": 96,
+      "exampleLine": null,
+      "pickleLine": 96,
+      "testKey": "REQ-WB-001/AC-WB-011/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "測試被指定為被開發專案的CI測試",
+        "保存測試並在該專案CI執行",
+        "測試檔案跟著該專案Git的branch與commit",
+        "CI結果可對應該專案的實際commit",
+        "工作台可在SQLite保存及讀回該commit對應的spec.ts內容副本",
+        "該資料庫副本不取代target Git的標準CI測試版本或改變CI測試清單"
+      ],
+      "generatedLine": 101,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 97,
+          "generatedLine": 102,
+          "keywordType": "Context",
+          "expandedText": "Given 測試被指定為被開發專案的CI測試",
+          "background": false
+        },
+        {
+          "sourceLine": 98,
+          "generatedLine": 103,
+          "keywordType": "Action",
+          "expandedText": "When 保存測試並在該專案CI執行",
+          "background": false
+        },
+        {
+          "sourceLine": 99,
+          "generatedLine": 104,
+          "keywordType": "Outcome",
+          "expandedText": "Then 測試檔案跟著該專案Git的branch與commit",
+          "background": false
+        },
+        {
+          "sourceLine": 100,
+          "generatedLine": 105,
+          "keywordType": "Outcome",
+          "expandedText": "And CI結果可對應該專案的實際commit",
+          "background": false
+        },
+        {
+          "sourceLine": 101,
+          "generatedLine": 106,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台可在SQLite保存及讀回該commit對應的spec.ts內容副本",
+          "background": false
+        },
+        {
+          "sourceLine": 102,
+          "generatedLine": 107,
+          "keywordType": "Outcome",
+          "expandedText": "And 該資料庫副本不取代target Git的標準CI測試版本或改變CI測試清單",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-012",
+      "caseId": "default",
+      "scenarioLine": 105,
+      "exampleLine": null,
+      "pickleLine": 105,
+      "testKey": "REQ-WB-001/AC-WB-012/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "使用者建立自己的整合測試",
+        "在工作台保存測試定義與目標環境並要求執行",
+        "測試定義與執行紀錄保存在工作台SQLite",
+        "該測試不會自動寫入被開發專案Git"
+      ],
+      "generatedLine": 110,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 106,
+          "generatedLine": 111,
+          "keywordType": "Context",
+          "expandedText": "Given 使用者建立自己的整合測試",
+          "background": false
+        },
+        {
+          "sourceLine": 107,
+          "generatedLine": 112,
+          "keywordType": "Action",
+          "expandedText": "When 在工作台保存測試定義與目標環境並要求執行",
+          "background": false
+        },
+        {
+          "sourceLine": 108,
+          "generatedLine": 113,
+          "keywordType": "Outcome",
+          "expandedText": "Then 測試定義與執行紀錄保存在工作台SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 109,
+          "generatedLine": 114,
+          "keywordType": "Outcome",
+          "expandedText": "And 該測試不會自動寫入被開發專案Git",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-013",
+      "caseId": "default",
+      "scenarioLine": 112,
+      "exampleLine": null,
+      "pickleLine": 112,
+      "testKey": "REQ-WB-001/AC-WB-013/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案開發完成且驗證測試已備妥",
+        "使用者在工作台提交驗證並執行對應E2E測試",
+        "工作台流程狀態顯示verification/report",
+        "報告列出各驗收案例的實際執行結果",
+        "報告可對應Gherkin案例與被驗證的程式版本",
+        "未通過或未執行的案例不被報成通過",
+        "Playwright截圖可對應Scenario與step及該步驟實際結果"
+      ],
+      "generatedLine": 117,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 113,
+          "generatedLine": 118,
+          "keywordType": "Context",
+          "expandedText": "Given 專案開發完成且驗證測試已備妥",
+          "background": false
+        },
+        {
+          "sourceLine": 114,
+          "generatedLine": 119,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台提交驗證並執行對應E2E測試",
+          "background": false
+        },
+        {
+          "sourceLine": 115,
+          "generatedLine": 120,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示verification/report",
+          "background": false
+        },
+        {
+          "sourceLine": 116,
+          "generatedLine": 121,
+          "keywordType": "Outcome",
+          "expandedText": "And 報告列出各驗收案例的實際執行結果",
+          "background": false
+        },
+        {
+          "sourceLine": 117,
+          "generatedLine": 122,
+          "keywordType": "Outcome",
+          "expandedText": "And 報告可對應Gherkin案例與被驗證的程式版本",
+          "background": false
+        },
+        {
+          "sourceLine": 118,
+          "generatedLine": 123,
+          "keywordType": "Outcome",
+          "expandedText": "And 未通過或未執行的案例不被報成通過",
+          "background": false
+        },
+        {
+          "sourceLine": 119,
+          "generatedLine": 124,
+          "keywordType": "Outcome",
+          "expandedText": "And Playwright截圖可對應Scenario與step及該步驟實際結果",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-014",
+      "caseId": "default",
+      "scenarioLine": 122,
+      "exampleLine": null,
+      "pickleLine": 122,
+      "testKey": "REQ-WB-001/AC-WB-014/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "Gherkin含有尚未定義或尚未實作的測試步驟",
+        "產生或執行對應測試",
+        "生成器阻擋缺少定義的步驟或測試明確回報未實作",
+        "不以空函式或刪除驗收案例換取通過"
+      ],
+      "generatedLine": 127,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 123,
+          "generatedLine": 128,
+          "keywordType": "Context",
+          "expandedText": "Given Gherkin含有尚未定義或尚未實作的測試步驟",
+          "background": false
+        },
+        {
+          "sourceLine": 124,
+          "generatedLine": 129,
+          "keywordType": "Action",
+          "expandedText": "When 產生或執行對應測試",
+          "background": false
+        },
+        {
+          "sourceLine": 125,
+          "generatedLine": 130,
+          "keywordType": "Outcome",
+          "expandedText": "Then 生成器阻擋缺少定義的步驟或測試明確回報未實作",
+          "background": false
+        },
+        {
+          "sourceLine": 126,
+          "generatedLine": 131,
+          "keywordType": "Outcome",
+          "expandedText": "And 不以空函式或刪除驗收案例換取通過",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-015",
+      "caseId": "gherkin",
+      "scenarioLine": 129,
+      "exampleLine": 138,
+      "pickleLine": 138,
+      "testKey": "REQ-WB-001/AC-WB-015/gherkin",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台顯示專案目前在\"Gherkin確認\"階段且已有保存內容",
+        "使用者在工作台嘗試保存禁止變更的\"spec.ts\"",
+        "工作台顯示此階段不可修改該產物",
+        "該產物仍為上次保存內容",
+        "工作台只對\"Gherkin\"提供本階段的編輯或執行入口",
+        "\"SD與測試與產品程式\"維持鎖定"
+      ],
+      "generatedLine": 136,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 130,
+          "generatedLine": 137,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台顯示專案目前在\"Gherkin確認\"階段且已有保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 131,
+          "generatedLine": 138,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台嘗試保存禁止變更的\"spec.ts\"",
+          "background": false
+        },
+        {
+          "sourceLine": 132,
+          "generatedLine": 139,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台顯示此階段不可修改該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 133,
+          "generatedLine": 140,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍為上次保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 134,
+          "generatedLine": 141,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台只對\"Gherkin\"提供本階段的編輯或執行入口",
+          "background": false
+        },
+        {
+          "sourceLine": 135,
+          "generatedLine": 142,
+          "keywordType": "Outcome",
+          "expandedText": "And \"SD與測試與產品程式\"維持鎖定",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-015",
+      "caseId": "sd",
+      "scenarioLine": 129,
+      "exampleLine": 139,
+      "pickleLine": 139,
+      "testKey": "REQ-WB-001/AC-WB-015/sd",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台顯示專案目前在\"SD確認\"階段且已有保存內容",
+        "使用者在工作台嘗試保存禁止變更的\"Gherkin\"",
+        "工作台顯示此階段不可修改該產物",
+        "該產物仍為上次保存內容",
+        "工作台只對\"SD文件\"提供本階段的編輯或執行入口",
+        "\"已確認Gherkin與測試與產品程式\"維持鎖定"
+      ],
+      "generatedLine": 145,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 130,
+          "generatedLine": 146,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台顯示專案目前在\"SD確認\"階段且已有保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 131,
+          "generatedLine": 147,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台嘗試保存禁止變更的\"Gherkin\"",
+          "background": false
+        },
+        {
+          "sourceLine": 132,
+          "generatedLine": 148,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台顯示此階段不可修改該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 133,
+          "generatedLine": 149,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍為上次保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 134,
+          "generatedLine": 150,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台只對\"SD文件\"提供本階段的編輯或執行入口",
+          "background": false
+        },
+        {
+          "sourceLine": 135,
+          "generatedLine": 151,
+          "keywordType": "Outcome",
+          "expandedText": "And \"已確認Gherkin與測試與產品程式\"維持鎖定",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-015",
+      "caseId": "tests",
+      "scenarioLine": 129,
+      "exampleLine": 140,
+      "pickleLine": 140,
+      "testKey": "REQ-WB-001/AC-WB-015/tests",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台顯示專案目前在\"test generation/completion\"階段且已有保存內容",
+        "使用者在工作台嘗試保存禁止變更的\"Gherkin或SD\"",
+        "工作台顯示此階段不可修改該產物",
+        "該產物仍為上次保存內容",
+        "工作台只對\"spec.ts與step及測試所需檔案\"提供本階段的編輯或執行入口",
+        "\"已確認Gherkin與SD\"維持鎖定"
+      ],
+      "generatedLine": 154,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 130,
+          "generatedLine": 155,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台顯示專案目前在\"test generation/completion\"階段且已有保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 131,
+          "generatedLine": 156,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台嘗試保存禁止變更的\"Gherkin或SD\"",
+          "background": false
+        },
+        {
+          "sourceLine": 132,
+          "generatedLine": 157,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台顯示此階段不可修改該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 133,
+          "generatedLine": 158,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍為上次保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 134,
+          "generatedLine": 159,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台只對\"spec.ts與step及測試所需檔案\"提供本階段的編輯或執行入口",
+          "background": false
+        },
+        {
+          "sourceLine": 135,
+          "generatedLine": 160,
+          "keywordType": "Outcome",
+          "expandedText": "And \"已確認Gherkin與SD\"維持鎖定",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-015",
+      "caseId": "implementation",
+      "scenarioLine": 129,
+      "exampleLine": 141,
+      "pickleLine": 141,
+      "testKey": "REQ-WB-001/AC-WB-015/implementation",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台顯示專案目前在\"implementation\"階段且已有保存內容",
+        "使用者在工作台嘗試保存禁止變更的\"測試基線\"",
+        "工作台顯示此階段不可修改該產物",
+        "該產物仍為上次保存內容",
+        "工作台只對\"產品程式\"提供本階段的編輯或執行入口",
+        "\"已確認Gherkin與SD及測試基線\"維持鎖定"
+      ],
+      "generatedLine": 163,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 130,
+          "generatedLine": 164,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台顯示專案目前在\"implementation\"階段且已有保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 131,
+          "generatedLine": 165,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台嘗試保存禁止變更的\"測試基線\"",
+          "background": false
+        },
+        {
+          "sourceLine": 132,
+          "generatedLine": 166,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台顯示此階段不可修改該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 133,
+          "generatedLine": 167,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍為上次保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 134,
+          "generatedLine": 168,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台只對\"產品程式\"提供本階段的編輯或執行入口",
+          "background": false
+        },
+        {
+          "sourceLine": 135,
+          "generatedLine": 169,
+          "keywordType": "Outcome",
+          "expandedText": "And \"已確認Gherkin與SD及測試基線\"維持鎖定",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-015",
+      "caseId": "verification",
+      "scenarioLine": 129,
+      "exampleLine": 142,
+      "pickleLine": 142,
+      "testKey": "REQ-WB-001/AC-WB-015/verification",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台顯示專案目前在\"verification/report\"階段且已有保存內容",
+        "使用者在工作台嘗試保存禁止變更的\"程式或測試\"",
+        "工作台顯示此階段不可修改該產物",
+        "該產物仍為上次保存內容",
+        "工作台只對\"執行既定測試與產生結果報告\"提供本階段的編輯或執行入口",
+        "\"Gherkin與SD與測試基線及產品程式\"維持鎖定"
+      ],
+      "generatedLine": 172,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 130,
+          "generatedLine": 173,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台顯示專案目前在\"verification/report\"階段且已有保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 131,
+          "generatedLine": 174,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台嘗試保存禁止變更的\"程式或測試\"",
+          "background": false
+        },
+        {
+          "sourceLine": 132,
+          "generatedLine": 175,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台顯示此階段不可修改該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 133,
+          "generatedLine": 176,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍為上次保存內容",
+          "background": false
+        },
+        {
+          "sourceLine": 134,
+          "generatedLine": 177,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台只對\"執行既定測試與產生結果報告\"提供本階段的編輯或執行入口",
+          "background": false
+        },
+        {
+          "sourceLine": 135,
+          "generatedLine": 178,
+          "keywordType": "Outcome",
+          "expandedText": "And \"Gherkin與SD與測試基線及產品程式\"維持鎖定",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-016",
+      "caseId": "gherkin",
+      "scenarioLine": 145,
+      "exampleLine": 155,
+      "pickleLine": 155,
+      "testKey": "REQ-WB-001/AC-WB-016/gherkin",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案已有測試基線與驗證結果",
+        "使用者在工作台選擇退回修改並指定\"Gherkin\"",
+        "工作台流程狀態顯示\"Gherkin確認\"才開啟該產物編輯",
+        "工作台將依賴該產物的下游產物與驗證結果標示失效",
+        "Gherkin或SD修改後未重新確認時不能再次前進",
+        "完成該階段要求後依序重新產生或驗證下游結果",
+        "不會在同一階段同時修改Gherkin與spec.ts"
+      ],
+      "generatedLine": 185,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 146,
+          "generatedLine": 186,
+          "keywordType": "Context",
+          "expandedText": "Given 專案已有測試基線與驗證結果",
+          "background": false
+        },
+        {
+          "sourceLine": 147,
+          "generatedLine": 187,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台選擇退回修改並指定\"Gherkin\"",
+          "background": false
+        },
+        {
+          "sourceLine": 148,
+          "generatedLine": 188,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示\"Gherkin確認\"才開啟該產物編輯",
+          "background": false
+        },
+        {
+          "sourceLine": 149,
+          "generatedLine": 189,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台將依賴該產物的下游產物與驗證結果標示失效",
+          "background": false
+        },
+        {
+          "sourceLine": 150,
+          "generatedLine": 190,
+          "keywordType": "Outcome",
+          "expandedText": "And Gherkin或SD修改後未重新確認時不能再次前進",
+          "background": false
+        },
+        {
+          "sourceLine": 151,
+          "generatedLine": 191,
+          "keywordType": "Outcome",
+          "expandedText": "And 完成該階段要求後依序重新產生或驗證下游結果",
+          "background": false
+        },
+        {
+          "sourceLine": 152,
+          "generatedLine": 192,
+          "keywordType": "Outcome",
+          "expandedText": "And 不會在同一階段同時修改Gherkin與spec.ts",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-016",
+      "caseId": "sd",
+      "scenarioLine": 145,
+      "exampleLine": 156,
+      "pickleLine": 156,
+      "testKey": "REQ-WB-001/AC-WB-016/sd",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案已有測試基線與驗證結果",
+        "使用者在工作台選擇退回修改並指定\"SD\"",
+        "工作台流程狀態顯示\"SD確認\"才開啟該產物編輯",
+        "工作台將依賴該產物的下游產物與驗證結果標示失效",
+        "Gherkin或SD修改後未重新確認時不能再次前進",
+        "完成該階段要求後依序重新產生或驗證下游結果",
+        "不會在同一階段同時修改Gherkin與spec.ts"
+      ],
+      "generatedLine": 195,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 146,
+          "generatedLine": 196,
+          "keywordType": "Context",
+          "expandedText": "Given 專案已有測試基線與驗證結果",
+          "background": false
+        },
+        {
+          "sourceLine": 147,
+          "generatedLine": 197,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台選擇退回修改並指定\"SD\"",
+          "background": false
+        },
+        {
+          "sourceLine": 148,
+          "generatedLine": 198,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示\"SD確認\"才開啟該產物編輯",
+          "background": false
+        },
+        {
+          "sourceLine": 149,
+          "generatedLine": 199,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台將依賴該產物的下游產物與驗證結果標示失效",
+          "background": false
+        },
+        {
+          "sourceLine": 150,
+          "generatedLine": 200,
+          "keywordType": "Outcome",
+          "expandedText": "And Gherkin或SD修改後未重新確認時不能再次前進",
+          "background": false
+        },
+        {
+          "sourceLine": 151,
+          "generatedLine": 201,
+          "keywordType": "Outcome",
+          "expandedText": "And 完成該階段要求後依序重新產生或驗證下游結果",
+          "background": false
+        },
+        {
+          "sourceLine": 152,
+          "generatedLine": 202,
+          "keywordType": "Outcome",
+          "expandedText": "And 不會在同一階段同時修改Gherkin與spec.ts",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-016",
+      "caseId": "tests",
+      "scenarioLine": 145,
+      "exampleLine": 157,
+      "pickleLine": 157,
+      "testKey": "REQ-WB-001/AC-WB-016/tests",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案已有測試基線與驗證結果",
+        "使用者在工作台選擇退回修改並指定\"測試基線\"",
+        "工作台流程狀態顯示\"test generation/completion\"才開啟該產物編輯",
+        "工作台將依賴該產物的下游產物與驗證結果標示失效",
+        "Gherkin或SD修改後未重新確認時不能再次前進",
+        "完成該階段要求後依序重新產生或驗證下游結果",
+        "不會在同一階段同時修改Gherkin與spec.ts"
+      ],
+      "generatedLine": 205,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 146,
+          "generatedLine": 206,
+          "keywordType": "Context",
+          "expandedText": "Given 專案已有測試基線與驗證結果",
+          "background": false
+        },
+        {
+          "sourceLine": 147,
+          "generatedLine": 207,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台選擇退回修改並指定\"測試基線\"",
+          "background": false
+        },
+        {
+          "sourceLine": 148,
+          "generatedLine": 208,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示\"test generation/completion\"才開啟該產物編輯",
+          "background": false
+        },
+        {
+          "sourceLine": 149,
+          "generatedLine": 209,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台將依賴該產物的下游產物與驗證結果標示失效",
+          "background": false
+        },
+        {
+          "sourceLine": 150,
+          "generatedLine": 210,
+          "keywordType": "Outcome",
+          "expandedText": "And Gherkin或SD修改後未重新確認時不能再次前進",
+          "background": false
+        },
+        {
+          "sourceLine": 151,
+          "generatedLine": 211,
+          "keywordType": "Outcome",
+          "expandedText": "And 完成該階段要求後依序重新產生或驗證下游結果",
+          "background": false
+        },
+        {
+          "sourceLine": 152,
+          "generatedLine": 212,
+          "keywordType": "Outcome",
+          "expandedText": "And 不會在同一階段同時修改Gherkin與spec.ts",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-016",
+      "caseId": "source",
+      "scenarioLine": 145,
+      "exampleLine": 158,
+      "pickleLine": 158,
+      "testKey": "REQ-WB-001/AC-WB-016/source",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案已有測試基線與驗證結果",
+        "使用者在工作台選擇退回修改並指定\"產品程式\"",
+        "工作台流程狀態顯示\"implementation\"才開啟該產物編輯",
+        "工作台將依賴該產物的下游產物與驗證結果標示失效",
+        "Gherkin或SD修改後未重新確認時不能再次前進",
+        "完成該階段要求後依序重新產生或驗證下游結果",
+        "不會在同一階段同時修改Gherkin與spec.ts"
+      ],
+      "generatedLine": 215,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 146,
+          "generatedLine": 216,
+          "keywordType": "Context",
+          "expandedText": "Given 專案已有測試基線與驗證結果",
+          "background": false
+        },
+        {
+          "sourceLine": 147,
+          "generatedLine": 217,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在工作台選擇退回修改並指定\"產品程式\"",
+          "background": false
+        },
+        {
+          "sourceLine": 148,
+          "generatedLine": 218,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台流程狀態顯示\"implementation\"才開啟該產物編輯",
+          "background": false
+        },
+        {
+          "sourceLine": 149,
+          "generatedLine": 219,
+          "keywordType": "Outcome",
+          "expandedText": "And 工作台將依賴該產物的下游產物與驗證結果標示失效",
+          "background": false
+        },
+        {
+          "sourceLine": 150,
+          "generatedLine": 220,
+          "keywordType": "Outcome",
+          "expandedText": "And Gherkin或SD修改後未重新確認時不能再次前進",
+          "background": false
+        },
+        {
+          "sourceLine": 151,
+          "generatedLine": 221,
+          "keywordType": "Outcome",
+          "expandedText": "And 完成該階段要求後依序重新產生或驗證下游結果",
+          "background": false
+        },
+        {
+          "sourceLine": 152,
+          "generatedLine": 222,
+          "keywordType": "Outcome",
+          "expandedText": "And 不會在同一階段同時修改Gherkin與spec.ts",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-017",
+      "caseId": "default",
+      "scenarioLine": 162,
+      "exampleLine": null,
+      "pickleLine": 162,
+      "testKey": "REQ-WB-001/AC-WB-017/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "被測專案的測試資料庫有帳號\"scenario_user\"且角色為\"A\"與狀態為\"active\"",
+        "spec使用Playwright開啟工作台網頁版DB介面並查詢\"scenario_user\"",
+        "spec斷言實際查詢資料的角色為\"A\"且狀態為\"active\"",
+        "每個Playwright操作與斷言步驟保存截圖並對應Scenario與step",
+        "只有實際資料斷言符合預期才算該步驟通過"
+      ],
+      "generatedLine": 227,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 163,
+          "generatedLine": 228,
+          "keywordType": "Context",
+          "expandedText": "Given 被測專案的測試資料庫有帳號\"scenario_user\"且角色為\"A\"與狀態為\"active\"",
+          "background": false
+        },
+        {
+          "sourceLine": 164,
+          "generatedLine": 229,
+          "keywordType": "Action",
+          "expandedText": "When spec使用Playwright開啟工作台網頁版DB介面並查詢\"scenario_user\"",
+          "background": false
+        },
+        {
+          "sourceLine": 165,
+          "generatedLine": 230,
+          "keywordType": "Outcome",
+          "expandedText": "Then spec斷言實際查詢資料的角色為\"A\"且狀態為\"active\"",
+          "background": false
+        },
+        {
+          "sourceLine": 166,
+          "generatedLine": 231,
+          "keywordType": "Outcome",
+          "expandedText": "And 每個Playwright操作與斷言步驟保存截圖並對應Scenario與step",
+          "background": false
+        },
+        {
+          "sourceLine": 167,
+          "generatedLine": 232,
+          "keywordType": "Outcome",
+          "expandedText": "And 只有實際資料斷言符合預期才算該步驟通過",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-018",
+      "caseId": "default",
+      "scenarioLine": 170,
+      "exampleLine": null,
+      "pickleLine": 170,
+      "testKey": "REQ-WB-001/AC-WB-018/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "被測專案的測試帳號\"scenario_user\"在測試資料庫角色為\"A\"且已登入被測網站",
+        "被測網站角色\"A\"僅可閱讀測試文件而角色\"B\"可編輯測試文件但不可管理帳號",
+        "spec使用Playwright透過工作台網頁版DB將\"scenario_user\"角色由\"A\"改為\"B\"並保存",
+        "spec重新查詢測試資料並斷言角色已實際變成\"B\"",
+        "spec登出被測網站的舊登入狀態並以\"scenario_user\"重新登入",
+        "spec在被測網站將\"scenario_document\"內容改為\"edited\"並開啟管理帳號頁面",
+        "spec斷言新登入頁面可看到角色\"B\"的編輯入口且文件保存成功",
+        "spec透過網頁版DB斷言\"scenario_document\"的實際內容為\"edited\"",
+        "spec斷言管理帳號頁面顯示拒絕且帳號資料沒有因此變更",
+        "spec在前置資料確認與DB變更後及重新登入後保存截圖",
+        "spec在每個主要操作與斷言步驟保存截圖並關聯實際結果"
+      ],
+      "generatedLine": 235,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 171,
+          "generatedLine": 236,
+          "keywordType": "Context",
+          "expandedText": "Given 被測專案的測試帳號\"scenario_user\"在測試資料庫角色為\"A\"且已登入被測網站",
+          "background": false
+        },
+        {
+          "sourceLine": 172,
+          "generatedLine": 237,
+          "keywordType": "Context",
+          "expandedText": "And 被測網站角色\"A\"僅可閱讀測試文件而角色\"B\"可編輯測試文件但不可管理帳號",
+          "background": false
+        },
+        {
+          "sourceLine": 173,
+          "generatedLine": 238,
+          "keywordType": "Action",
+          "expandedText": "When spec使用Playwright透過工作台網頁版DB將\"scenario_user\"角色由\"A\"改為\"B\"並保存",
+          "background": false
+        },
+        {
+          "sourceLine": 174,
+          "generatedLine": 239,
+          "keywordType": "Action",
+          "expandedText": "And spec重新查詢測試資料並斷言角色已實際變成\"B\"",
+          "background": false
+        },
+        {
+          "sourceLine": 175,
+          "generatedLine": 240,
+          "keywordType": "Action",
+          "expandedText": "And spec登出被測網站的舊登入狀態並以\"scenario_user\"重新登入",
+          "background": false
+        },
+        {
+          "sourceLine": 176,
+          "generatedLine": 241,
+          "keywordType": "Action",
+          "expandedText": "And spec在被測網站將\"scenario_document\"內容改為\"edited\"並開啟管理帳號頁面",
+          "background": false
+        },
+        {
+          "sourceLine": 177,
+          "generatedLine": 242,
+          "keywordType": "Outcome",
+          "expandedText": "Then spec斷言新登入頁面可看到角色\"B\"的編輯入口且文件保存成功",
+          "background": false
+        },
+        {
+          "sourceLine": 178,
+          "generatedLine": 243,
+          "keywordType": "Outcome",
+          "expandedText": "And spec透過網頁版DB斷言\"scenario_document\"的實際內容為\"edited\"",
+          "background": false
+        },
+        {
+          "sourceLine": 179,
+          "generatedLine": 244,
+          "keywordType": "Outcome",
+          "expandedText": "And spec斷言管理帳號頁面顯示拒絕且帳號資料沒有因此變更",
+          "background": false
+        },
+        {
+          "sourceLine": 180,
+          "generatedLine": 245,
+          "keywordType": "Outcome",
+          "expandedText": "And spec在前置資料確認與DB變更後及重新登入後保存截圖",
+          "background": false
+        },
+        {
+          "sourceLine": 181,
+          "generatedLine": 246,
+          "keywordType": "Outcome",
+          "expandedText": "And spec在每個主要操作與斷言步驟保存截圖並關聯實際結果",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-019",
+      "caseId": "default",
+      "scenarioLine": 184,
+      "exampleLine": null,
+      "pickleLine": 184,
+      "testKey": "REQ-WB-001/AC-WB-019/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "spec正在執行被測專案測試資料庫變更與重新登入的端到端情境",
+        "spec在網頁畫面或DB資料斷言得到與預期不同的實際結果",
+        "Playwright保存失敗當下頁面的截圖",
+        "報告列出該Scenario與失敗step及預期值與實際值及截圖",
+        "該案例標示失敗而不因截圖保存成功改成通過"
+      ],
+      "generatedLine": 249,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 185,
+          "generatedLine": 250,
+          "keywordType": "Context",
+          "expandedText": "Given spec正在執行被測專案測試資料庫變更與重新登入的端到端情境",
+          "background": false
+        },
+        {
+          "sourceLine": 186,
+          "generatedLine": 251,
+          "keywordType": "Action",
+          "expandedText": "When spec在網頁畫面或DB資料斷言得到與預期不同的實際結果",
+          "background": false
+        },
+        {
+          "sourceLine": 187,
+          "generatedLine": 252,
+          "keywordType": "Outcome",
+          "expandedText": "Then Playwright保存失敗當下頁面的截圖",
+          "background": false
+        },
+        {
+          "sourceLine": 188,
+          "generatedLine": 253,
+          "keywordType": "Outcome",
+          "expandedText": "And 報告列出該Scenario與失敗step及預期值與實際值及截圖",
+          "background": false
+        },
+        {
+          "sourceLine": 189,
+          "generatedLine": 254,
+          "keywordType": "Outcome",
+          "expandedText": "And 該案例標示失敗而不因截圖保存成功改成通過",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-020",
+      "caseId": "default",
+      "scenarioLine": 192,
+      "exampleLine": null,
+      "pickleLine": 192,
+      "testKey": "REQ-WB-001/AC-WB-020/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "上一次執行已將測試帳號\"scenario_user\"改為角色\"B\"且測試文件內容已變更",
+        "spec開始下一次執行並透過網頁版DB將該測試帳號角色設為\"A\"與\"scenario_document\"內容設為\"initial\"",
+        "spec結束被測網站上一輪的登入狀態",
+        "spec斷言測試資料庫中的角色為\"A\"且\"scenario_document\"內容為\"initial\"",
+        "Playwright保存本次前置資料初始狀態的截圖",
+        "本次情境從該初始狀態重新執行DB變更與登入及操作驗證流程"
+      ],
+      "generatedLine": 257,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 193,
+          "generatedLine": 258,
+          "keywordType": "Context",
+          "expandedText": "Given 上一次執行已將測試帳號\"scenario_user\"改為角色\"B\"且測試文件內容已變更",
+          "background": false
+        },
+        {
+          "sourceLine": 194,
+          "generatedLine": 259,
+          "keywordType": "Action",
+          "expandedText": "When spec開始下一次執行並透過網頁版DB將該測試帳號角色設為\"A\"與\"scenario_document\"內容設為\"initial\"",
+          "background": false
+        },
+        {
+          "sourceLine": 195,
+          "generatedLine": 260,
+          "keywordType": "Action",
+          "expandedText": "And spec結束被測網站上一輪的登入狀態",
+          "background": false
+        },
+        {
+          "sourceLine": 196,
+          "generatedLine": 261,
+          "keywordType": "Outcome",
+          "expandedText": "Then spec斷言測試資料庫中的角色為\"A\"且\"scenario_document\"內容為\"initial\"",
+          "background": false
+        },
+        {
+          "sourceLine": 197,
+          "generatedLine": 262,
+          "keywordType": "Outcome",
+          "expandedText": "And Playwright保存本次前置資料初始狀態的截圖",
+          "background": false
+        },
+        {
+          "sourceLine": 198,
+          "generatedLine": 263,
+          "keywordType": "Outcome",
+          "expandedText": "And 本次情境從該初始狀態重新執行DB變更與登入及操作驗證流程",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-021",
+      "caseId": "gherkin",
+      "scenarioLine": 201,
+      "exampleLine": 210,
+      "pickleLine": 210,
+      "testKey": "REQ-WB-001/AC-WB-021/gherkin",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "共用專案的當次需求已有\"Gherkin\"內容及需求編號與情境編號對應",
+        "使用者在\"Gherkin確認\"階段將該產物保存到工作台SQLite",
+        "使用者關閉並重新開啟該需求後讀取該產物",
+        "工作台從SQLite讀回與保存時相同的完整內容",
+        "該產物仍連結相同的需求編號與對應情境編號",
+        "這項產品儲存能力不改變bdd專案自身以Git保存開發文件與測試的方式"
+      ],
+      "generatedLine": 268,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 202,
+          "generatedLine": 269,
+          "keywordType": "Context",
+          "expandedText": "Given 共用專案的當次需求已有\"Gherkin\"內容及需求編號與情境編號對應",
+          "background": false
+        },
+        {
+          "sourceLine": 203,
+          "generatedLine": 270,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在\"Gherkin確認\"階段將該產物保存到工作台SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 204,
+          "generatedLine": 271,
+          "keywordType": "Action",
+          "expandedText": "And 使用者關閉並重新開啟該需求後讀取該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 205,
+          "generatedLine": 272,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台從SQLite讀回與保存時相同的完整內容",
+          "background": false
+        },
+        {
+          "sourceLine": 206,
+          "generatedLine": 273,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍連結相同的需求編號與對應情境編號",
+          "background": false
+        },
+        {
+          "sourceLine": 207,
+          "generatedLine": 274,
+          "keywordType": "Outcome",
+          "expandedText": "And 這項產品儲存能力不改變bdd專案自身以Git保存開發文件與測試的方式",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-021",
+      "caseId": "tests",
+      "scenarioLine": 201,
+      "exampleLine": 211,
+      "pickleLine": 211,
+      "testKey": "REQ-WB-001/AC-WB-021/tests",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "共用專案的當次需求已有\"spec.ts\"內容及需求編號與情境編號對應",
+        "使用者在\"test generation/completion\"階段將該產物保存到工作台SQLite",
+        "使用者關閉並重新開啟該需求後讀取該產物",
+        "工作台從SQLite讀回與保存時相同的完整內容",
+        "該產物仍連結相同的需求編號與對應情境編號",
+        "這項產品儲存能力不改變bdd專案自身以Git保存開發文件與測試的方式"
+      ],
+      "generatedLine": 277,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 202,
+          "generatedLine": 278,
+          "keywordType": "Context",
+          "expandedText": "Given 共用專案的當次需求已有\"spec.ts\"內容及需求編號與情境編號對應",
+          "background": false
+        },
+        {
+          "sourceLine": 203,
+          "generatedLine": 279,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在\"test generation/completion\"階段將該產物保存到工作台SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 204,
+          "generatedLine": 280,
+          "keywordType": "Action",
+          "expandedText": "And 使用者關閉並重新開啟該需求後讀取該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 205,
+          "generatedLine": 281,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台從SQLite讀回與保存時相同的完整內容",
+          "background": false
+        },
+        {
+          "sourceLine": 206,
+          "generatedLine": 282,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍連結相同的需求編號與對應情境編號",
+          "background": false
+        },
+        {
+          "sourceLine": 207,
+          "generatedLine": 283,
+          "keywordType": "Outcome",
+          "expandedText": "And 這項產品儲存能力不改變bdd專案自身以Git保存開發文件與測試的方式",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-021",
+      "caseId": "sd",
+      "scenarioLine": 201,
+      "exampleLine": 212,
+      "pickleLine": 212,
+      "testKey": "REQ-WB-001/AC-WB-021/sd",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "共用專案的當次需求已有\"SD\"內容及需求編號與情境編號對應",
+        "使用者在\"SD確認\"階段將該產物保存到工作台SQLite",
+        "使用者關閉並重新開啟該需求後讀取該產物",
+        "工作台從SQLite讀回與保存時相同的完整內容",
+        "該產物仍連結相同的需求編號與對應情境編號",
+        "這項產品儲存能力不改變bdd專案自身以Git保存開發文件與測試的方式"
+      ],
+      "generatedLine": 286,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 202,
+          "generatedLine": 287,
+          "keywordType": "Context",
+          "expandedText": "Given 共用專案的當次需求已有\"SD\"內容及需求編號與情境編號對應",
+          "background": false
+        },
+        {
+          "sourceLine": 203,
+          "generatedLine": 288,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在\"SD確認\"階段將該產物保存到工作台SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 204,
+          "generatedLine": 289,
+          "keywordType": "Action",
+          "expandedText": "And 使用者關閉並重新開啟該需求後讀取該產物",
+          "background": false
+        },
+        {
+          "sourceLine": 205,
+          "generatedLine": 290,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台從SQLite讀回與保存時相同的完整內容",
+          "background": false
+        },
+        {
+          "sourceLine": 206,
+          "generatedLine": 291,
+          "keywordType": "Outcome",
+          "expandedText": "And 該產物仍連結相同的需求編號與對應情境編號",
+          "background": false
+        },
+        {
+          "sourceLine": 207,
+          "generatedLine": 292,
+          "keywordType": "Outcome",
+          "expandedText": "And 這項產品儲存能力不改變bdd專案自身以Git保存開發文件與測試的方式",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-022",
+      "caseId": "default",
+      "scenarioLine": 215,
+      "exampleLine": null,
+      "pickleLine": 215,
+      "testKey": "REQ-WB-001/AC-WB-022/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "使用者已停止一次內嵌瀏覽器錄製並取得腳本草稿",
+        "使用者將腳本另存到工作台SQLite的使用者錄製腳本清單",
+        "使用者重新開啟該已保存腳本並按下重播",
+        "工作台在瀏覽器實際重播已保存的操作與斷言",
+        "顯示該次重播的實際結果而不是把保存成功當成測試通過",
+        "該腳本保留已提供的需求與相關情境對應並與標準專案CI測試分開列示",
+        "不會自動新增或修改target Git的CI測試檔案或CI測試清單"
+      ],
+      "generatedLine": 297,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 216,
+          "generatedLine": 298,
+          "keywordType": "Context",
+          "expandedText": "Given 使用者已停止一次內嵌瀏覽器錄製並取得腳本草稿",
+          "background": false
+        },
+        {
+          "sourceLine": 217,
+          "generatedLine": 299,
+          "keywordType": "Action",
+          "expandedText": "When 使用者將腳本另存到工作台SQLite的使用者錄製腳本清單",
+          "background": false
+        },
+        {
+          "sourceLine": 218,
+          "generatedLine": 300,
+          "keywordType": "Action",
+          "expandedText": "And 使用者重新開啟該已保存腳本並按下重播",
+          "background": false
+        },
+        {
+          "sourceLine": 219,
+          "generatedLine": 301,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台在瀏覽器實際重播已保存的操作與斷言",
+          "background": false
+        },
+        {
+          "sourceLine": 220,
+          "generatedLine": 302,
+          "keywordType": "Outcome",
+          "expandedText": "And 顯示該次重播的實際結果而不是把保存成功當成測試通過",
+          "background": false
+        },
+        {
+          "sourceLine": 221,
+          "generatedLine": 303,
+          "keywordType": "Outcome",
+          "expandedText": "And 該腳本保留已提供的需求與相關情境對應並與標準專案CI測試分開列示",
+          "background": false
+        },
+        {
+          "sourceLine": 222,
+          "generatedLine": 304,
+          "keywordType": "Outcome",
+          "expandedText": "And 不會自動新增或修改target Git的CI測試檔案或CI測試清單",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-023",
+      "caseId": "gherkin",
+      "scenarioLine": 225,
+      "exampleLine": 234,
+      "pickleLine": 234,
+      "testKey": "REQ-WB-001/AC-WB-023/gherkin",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有\"Gherkin\"的有效原文與結構化資料",
+        "使用者準備保存的同一檔案內容含語法錯誤",
+        "使用者要求將該\"Gherkin\"內容保存到SQLite",
+        "工作台先以\"Gherkin語法解析器\"解析內容並拒絕將錯誤內容保存為有效版本",
+        "回報錯誤的檔案名稱與行號及欄號與原因",
+        "原有有效版本的原文與結構化資料及來源對應保持不變"
+      ],
+      "generatedLine": 309,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 226,
+          "generatedLine": 310,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有\"Gherkin\"的有效原文與結構化資料",
+          "background": false
+        },
+        {
+          "sourceLine": 227,
+          "generatedLine": 311,
+          "keywordType": "Context",
+          "expandedText": "And 使用者準備保存的同一檔案內容含語法錯誤",
+          "background": false
+        },
+        {
+          "sourceLine": 228,
+          "generatedLine": 312,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求將該\"Gherkin\"內容保存到SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 229,
+          "generatedLine": 313,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台先以\"Gherkin語法解析器\"解析內容並拒絕將錯誤內容保存為有效版本",
+          "background": false
+        },
+        {
+          "sourceLine": 230,
+          "generatedLine": 314,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報錯誤的檔案名稱與行號及欄號與原因",
+          "background": false
+        },
+        {
+          "sourceLine": 231,
+          "generatedLine": 315,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效版本的原文與結構化資料及來源對應保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-023",
+      "caseId": "tests",
+      "scenarioLine": 225,
+      "exampleLine": 235,
+      "pickleLine": 235,
+      "testKey": "REQ-WB-001/AC-WB-023/tests",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有\"spec.ts\"的有效原文與結構化資料",
+        "使用者準備保存的同一檔案內容含語法錯誤",
+        "使用者要求將該\"spec.ts\"內容保存到SQLite",
+        "工作台先以\"TypeScript語法解析器\"解析內容並拒絕將錯誤內容保存為有效版本",
+        "回報錯誤的檔案名稱與行號及欄號與原因",
+        "原有有效版本的原文與結構化資料及來源對應保持不變"
+      ],
+      "generatedLine": 318,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 226,
+          "generatedLine": 319,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有\"spec.ts\"的有效原文與結構化資料",
+          "background": false
+        },
+        {
+          "sourceLine": 227,
+          "generatedLine": 320,
+          "keywordType": "Context",
+          "expandedText": "And 使用者準備保存的同一檔案內容含語法錯誤",
+          "background": false
+        },
+        {
+          "sourceLine": 228,
+          "generatedLine": 321,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求將該\"spec.ts\"內容保存到SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 229,
+          "generatedLine": 322,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台先以\"TypeScript語法解析器\"解析內容並拒絕將錯誤內容保存為有效版本",
+          "background": false
+        },
+        {
+          "sourceLine": 230,
+          "generatedLine": 323,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報錯誤的檔案名稱與行號及欄號與原因",
+          "background": false
+        },
+        {
+          "sourceLine": 231,
+          "generatedLine": 324,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效版本的原文與結構化資料及來源對應保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-024",
+      "caseId": "default",
+      "scenarioLine": 238,
+      "exampleLine": null,
+      "pickleLine": 238,
+      "testKey": "REQ-WB-001/AC-WB-024/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "語法有效的Gherkin原文對應需求\"REQ-DEMO-001\"",
+        "原文含Scenario Outline的Scenario ID\"AC-DEMO-001\"及有順序的steps與兩列Examples",
+        "使用者將該Gherkin保存到SQLite",
+        "讀回的完整原文與提交內容逐字相同",
+        "可結構化查詢需求編號與Scenario ID及各step的關鍵字與文字及順序",
+        "可結構化查詢Examples的欄名與各列值及case_id且保留列順序",
+        "原文與結構化資料均連結同一來源文件版本與內容hash"
+      ],
+      "generatedLine": 329,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 239,
+          "generatedLine": 330,
+          "keywordType": "Context",
+          "expandedText": "Given 語法有效的Gherkin原文對應需求\"REQ-DEMO-001\"",
+          "background": false
+        },
+        {
+          "sourceLine": 240,
+          "generatedLine": 331,
+          "keywordType": "Context",
+          "expandedText": "And 原文含Scenario Outline的Scenario ID\"AC-DEMO-001\"及有順序的steps與兩列Examples",
+          "background": false
+        },
+        {
+          "sourceLine": 241,
+          "generatedLine": 332,
+          "keywordType": "Action",
+          "expandedText": "When 使用者將該Gherkin保存到SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 242,
+          "generatedLine": 333,
+          "keywordType": "Outcome",
+          "expandedText": "Then 讀回的完整原文與提交內容逐字相同",
+          "background": false
+        },
+        {
+          "sourceLine": 243,
+          "generatedLine": 334,
+          "keywordType": "Outcome",
+          "expandedText": "And 可結構化查詢需求編號與Scenario ID及各step的關鍵字與文字及順序",
+          "background": false
+        },
+        {
+          "sourceLine": 244,
+          "generatedLine": 335,
+          "keywordType": "Outcome",
+          "expandedText": "And 可結構化查詢Examples的欄名與各列值及case_id且保留列順序",
+          "background": false
+        },
+        {
+          "sourceLine": 245,
+          "generatedLine": 336,
+          "keywordType": "Outcome",
+          "expandedText": "And 原文與結構化資料均連結同一來源文件版本與內容hash",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-025",
+      "caseId": "default",
+      "scenarioLine": 248,
+      "exampleLine": null,
+      "pickleLine": 248,
+      "testKey": "REQ-WB-001/AC-WB-025/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "指定來源版本的已確認Gherkin含情境\"AC-DEMO-001\"及Examples案例\"a\"與\"b\"",
+        "標準生成的spec.ts語法有效且測試\"test-a\"與\"test-b\"分別明確對應該情境的案例\"a\"與\"b\"",
+        "另一測試\"test-a-extra\"以不同test ID明確對應同一情境的案例\"a\"",
+        "使用者將該spec.ts與明確ID對應保存到SQLite",
+        "讀回的完整spec.ts原文與提交內容逐字相同",
+        "可結構化查詢每個test ID及其需求編號與Scenario ID及Examples case_id",
+        "每筆對應可追溯spec.ts版本與內容hash及來源Gherkin版本與內容hash",
+        "相同Scenario ID下的不同Examples案例可各自對應不同測試",
+        "測試\"test-a\"與\"test-a-extra\"的映射均被保存且同時對應相同Scenario ID與Examples案例\"a\"",
+        "重新讀取時仍取得原本的來源版本而不是自動改指向最新Gherkin"
+      ],
+      "generatedLine": 339,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 249,
+          "generatedLine": 340,
+          "keywordType": "Context",
+          "expandedText": "Given 指定來源版本的已確認Gherkin含情境\"AC-DEMO-001\"及Examples案例\"a\"與\"b\"",
+          "background": false
+        },
+        {
+          "sourceLine": 250,
+          "generatedLine": 341,
+          "keywordType": "Context",
+          "expandedText": "And 標準生成的spec.ts語法有效且測試\"test-a\"與\"test-b\"分別明確對應該情境的案例\"a\"與\"b\"",
+          "background": false
+        },
+        {
+          "sourceLine": 251,
+          "generatedLine": 342,
+          "keywordType": "Context",
+          "expandedText": "And 另一測試\"test-a-extra\"以不同test ID明確對應同一情境的案例\"a\"",
+          "background": false
+        },
+        {
+          "sourceLine": 252,
+          "generatedLine": 343,
+          "keywordType": "Action",
+          "expandedText": "When 使用者將該spec.ts與明確ID對應保存到SQLite",
+          "background": false
+        },
+        {
+          "sourceLine": 253,
+          "generatedLine": 344,
+          "keywordType": "Outcome",
+          "expandedText": "Then 讀回的完整spec.ts原文與提交內容逐字相同",
+          "background": false
+        },
+        {
+          "sourceLine": 254,
+          "generatedLine": 345,
+          "keywordType": "Outcome",
+          "expandedText": "And 可結構化查詢每個test ID及其需求編號與Scenario ID及Examples case_id",
+          "background": false
+        },
+        {
+          "sourceLine": 255,
+          "generatedLine": 346,
+          "keywordType": "Outcome",
+          "expandedText": "And 每筆對應可追溯spec.ts版本與內容hash及來源Gherkin版本與內容hash",
+          "background": false
+        },
+        {
+          "sourceLine": 256,
+          "generatedLine": 347,
+          "keywordType": "Outcome",
+          "expandedText": "And 相同Scenario ID下的不同Examples案例可各自對應不同測試",
+          "background": false
+        },
+        {
+          "sourceLine": 257,
+          "generatedLine": 348,
+          "keywordType": "Outcome",
+          "expandedText": "And 測試\"test-a\"與\"test-a-extra\"的映射均被保存且同時對應相同Scenario ID與Examples案例\"a\"",
+          "background": false
+        },
+        {
+          "sourceLine": 258,
+          "generatedLine": 349,
+          "keywordType": "Outcome",
+          "expandedText": "And 重新讀取時仍取得原本的來源版本而不是自動改指向最新Gherkin",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-026",
+      "caseId": "unmapped_test",
+      "scenarioLine": 261,
+      "exampleLine": 271,
+      "pickleLine": 271,
+      "testKey": "REQ-WB-001/AC-WB-026/unmapped_test",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+        "待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"有測試未提供明確的情境與案例對應\"",
+        "使用者要求保存該標準生成測試與映射",
+        "工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+        "回報\"有測試未提供明確的情境與案例對應\"及相關test ID或來源案例ID",
+        "未提供的情境對應不被自動推測或補造",
+        "原有有效spec.ts原文與結構化映射保持不變"
+      ],
+      "generatedLine": 354,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 262,
+          "generatedLine": 355,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+          "background": false
+        },
+        {
+          "sourceLine": 263,
+          "generatedLine": 356,
+          "keywordType": "Context",
+          "expandedText": "And 待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"有測試未提供明確的情境與案例對應\"",
+          "background": false
+        },
+        {
+          "sourceLine": 264,
+          "generatedLine": 357,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求保存該標準生成測試與映射",
+          "background": false
+        },
+        {
+          "sourceLine": 265,
+          "generatedLine": 358,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+          "background": false
+        },
+        {
+          "sourceLine": 266,
+          "generatedLine": 359,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報\"有測試未提供明確的情境與案例對應\"及相關test ID或來源案例ID",
+          "background": false
+        },
+        {
+          "sourceLine": 267,
+          "generatedLine": 360,
+          "keywordType": "Outcome",
+          "expandedText": "And 未提供的情境對應不被自動推測或補造",
+          "background": false
+        },
+        {
+          "sourceLine": 268,
+          "generatedLine": 361,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效spec.ts原文與結構化映射保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-026",
+      "caseId": "missing_case",
+      "scenarioLine": 261,
+      "exampleLine": 272,
+      "pickleLine": 272,
+      "testKey": "REQ-WB-001/AC-WB-026/missing_case",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+        "待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"來源Gherkin有應生成的案例未對應任何測試\"",
+        "使用者要求保存該標準生成測試與映射",
+        "工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+        "回報\"來源Gherkin有應生成的案例未對應任何測試\"及相關test ID或來源案例ID",
+        "未提供的情境對應不被自動推測或補造",
+        "原有有效spec.ts原文與結構化映射保持不變"
+      ],
+      "generatedLine": 364,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 262,
+          "generatedLine": 365,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+          "background": false
+        },
+        {
+          "sourceLine": 263,
+          "generatedLine": 366,
+          "keywordType": "Context",
+          "expandedText": "And 待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"來源Gherkin有應生成的案例未對應任何測試\"",
+          "background": false
+        },
+        {
+          "sourceLine": 264,
+          "generatedLine": 367,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求保存該標準生成測試與映射",
+          "background": false
+        },
+        {
+          "sourceLine": 265,
+          "generatedLine": 368,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+          "background": false
+        },
+        {
+          "sourceLine": 266,
+          "generatedLine": 369,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報\"來源Gherkin有應生成的案例未對應任何測試\"及相關test ID或來源案例ID",
+          "background": false
+        },
+        {
+          "sourceLine": 267,
+          "generatedLine": 370,
+          "keywordType": "Outcome",
+          "expandedText": "And 未提供的情境對應不被自動推測或補造",
+          "background": false
+        },
+        {
+          "sourceLine": 268,
+          "generatedLine": 371,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效spec.ts原文與結構化映射保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-026",
+      "caseId": "duplicate_test",
+      "scenarioLine": 261,
+      "exampleLine": 273,
+      "pickleLine": 273,
+      "testKey": "REQ-WB-001/AC-WB-026/duplicate_test",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+        "待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"不同測試定義使用相同test ID\"",
+        "使用者要求保存該標準生成測試與映射",
+        "工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+        "回報\"不同測試定義使用相同test ID\"及相關test ID或來源案例ID",
+        "未提供的情境對應不被自動推測或補造",
+        "原有有效spec.ts原文與結構化映射保持不變"
+      ],
+      "generatedLine": 374,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 262,
+          "generatedLine": 375,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+          "background": false
+        },
+        {
+          "sourceLine": 263,
+          "generatedLine": 376,
+          "keywordType": "Context",
+          "expandedText": "And 待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"不同測試定義使用相同test ID\"",
+          "background": false
+        },
+        {
+          "sourceLine": 264,
+          "generatedLine": 377,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求保存該標準生成測試與映射",
+          "background": false
+        },
+        {
+          "sourceLine": 265,
+          "generatedLine": 378,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+          "background": false
+        },
+        {
+          "sourceLine": 266,
+          "generatedLine": 379,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報\"不同測試定義使用相同test ID\"及相關test ID或來源案例ID",
+          "background": false
+        },
+        {
+          "sourceLine": 267,
+          "generatedLine": 380,
+          "keywordType": "Outcome",
+          "expandedText": "And 未提供的情境對應不被自動推測或補造",
+          "background": false
+        },
+        {
+          "sourceLine": 268,
+          "generatedLine": 381,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效spec.ts原文與結構化映射保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-026",
+      "caseId": "duplicate_case",
+      "scenarioLine": 261,
+      "exampleLine": 274,
+      "pickleLine": 274,
+      "testKey": "REQ-WB-001/AC-WB-026/duplicate_case",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+        "待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"完全相同test ID與來源案例的映射資料重複\"",
+        "使用者要求保存該標準生成測試與映射",
+        "工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+        "回報\"完全相同test ID與來源案例的映射資料重複\"及相關test ID或來源案例ID",
+        "未提供的情境對應不被自動推測或補造",
+        "原有有效spec.ts原文與結構化映射保持不變"
+      ],
+      "generatedLine": 384,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 262,
+          "generatedLine": 385,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+          "background": false
+        },
+        {
+          "sourceLine": 263,
+          "generatedLine": 386,
+          "keywordType": "Context",
+          "expandedText": "And 待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"完全相同test ID與來源案例的映射資料重複\"",
+          "background": false
+        },
+        {
+          "sourceLine": 264,
+          "generatedLine": 387,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求保存該標準生成測試與映射",
+          "background": false
+        },
+        {
+          "sourceLine": 265,
+          "generatedLine": 388,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+          "background": false
+        },
+        {
+          "sourceLine": 266,
+          "generatedLine": 389,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報\"完全相同test ID與來源案例的映射資料重複\"及相關test ID或來源案例ID",
+          "background": false
+        },
+        {
+          "sourceLine": 267,
+          "generatedLine": 390,
+          "keywordType": "Outcome",
+          "expandedText": "And 未提供的情境對應不被自動推測或補造",
+          "background": false
+        },
+        {
+          "sourceLine": 268,
+          "generatedLine": 391,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效spec.ts原文與結構化映射保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-026",
+      "caseId": "unknown_scenario",
+      "scenarioLine": 261,
+      "exampleLine": 275,
+      "pickleLine": 275,
+      "testKey": "REQ-WB-001/AC-WB-026/unknown_scenario",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+        "待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"引用指定來源版本中不存在的Scenario ID\"",
+        "使用者要求保存該標準生成測試與映射",
+        "工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+        "回報\"引用指定來源版本中不存在的Scenario ID\"及相關test ID或來源案例ID",
+        "未提供的情境對應不被自動推測或補造",
+        "原有有效spec.ts原文與結構化映射保持不變"
+      ],
+      "generatedLine": 394,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 262,
+          "generatedLine": 395,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+          "background": false
+        },
+        {
+          "sourceLine": 263,
+          "generatedLine": 396,
+          "keywordType": "Context",
+          "expandedText": "And 待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"引用指定來源版本中不存在的Scenario ID\"",
+          "background": false
+        },
+        {
+          "sourceLine": 264,
+          "generatedLine": 397,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求保存該標準生成測試與映射",
+          "background": false
+        },
+        {
+          "sourceLine": 265,
+          "generatedLine": 398,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+          "background": false
+        },
+        {
+          "sourceLine": 266,
+          "generatedLine": 399,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報\"引用指定來源版本中不存在的Scenario ID\"及相關test ID或來源案例ID",
+          "background": false
+        },
+        {
+          "sourceLine": 267,
+          "generatedLine": 400,
+          "keywordType": "Outcome",
+          "expandedText": "And 未提供的情境對應不被自動推測或補造",
+          "background": false
+        },
+        {
+          "sourceLine": 268,
+          "generatedLine": 401,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效spec.ts原文與結構化映射保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-026",
+      "caseId": "unknown_example",
+      "scenarioLine": 261,
+      "exampleLine": 276,
+      "pickleLine": 276,
+      "testKey": "REQ-WB-001/AC-WB-026/unknown_example",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+        "待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"引用指定來源情境中不存在的Examples case_id\"",
+        "使用者要求保存該標準生成測試與映射",
+        "工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+        "回報\"引用指定來源情境中不存在的Examples case_id\"及相關test ID或來源案例ID",
+        "未提供的情境對應不被自動推測或補造",
+        "原有有效spec.ts原文與結構化映射保持不變"
+      ],
+      "generatedLine": 404,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 262,
+          "generatedLine": 405,
+          "keywordType": "Context",
+          "expandedText": "Given 工作台SQLite已有一份有效的標準生成spec.ts及其情境對應",
+          "background": false
+        },
+        {
+          "sourceLine": 263,
+          "generatedLine": 406,
+          "keywordType": "Context",
+          "expandedText": "And 待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在\"引用指定來源情境中不存在的Examples case_id\"",
+          "background": false
+        },
+        {
+          "sourceLine": 264,
+          "generatedLine": 407,
+          "keywordType": "Action",
+          "expandedText": "When 使用者要求保存該標準生成測試與映射",
+          "background": false
+        },
+        {
+          "sourceLine": 265,
+          "generatedLine": 408,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存",
+          "background": false
+        },
+        {
+          "sourceLine": 266,
+          "generatedLine": 409,
+          "keywordType": "Outcome",
+          "expandedText": "And 回報\"引用指定來源情境中不存在的Examples case_id\"及相關test ID或來源案例ID",
+          "background": false
+        },
+        {
+          "sourceLine": 267,
+          "generatedLine": 410,
+          "keywordType": "Outcome",
+          "expandedText": "And 未提供的情境對應不被自動推測或補造",
+          "background": false
+        },
+        {
+          "sourceLine": 268,
+          "generatedLine": 411,
+          "keywordType": "Outcome",
+          "expandedText": "And 原有有效spec.ts原文與結構化映射保持不變",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-027",
+      "caseId": "default",
+      "scenarioLine": 279,
+      "exampleLine": null,
+      "pickleLine": 279,
+      "testKey": "REQ-WB-001/AC-WB-027/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "使用者已取得語法有效且未連結需求編號或Scenario ID的自錄Playwright腳本",
+        "使用者將該腳本另存到SQLite的使用者錄製腳本清單",
+        "工作台保存完整原文且需求與情境對應維持未關聯",
+        "不要求補造需求或Scenario ID以通過標準生成測試的映射檢核",
+        "使用者可重新開啟該腳本並重播",
+        "該腳本仍獨立於標準專案CI且不會自動新增或修改target Git的CI測試"
+      ],
+      "generatedLine": 416,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 280,
+          "generatedLine": 417,
+          "keywordType": "Context",
+          "expandedText": "Given 使用者已取得語法有效且未連結需求編號或Scenario ID的自錄Playwright腳本",
+          "background": false
+        },
+        {
+          "sourceLine": 281,
+          "generatedLine": 418,
+          "keywordType": "Action",
+          "expandedText": "When 使用者將該腳本另存到SQLite的使用者錄製腳本清單",
+          "background": false
+        },
+        {
+          "sourceLine": 282,
+          "generatedLine": 419,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台保存完整原文且需求與情境對應維持未關聯",
+          "background": false
+        },
+        {
+          "sourceLine": 283,
+          "generatedLine": 420,
+          "keywordType": "Outcome",
+          "expandedText": "And 不要求補造需求或Scenario ID以通過標準生成測試的映射檢核",
+          "background": false
+        },
+        {
+          "sourceLine": 284,
+          "generatedLine": 421,
+          "keywordType": "Outcome",
+          "expandedText": "And 使用者可重新開啟該腳本並重播",
+          "background": false
+        },
+        {
+          "sourceLine": 285,
+          "generatedLine": 422,
+          "keywordType": "Outcome",
+          "expandedText": "And 該腳本仍獨立於標準專案CI且不會自動新增或修改target Git的CI測試",
+          "background": false
+        }
+      ]
+    },
+    {
+      "requirementId": "REQ-WB-001",
+      "scenarioId": "AC-WB-028",
+      "caseId": "default",
+      "scenarioLine": 288,
+      "exampleLine": null,
+      "pickleLine": 288,
+      "testKey": "REQ-WB-001/AC-WB-028/default",
+      "expandedSteps": [
+        "已選擇工作台的共用專案",
+        "專案已有Gherkin情境\"AC-DEMO-001\"及Examples案例\"a\"與\"b\"的spec.ts骨架與明確測試映射",
+        "案例\"a\"對應測試\"test-a\"與\"test-a-extra\"且案例\"b\"對應測試\"test-b\"",
+        "這些測試目前只有尚未由LLM補齊的codegen殼",
+        "使用者開啟工作台的Gherkin測試清單",
+        "清單列出該情境與案例\"a\"及\"b\"及各自對應的test ID",
+        "只有codegen殼的測試顯示待補齊且不可標示已通過",
+        "使用者在測試已由LLM補齊且測試基線與程式版本已固定後點選案例\"a\"並按下執行",
+        "工作台建立本次run且runner只執行對應的spec.ts測試\"test-a\"與\"test-a-extra\"",
+        "未選取的\"test-b\"本次不執行也不標示通過",
+        "右側內嵌瀏覽器即時呈現本次run目前測試所用的同一session與page的真實操作",
+        "各測試的實際斷言與每步截圖及成功或失敗結果均對應本次run與所選情境及案例",
+        "只有所選案例的必要測試與斷言及證據完整通過才標示該案例通過",
+        "所選案例通過不代表未執行的全專案案例已通過"
+      ],
+      "generatedLine": 425,
+      "steps": [
+        {
+          "sourceLine": 9,
+          "generatedLine": 7,
+          "keywordType": "Context",
+          "expandedText": "Given 已選擇工作台的共用專案",
+          "background": true
+        },
+        {
+          "sourceLine": 289,
+          "generatedLine": 426,
+          "keywordType": "Context",
+          "expandedText": "Given 專案已有Gherkin情境\"AC-DEMO-001\"及Examples案例\"a\"與\"b\"的spec.ts骨架與明確測試映射",
+          "background": false
+        },
+        {
+          "sourceLine": 290,
+          "generatedLine": 427,
+          "keywordType": "Context",
+          "expandedText": "And 案例\"a\"對應測試\"test-a\"與\"test-a-extra\"且案例\"b\"對應測試\"test-b\"",
+          "background": false
+        },
+        {
+          "sourceLine": 291,
+          "generatedLine": 428,
+          "keywordType": "Context",
+          "expandedText": "And 這些測試目前只有尚未由LLM補齊的codegen殼",
+          "background": false
+        },
+        {
+          "sourceLine": 292,
+          "generatedLine": 429,
+          "keywordType": "Action",
+          "expandedText": "When 使用者開啟工作台的Gherkin測試清單",
+          "background": false
+        },
+        {
+          "sourceLine": 293,
+          "generatedLine": 430,
+          "keywordType": "Outcome",
+          "expandedText": "Then 清單列出該情境與案例\"a\"及\"b\"及各自對應的test ID",
+          "background": false
+        },
+        {
+          "sourceLine": 294,
+          "generatedLine": 431,
+          "keywordType": "Outcome",
+          "expandedText": "And 只有codegen殼的測試顯示待補齊且不可標示已通過",
+          "background": false
+        },
+        {
+          "sourceLine": 295,
+          "generatedLine": 432,
+          "keywordType": "Action",
+          "expandedText": "When 使用者在測試已由LLM補齊且測試基線與程式版本已固定後點選案例\"a\"並按下執行",
+          "background": false
+        },
+        {
+          "sourceLine": 296,
+          "generatedLine": 433,
+          "keywordType": "Outcome",
+          "expandedText": "Then 工作台建立本次run且runner只執行對應的spec.ts測試\"test-a\"與\"test-a-extra\"",
+          "background": false
+        },
+        {
+          "sourceLine": 297,
+          "generatedLine": 434,
+          "keywordType": "Outcome",
+          "expandedText": "And 未選取的\"test-b\"本次不執行也不標示通過",
+          "background": false
+        },
+        {
+          "sourceLine": 298,
+          "generatedLine": 435,
+          "keywordType": "Outcome",
+          "expandedText": "And 右側內嵌瀏覽器即時呈現本次run目前測試所用的同一session與page的真實操作",
+          "background": false
+        },
+        {
+          "sourceLine": 299,
+          "generatedLine": 436,
+          "keywordType": "Outcome",
+          "expandedText": "And 各測試的實際斷言與每步截圖及成功或失敗結果均對應本次run與所選情境及案例",
+          "background": false
+        },
+        {
+          "sourceLine": 300,
+          "generatedLine": 437,
+          "keywordType": "Outcome",
+          "expandedText": "And 只有所選案例的必要測試與斷言及證據完整通過才標示該案例通過",
+          "background": false
+        },
+        {
+          "sourceLine": 301,
+          "generatedLine": 438,
+          "keywordType": "Outcome",
+          "expandedText": "And 所選案例通過不代表未執行的全專案案例已通過",
+          "background": false
+        }
+      ]
+    }
+  ],
+  "completionBundleSha256": "672ac2ed61497a70b40848b967dd2c27c56bfde6afce88c447bbf6a7a22a10ee"
+}

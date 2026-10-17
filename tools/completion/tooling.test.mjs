@@ -13,14 +13,19 @@ import { resolveManagedPage } from '../../tests/completion/support/managed.ts';
 import { StepEvidence } from '../../tests/completion/support/evidence.ts';
 import { expect as playwrightExpect } from '@playwright/test';
 import { specText,failingSpecText,missingFeature,missingSd } from '../../tests/completion/fixtures/content.ts';
-const defs=JSON.parse(fs.readFileSync('tests/completion/steps/definitions.json'));
+import {analyze} from './analyze.mjs';
 test('28/44 completion generation is reproducible and does not modify saved skeleton',()=>{
  const before=fs.readFileSync(manifestPath,'utf8'),spec=fs.readFileSync('generated/completed/REQ-WB-001/workbench.feature.spec.ts','utf8');generate();assert.equal(fs.readFileSync(manifestPath,'utf8'),before);assert.equal(fs.readFileSync('generated/completed/REQ-WB-001/workbench.feature.spec.ts','utf8'),spec);
 });
-test('all 174 active bindings have nonempty implementations and critical scenarios are wired',()=>{
- assert.equal(defs.length,174);assert(defs.every(d=>d.plan.length>0));
- for(const op of ['llmPrepare','llmCompleteBoth','llmFullCheck','llmMissingCheck','blockedSave','selectedExact','selectedUnselected','selectedLive','selectedEvidence','selectedPartial'])assert(defs.some(d=>d.plan.some(p=>p.op===op)),op);
- assert.equal(defs.filter(d=>d.scenarioId==='AC-WB-028').length,13);
+test('direct registered steps trace every source outcome to actual assertions',()=>{
+ const analysis=analyze();assert.deepEqual(analysis.problems,[]);assert.equal(analysis.entries.length,174);assert(analysis.entries.filter(e=>e.keyword==='Then').every(e=>e.assertions.length>0));
+ for(const line of [47,49,131,165,173,175,187,295,296,298,299,301])assert(analysis.entries.find(e=>e.sourceLine===line));
+});
+test('implementation check rejects missing outcomes, empty steps, opcode dispatch and fake literal assertions',()=>{
+ const source=fs.readFileSync('tests/completion/steps/workbench.steps.ts','utf8'),entry=analyze().entries.find(e=>e.sourceLine===165);
+ for(const body of ['{await sut.page.reload();}','{}','{await sut.execute({op:"success"});}','{expect(true).toBe(true);}']){
+  const changed=source.slice(0,entry.bodyStart)+body+source.slice(entry.bodyEnd);assert(analyze(changed).problems.length>0,body);
+ }
 });
 test('managed resolver selects the requested identity across multiple contexts and rejects ambiguity',async()=>{
  const wanted={sessionId:'s',contextRef:'c2',pageId:'p2'},other={sessionId:'s',contextRef:'c1',pageId:'p1'};
@@ -60,7 +65,7 @@ test('nested success and deliberate-failure fixtures contain syntactically valid
  }
 });
 test('E2E entrypoint stops before execution when product prerequisites are missing',()=>{
- const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('WB_'))delete env[key];const r=spawnSync(process.execPath,['tools/completion/run-e2e.mjs'],{env,encoding:'utf8'});assert.equal(r.status,2);const receipt=JSON.parse(fs.readFileSync('spec/REQ-WB-001/evidence/completion/e2e-status.json'));assert.equal(receipt.productE2E,'NOT_RUN');assert.equal(receipt.executionAttempted,false);assert(receipt.missing.includes('WB_BASE_URL'));
+ const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('WB_'))delete env[key];const r=spawnSync(process.execPath,['tools/completion/run-e2e.mjs'],{env,encoding:'utf8'});assert.equal(r.status,2);const receipt=JSON.parse(fs.readFileSync('spec/REQ-WB-001/evidence/repair/e2e-status.json'));assert.equal(receipt.productE2E,'NOT_RUN');assert.equal(receipt.executionAttempted,false);assert(receipt.missing.includes('WB_BASE_URL'));
 });
 
 test('per-action evidence records synchronous mismatch and preserves assertion error when screenshot fails',async()=>{

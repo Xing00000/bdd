@@ -1,0 +1,32 @@
+// Source-case review notes: expectations and oracles inspected against the direct TypeScript callbacks.
+// This is review metadata, never an instruction plan or runtime step implementation.
+export const scenarioReviews={
+ '001':['Git-tracked bootstrap and explicit confirm/complete/start flow','Before confirmation sources stay unchanged; after both confirmations TESTS precedes IMPLEMENTATION'],
+ '002':['Independent BrowserContext reads saved Gherkin','Second reader input value equals exact saved bytes'],
+ '003':['Confirm Gherkin then request SD through UI','New SD version, architecture/DDL/DML sections; development stays disabled'],
+ '004':['Confirm SD, upload implemented steps and generate','Export real bundle and run Playwright discovery; explicit a/b mapping and unique test keys'],
+ '005':['Independent complete and missing-expected projects; real complete-tests UI','Full source stays immutable and new completed snapshot preserves IDs; missing project has no outcome in Gherkin/SD/skeleton and requires questions without baseline'],
+ '006':['Completed fixture baseline; start-development UI and real verify API','IMPLEMENTATION stage and confirmed source/test visibility; real run requested against pinned source'],
+ '007':['Real DB UI schema/DDL/DML then requery','SQL response rows and UI show committed B role; schema contains actual table/column'],
+ '008':['PTY starts node and sends another command in same terminal','Decoded stdout markers absent from input prevent shell echo false pass; terminal session ID remains identical'],
+ '009':['Playwright modifies the exact resolved managed page for each controller case','Target value marker changes, live canvas changes and session/context/page match; trace is hidden'],
+ '010':['Canvas pointer/keyboard/navigation plus explicit locator/assertion, start/stop','Draft includes actual value/assertion/fill; post-stop action excluded; Gherkin and target Git unchanged'],
+ '011':['Dedicated target Git save and real CI request','Exact committed spec bytes; candidate and tested commit recorded separately; DB copy does not change CI list'],
+ '012':['Independent integration definition saved and replayed','SQLite purpose/run record plus actual executed report; target Git unchanged'],
+ '013':['ALL_REQUIRED verification against pinned completed baseline/source','Report has actual executed cases, exact version binding, assertion outcomes and screenshot bytes/hash; never use nonexecuted result as pass'],
+ '014':['Isolated missing-step source fixture and real generation rejection','Error names missing step; source and scenario count unchanged after rejection'],
+ '015':['All five stage rows attempt actual UI save candidate','Visible rejection, HTTP409 and whole original/projection snapshot unchanged; allowed editors/controls and locked editors inspected'],
+ '016':['All four artifact returns via UI','Correct return stage, baseline/result invalidation, confirmation gate and ordered regeneration/verification; editors mutually exclusive'],
+ '017':['Reset test data through DB UI and query named account','Actual query values A/active plus displayed values; every operation/assertion captured'],
+ '018':['DB UI A→B/requery, actual logout/relogin, edit and denied management page','Role B login, edited DB content, denial and account rows unchanged relative to after-role-change snapshot'],
+ '019':['Real nested mismatch expects A while current role is B','Actual FAILED assertion with expected A/actual B/source step and failure-moment image; successful screenshot never changes FAILED'],
+ '020':['Prepare previous B/edited state, reset through DB UI, end login','A/initial requery before restart; then actual B login/edit flow from reset state'],
+ '021':['All three artifact kinds saved in their allowed phase, close/reopen','Exact raw/hash and selected document requirement/source associations; UI content reloaded; bootstrap remains Git'],
+ '022':['Real canvas recording, independent save and version replay','Actual executed report and preserved actions/source mapping; target Git unchanged'],
+ '023':['Both invalid Gherkin and invalid TS against saved valid version','Real parser diagnostics with file/line/column/reason; entire original/projection/source snapshot unchanged'],
+ '024':['Save exact valid Outline source','Ordered keyword/text/steps/Examples/cells and exact source version/hash agree with raw'],
+ '025':['Explicit test-a/test-b/test-a-extra mappings saved','Exact spec/hash, a→two tests preserved, b separate; historical source stays pinned after new Gherkin head'],
+ '026':['All six syntactically valid but invalid mapping inputs','Specific MAPPING_INVALID diagnostic/test or source ID; no guessed mappings; entire valid source/projections unchanged'],
+ '027':['Unassociated independent recording saved and replayed','Nullable requirement/no mapping, exact raw, real executed replay and unchanged target CI'],
+ '028':['Pending source list then real completion/pin/select a through UI','Exact two selected test IDs and observed starts; b has no result and NOT_RUN; both real JPEG/canvas/managed tuples and report screenshot hashes match same run; selected pass never marks ALL_REQUIRED or VERIFIED']
+};

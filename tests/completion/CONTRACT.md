@@ -1,13 +1,15 @@
 # REQ-WB-001 補齊測試接線
 
-此檔是測試 fixture／DTO／locator 接線說明，依 SD 0.4 §8～12 細化；不修改 feature 或另建 SD。產品尚未實作，這些 endpoints、UI 與 managed runner 接收端仍須在產品階段提供。沒有用測試 server、route fulfill、假 DB 回應或 provider 成功文字替代產品。
+此檔是測試 fixture／DTO／locator 接線說明（可讀 TypeScript steps 修復版），依 SD 0.4 §8～12 細化；不修改 feature 或另建 SD。產品尚未實作，這些 endpoints、UI 與 managed runner 接收端仍須在產品階段提供。沒有用測試 server、route fulfill、假 DB 回應或 provider 成功文字替代產品。
 
 ## 快照與執行
 
-- 來源：commit `95fb2960aa56cce22c17ad40b5cfa535da315a28`，28 IDs／44 cases；原 feature、SD、generated/skeleton、tests/skeleton、原 config／套件與原工具證據保持原 bytes。
-- 本版 `generated/completed/` 載入 tests/completion，44 個明確 testKey 與來源 case／step 不變。manifest 固定來源殼 spec／manifest／bundle hash 及全部實作檔 hash。
-- active step 的 174 個精確 patterns 都有具體 plan；unsupported operation 直接 throw。沒有 active pending、skip、空 callback 或永真斷言。database.ts 中的明確未實作文字只用於 AC005／028 的「產品收到 SKELETON」輸入 fixture，不是本版 runner 的 step stub。
+- 來源：commit `95fb2960aa56cce22c17ad40b5cfa535da315a28`，28 IDs／44 cases；原 feature、SD、generated/skeleton、tests/skeleton、原骨架與歷史工具證據保持原 bytes；原 config／套件腳本可由95fb296重現。本修復明確變更預設入口並另存 skeleton.config.ts，不改原兩個Git commits。
+- 本版 `generated/completed/` 載入 tests/completion，44 個明確 testKey 與來源 case／step 不變。evidence/repair 的 manifest 固定來源殼 spec／manifest／bundle hash、前版 f8678bd manifest 與全部實作檔 hash。生成先記 COMPLETION_DRAFT；完成程度在 check-results 中依生成／逐案審閱／型別／discovery／工具執行證據推導，不由 generator 預填 COMPLETED。
+- 174 個精確 patterns 各自以 Given/When/Then 的 TypeScript callback 實作；主要執行路徑不載入 JSON plan、沒有 perform/execute opcode dispatcher 或大型 switch。sut.step 只設定來源與保存證據，實際 callback 直接可見操作／expect。沒有 active pending、skip、空 callback 或永真斷言。database.ts 中的明確未實作文字只用於 AC005／028 的「產品收到 SKELETON」輸入 fixture，不是本版 runner 的 step stub。
 - 工具檢查、型別、discovery、reproduction 與產品 E2E 狀態分開。正式執行入口為 tools/completion/run-e2e.mjs。缺前置條件在啟動 Playwright 前停止，exit 2 / NOT_RUN。
+
+預設 playwright.config.ts re-export completion.config.ts。npm test 是有前置檢查的產品入口；npm run spec:list／spec:generate／spec:verify／spec:typecheck／test:checks 都指向補齊版。骨架只經 npm run test:skeleton:list／test:skeleton:pending 與 skeleton.config.ts 存取。
 
 ## 專用環境與 fixture
 
@@ -53,7 +55,7 @@ WS 的 run.testStarted 事件帶 runId/testKey。browser.frame 先送 JSON envel
 
 | 區域 | 主要 test IDs／行為 |
 |---|---|
-| 文件／流程 | workflow-stage、gherkin-editor、sd-editor、spec-editor、confirm-gherkin、confirm-sd、generate-sd、generate-tests、complete-tests、test-readiness、start-development、stage-allowed-artifacts、stage-locked-artifacts、confirmed-gherkin、confirmed-sd、test-baseline、step-definitions-upload、generated-spec-source/path、generated-manifest、llm-needs-input。 |
+| 文件／流程 | workflow-stage、gherkin-editor、sd-editor、spec-editor、confirm-gherkin、confirm-sd、generate-sd、generate-tests、complete-tests、test-readiness、start-development、stage-allowed-artifacts、stage-locked-artifacts、source-editor、run-verification、confirmed-gherkin、confirmed-sd、test-baseline、step-definitions-upload、generated-spec-source/path、generated-manifest、llm-needs-input。 |
 | 鎖定保存嘗試 | open-artifact-save 開啟保存候選對話；artifact-save-kind 選文件；artifact-save-candidate 收候選原文；artifact-save-attempt 實際送保存；artifact-save-error 顯示「此階段不可修改該產物」。候選不是有效文件編輯，locked editor 保持鎖定。AC015 檢查 UI 提示及原 DB/投影/來源不變，也檢查真實 409。 |
 | 回退 | return-artifact 選 artifact 中文 label，return-stage 送回退；之後 UI 與資料庫 stage 一致，重新確認前不能前進。 |
 | DB | sql-editor、sql-run、sql-execution-state、db-results、db-schema-refresh、db-schema。 |
@@ -69,7 +71,7 @@ StepEvidence 包裝公開 Playwright page／locator／input 與 expect，逐操�
 
 AC028 檢查 selected a 的兩個 tests 全執行與回傳，b 沒有本 run case_result、清單 NOT_RUN；兩個所選 tests 都須有可驗證的 live 畫格與同 run 步驟／圖片。SELECTED_CASES passed 仍 coverageComplete=false，需求維持 VERIFICATION。
 
-工具測試使用 dependency doubles 檢查 resolver／reporter 的拒絕規則，與產品 E2E 分開；未執行產品就沒有產品通過證據。沒有瀏覽器下載、產品 build、server/Vue/正式 DB adapter、部署或 push。
+工具測試使用 dependency doubles 檢查 resolver／reporter 的拒絕規則，與產品 E2E 分開；未執行產品就沒有產品通過證據。官方 Chromium 下載本次遭 CDN 403 Domain forbidden，未取得執行檔；launchOptions 明確 chromiumSandbox=true，未降低沙箱。沒有產品 build、server/Vue/正式 DB adapter、部署或 push。
 
 官方 API：
 [BrowserType.connect](https://playwright.dev/docs/api/class-browsertype#browser-type-connect)、[Browser.contexts](https://playwright.dev/docs/api/class-browser#browser-contexts)、[Test list](https://playwright.dev/docs/test-cli#test-list)、[TestInfo.attach](https://playwright.dev/docs/api/class-testinfo#test-info-attach)、[Reporter.onEnd](https://playwright.dev/docs/api/class-reporter#reporter-on-end)、[Playwright fixtures](https://playwright.dev/docs/test-fixtures)。此版未使用私有 Playwright context/page IDs。

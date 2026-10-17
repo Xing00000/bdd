@@ -7,13 +7,15 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "spec:generate": "node tools/generate.mjs",
-    "spec:verify": "node tools/verify.mjs",
-    "spec:list": "playwright test --list",
-    "spec:typecheck": "tsc --noEmit",
-    "test:tooling": "node --test tools/tooling.test.mjs",
-    "test:checks": "node tools/checks.mjs",
-    "test:skeleton:pending": "playwright test --grep \u672c\u5de5\u4f5c\u53f0\u81ea\u8eab\u4f9dGit\u4e2d\u7684\u78ba\u8a8d\u6d41\u7a0b\u958b\u767c"
+    "test": "node tools/completion/run-e2e.mjs",
+    "spec:generate": "node tools/completion/generate.mjs",
+    "spec:verify": "node tools/completion/verify.mjs",
+    "spec:list": "playwright test --list --reporter=list",
+    "spec:typecheck": "tsc --noEmit -p completion.tsconfig.json",
+    "test:tooling": "node --import ./tools/completion/register-ts.mjs --test tools/completion/tooling.test.mjs",
+    "test:checks": "node tools/completion/checks.mjs",
+    "test:skeleton:list": "playwright test --config skeleton.config.ts --list --reporter=list",
+    "test:skeleton:pending": "playwright test --config skeleton.config.ts --grep 本工作台自身依Git中的確認流程開發"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",

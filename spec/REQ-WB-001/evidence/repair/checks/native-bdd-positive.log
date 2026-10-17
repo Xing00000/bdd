@@ -1,0 +1,170 @@
+$ node node_modules/@playwright/test/cli.js test --config /workspace/bdd/.test-fixtures/native-bdd-proof/proof.config.ts --grep 88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66 --reporter=json
+expectedExit=0
+actualExit=0
+{
+  "config": {
+    "argv": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "/workspace/bdd/node_modules/@playwright/test/cli.js",
+      "test",
+      "--config",
+      "/workspace/bdd/.test-fixtures/native-bdd-proof/proof.config.ts",
+      "--grep",
+      "88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66",
+      "--reporter=json"
+    ],
+    "configFile": "/workspace/bdd/.test-fixtures/native-bdd-proof/proof.config.ts",
+    "rootDir": "/workspace/bdd/.test-fixtures/native-bdd-proof/generated",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/workspace/bdd/.test-fixtures/native-bdd-proof/results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/workspace/bdd/.test-fixtures/native-bdd-proof/generated",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/workspace/bdd/.test-fixtures/native-bdd-proof/results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "",
+        "testDir": "/workspace/bdd/.test-fixtures/native-bdd-proof/generated",
+        "snapshotDir": "/workspace/bdd/.test-fixtures/native-bdd-proof/generated",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 30000,
+        "use": {},
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "proof.feature.spec.js",
+      "file": "proof.feature.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "real BDD dispatch proof",
+          "file": "proof.feature.spec.js",
+          "line": 4,
+          "column": 6,
+          "specs": [],
+          "suites": [
+            {
+              "title": "hash observed file",
+              "file": "proof.feature.spec.js",
+              "line": 6,
+              "column": 8,
+              "specs": [
+                {
+                  "title": "88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66",
+                  "ok": true,
+                  "tags": [],
+                  "tests": [
+                    {
+                      "timeout": 30000,
+                      "annotations": [],
+                      "expectedStatus": "passed",
+                      "projectId": "",
+                      "projectName": "",
+                      "results": [
+                        {
+                          "workerIndex": 0,
+                          "parallelIndex": 0,
+                          "status": "passed",
+                          "duration": 19,
+                          "errors": [],
+                          "stdout": [],
+                          "stderr": [],
+                          "retry": 0,
+                          "steps": [
+                            {
+                              "title": "Given I read the approved source file",
+                              "duration": 1
+                            },
+                            {
+                              "title": "Then its actual hash equals \"88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66\"",
+                              "duration": 4
+                            }
+                          ],
+                          "startTime": "2026-10-17T08:22:40.276Z",
+                          "annotations": [],
+                          "attachments": []
+                        }
+                      ],
+                      "status": "expected"
+                    }
+                  ],
+                  "id": "45f47d0869cc1c3b84d0-64507158ee9189d9df35",
+                  "file": "proof.feature.spec.js",
+                  "line": 8,
+                  "column": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-17T08:22:39.739Z",
+    "duration": 614.4219999999999,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
