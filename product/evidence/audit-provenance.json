@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-17T11:30:40.044Z",
+  "sourceCommit": "57e26a9a795f42215bc8a2e9d3f2517fde27cd54",
+  "originalProductCommits": [
+    "b7060de1309aae1226569d5db2bc90cbf3a20b21",
+    "f94c6f5cb96f98cddb475488c169a2915e04c380",
+    "1e765399b3483b2a927dc00afdb7b15f471199e8"
+  ],
+  "remoteRefs": [
+    {
+      "sha": "a1dffc11c9e29664a15287574a59c83d272864cc",
+      "ref": "refs/heads/main"
+    },
+    {
+      "sha": "4e3ad3ed5048bc62e20e1be9a1ebb61d3d997375",
+      "ref": "refs/heads/spec/workbench-gherkin-review"
+    }
+  ],
+  "verificationAt": "2026-10-17T11:29:56.746Z",
+  "verification": "product/evidence/verification.json",
+  "componentAndHttpTests": "90/90",
+  "productE2E": "NOT_RUN",
+  "newProductCommitsPushed": false,
+  "deployed": false
+}
