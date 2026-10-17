@@ -1,76 +1,13 @@
 {
   "schemaVersion": 1,
+  "requirementId": "REQ-WB-001",
+  "requirementDirectory": "spec/REQ-WB-001",
   "phase": "sd_review",
   "status": "gherkin_confirmed_sd_pending",
   "featurePath": "spec/REQ-WB-001/workbench.feature",
-  "featureSha256": "595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181",
-  "scenarioCount": 20,
-  "expandedCaseCount": 28,
-  "baseCommit": "a1dffc11c9e29664a15287574a59c83d272864cc",
-  "previousSubmissionCommit": "0661dd7307cc1164966175f6f05d88381a920309",
-  "reviewBranch": "spec/workbench-gherkin-review",
-  "approval": {
-    "subject": "gherkin",
-    "commit": "ef497e666f27515716c2f33b812da7e71f846dc5",
-    "featureSha256": "595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181",
-    "source": "Sentinel_a38fb29dae588191ade4081426cdf3cc",
-    "quote": "同意 產sd文ㄓㄧㄢ",
-    "at": "2026-10-17T03:53:13Z",
-    "featurePathAtApproval": "specs/workbench.feature"
-  },
-  "approver": "user",
-  "approvedAt": "2026-10-17T03:53:13Z",
-  "scope": "single_gherkin_source_with_core_features_and_product_stage_controls",
-  "syntaxCheck": {
-    "method": "existing_read_only_gherkin_parser",
-    "parserVersion": "39.1.0",
-    "parseErrors": 0,
-    "scenarioCount": 20,
-    "expandedCaseCount": 28
-  },
-  "stepMappingStatus": "not_created_in_current_phase",
-  "generationStatus": "NOT_RUN_FOR_CURRENT_REVISION",
-  "productE2EStatus": "NOT_RUN",
-  "sdStatus": "pending",
-  "earlierOutOfPhaseArtifactsPreservedOutsideRepository": true,
-  "note": "需求REQ-WB-001的Gherkin、SD及metadata同目錄；原AC-WB-001～020與批准feature bytes不變。doc只放ADR。文件組織調整已獲commit/push授權，SD內容仍pending，沒有生成測試／程式或執行SQL/build/E2E。",
-  "latestRequest": {
-    "source": "Sentinel_a38fb29dae588191ade4081426cdf3cc",
-    "scope": "sd_only",
-    "quote": "同意 產sd文ㄓㄧㄢ",
-    "at": "2026-10-17T03:53:13Z"
-  },
-  "approvedFeatureCommit": "ef497e666f27515716c2f33b812da7e71f846dc5",
-  "sdPath": "spec/REQ-WB-001/SD.md",
-  "sdSha256": "32271dd4b5f8e50ab60839716daf823e40fd1ef51bfaaf1611c6ca710dbc754d",
-  "sdApproval": null,
-  "requirementId": "REQ-WB-001",
-  "requirementDirectory": "spec/REQ-WB-001",
-  "pathMigration": {
-    "sourceCommit": "a16f142fc4d069c61fc33916468103ecbf8b02e1",
-    "publicationStatus": "authorized_for_feature_branch",
-    "paths": [
-      {
-        "from": "specs/workbench.feature",
-        "to": "spec/REQ-WB-001/workbench.feature"
-      },
-      {
-        "from": "docs/SD.md",
-        "to": "spec/REQ-WB-001/SD.md"
-      },
-      {
-        "from": "specs/reviews/gherkin-review.json",
-        "to": "spec/REQ-WB-001/review.json"
-      }
-    ]
-  },
-  "documentBinding": {
-    "requirementId": "REQ-WB-001",
-    "featurePath": "spec/REQ-WB-001/workbench.feature",
-    "featureSha256": "595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181",
-    "sdPath": "spec/REQ-WB-001/SD.md",
-    "adrDirectory": "doc"
-  },
+  "featureSha256": "211b167e1a7041acfc864a7907d24707e320790f2d8ad77b8a957e55c87bdc44",
+  "scenarioCount": 27,
+  "expandedCaseCount": 43,
   "scenarioIds": [
     "AC-WB-001",
     "AC-WB-002",
@@ -91,21 +28,75 @@
     "AC-WB-017",
     "AC-WB-018",
     "AC-WB-019",
-    "AC-WB-020"
+    "AC-WB-020",
+    "AC-WB-021",
+    "AC-WB-022",
+    "AC-WB-023",
+    "AC-WB-024",
+    "AC-WB-025",
+    "AC-WB-026",
+    "AC-WB-027"
   ],
-  "traceabilityKey": "requirementId/scenarioId/case_id",
+  "baseCommit": "a1dffc11c9e29664a15287574a59c83d272864cc",
+  "previousSubmissionCommit": "9be8b8c113e94c7a72b9f173eb1b2482ca61bf47",
+  "reviewBranch": "spec/workbench-gherkin-review",
+  "approval": {
+    "subject": "gherkin",
+    "featureSha256": "211b167e1a7041acfc864a7907d24707e320790f2d8ad77b8a957e55c87bdc44",
+    "featurePathAtApproval": "spec/REQ-WB-001/workbench.feature",
+    "sourceType": "user_transcript_via_delegation",
+    "sourceThreadId": "01a0fc94-e0dc-7217-9b9a-a555b7aae032",
+    "quote": "定稿",
+    "at": null,
+    "stateAtApproval": "working_tree",
+    "note": "核准綁定此內容hash；原對話未提供確切核准時間，不沿用舊版時間或commit。"
+  },
+  "approver": "user",
+  "approvedFeatureCommit": null,
+  "syntaxCheck": {
+    "method": "existing_read_only_gherkin_parser",
+    "parserVersion": "39.1.0",
+    "parseErrors": 0,
+    "scenarioCount": 27,
+    "expandedCaseCount": 43
+  },
+  "traceabilityKey": "projectId/requirementId/scenarioId/case_id@gherkinVersion",
+  "stepMappingStatus": "not_created_in_current_phase",
+  "generationStatus": "NOT_RUN_FOR_CURRENT_REVISION",
+  "typecheckStatus": "NOT_RUN",
+  "sqlExecutionStatus": "NOT_RUN",
+  "buildStatus": "NOT_RUN",
+  "productE2EStatus": "NOT_RUN",
+  "sdPath": "spec/REQ-WB-001/SD.md",
+  "sdVersion": "0.3",
+  "sdSha256": "964141f233c3f57cf77f08a52e1f6cb6f757fa2fd7d59dad3bb95c6bcf1347ca",
+  "sdStatus": "pending",
+  "sdApproval": null,
+  "documentBinding": {
+    "requirementId": "REQ-WB-001",
+    "featurePath": "spec/REQ-WB-001/workbench.feature",
+    "featureSha256": "211b167e1a7041acfc864a7907d24707e320790f2d8ad77b8a957e55c87bdc44",
+    "sdPath": "spec/REQ-WB-001/SD.md",
+    "sdSha256": "964141f233c3f57cf77f08a52e1f6cb6f757fa2fd7d59dad3bb95c6bcf1347ca",
+    "adrDirectory": "doc"
+  },
   "releaseRelation": {
     "requirementToRelease": "many_to_many",
     "releaseId": null,
     "scope": "traceability_description_only"
   },
   "publicationAuthorization": {
-    "source": "Sentinel_d3c89b4e1b4881918283358e359fc964",
-    "quote": "正確 改玩後push",
-    "at": "2026-10-17T04:11:45Z",
+    "sourceType": "user_transcript_via_delegation",
+    "sourceThreadId": "01a0fc94-e0dc-7217-9b9a-a555b7aae032",
+    "assistantProposal": "確認這版 Gherkin 後，我再更新 SD；這次修改也一併 commit、push 到原分支，可以嗎？",
+    "userAuthorization": "可以 gherkin spec.ts 入資料庫前要有格式檢核 最好是正規化 才能做追蹤吧",
+    "assistantFinalizationProposal": "這版 Gherkin 可以定稿嗎？確認後我更新 Vue 與資料庫設計的 SD，再依你的授權 push，SD 仍交給你確認後才開發。",
+    "userFinalization": "定稿",
     "repository": "Xing00000/bdd",
     "branch": "spec/workbench-gherkin-review",
-    "scope": "document_organization_commit_and_push_only",
+    "scope": "finalized_gherkin_and_pending_sd_document_commit_and_push_only",
     "sdContentApproval": false
-  }
+  },
+  "earlierOutOfPhaseArtifactsPreservedOutsideRepository": true,
+  "note": "27情境/43案例Gherkin已定稿；feature原文hash固定。SD 0.3採Vue、六邊形架構、SQLite原文與正規化版本、明確多對一測試映射及獨立網頁錄製，仍pending approval。bdd自身bootstrap全存Git；不修改main，不實作、安裝、生成spec.ts、執行SQL/build/E2E。"
 }

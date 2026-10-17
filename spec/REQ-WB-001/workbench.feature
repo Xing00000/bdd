@@ -1,6 +1,6 @@
 # language: en
 # 待使用者確認；目前只允許Gherkin與簡短階段說明，不含step、spec.ts、SD或產品實作。
-# 核心範圍：20個Scenario ID、28個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
+# 核心範圍：27個Scenario ID、43個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
 Feature: 多人共用的BDD軟體開發工作台
   人類共用專案與集中文件
   依Gherkin確認、SD確認、測試產生、開發、驗證的順序工作
@@ -82,11 +82,15 @@ Feature: 多人共用的BDD軟體開發工作台
       | program | 程式       |
 
   @AC-WB-010
-  Scenario: 使用者從網頁錄製Playwright腳本
-    Given 使用者在工作台開啟瀏覽器錄製
-    When 使用者操作網頁並選擇定位器與預期結果
-    Then 產生可檢查的Playwright TypeScript腳本草稿
-    And 錄製草稿可用於補齊測試而不自動更改Gherkin驗收條件
+  Scenario: 使用者親自操作內嵌瀏覽器並開始與停止錄製
+    Given 使用者已在工作台開啟可親自操作的內嵌瀏覽器
+    When 使用者按下開始錄製
+    And 使用者親自導覽網頁與點擊及輸入並選擇定位器與預期結果
+    And 使用者按下停止錄製
+    Then 產生包含該次操作與斷言的可檢查Playwright TypeScript腳本草稿
+    And 停止後的新操作不再加入該次錄製
+    And 該草稿屬於使用者自錄腳本而不是自動新增的標準CI測試
+    And 不會自動更改Gherkin驗收條件
 
   @AC-WB-011
   Scenario: 被開發專案的CI測試跟著該專案Git
@@ -94,6 +98,8 @@ Feature: 多人共用的BDD軟體開發工作台
     When 保存測試並在該專案CI執行
     Then 測試檔案跟著該專案Git的branch與commit
     And CI結果可對應該專案的實際commit
+    And 工作台可在SQLite保存及讀回該commit對應的spec.ts內容副本
+    And 該資料庫副本不取代target Git的標準CI測試版本或改變CI測試清單
 
   @AC-WB-012
   Scenario: 使用者自建整合測試保存在工作台資料庫
@@ -190,3 +196,90 @@ Feature: 多人共用的BDD軟體開發工作台
     Then spec斷言測試資料庫中的角色為"A"且"scenario_document"內容為"initial"
     And Playwright保存本次前置資料初始狀態的截圖
     And 本次情境從該初始狀態重新執行DB變更與登入及操作驗證流程
+
+  @AC-WB-021
+  Scenario Outline: 在SQLite保存並重新讀取當次需求的Gherkin與spec.ts及SD
+    Given 共用專案的當次需求已有"<artifact>"內容及需求編號與情境編號對應
+    When 使用者在"<phase>"階段將該產物保存到工作台SQLite
+    And 使用者關閉並重新開啟該需求後讀取該產物
+    Then 工作台從SQLite讀回與保存時相同的完整內容
+    And 該產物仍連結相同的需求編號與對應情境編號
+    And 這項產品儲存能力不改變bdd專案自身以Git保存開發文件與測試的方式
+    Examples:
+      | case_id | artifact | phase                      |
+      | gherkin | Gherkin  | Gherkin確認                 |
+      | tests   | spec.ts  | test generation/completion |
+      | sd      | SD       | SD確認                      |
+
+  @AC-WB-022
+  Scenario: 另存並重播使用者自錄腳本而不混入標準CI測試
+    Given 使用者已停止一次內嵌瀏覽器錄製並取得腳本草稿
+    When 使用者將腳本另存到工作台SQLite的使用者錄製腳本清單
+    And 使用者重新開啟該已保存腳本並按下重播
+    Then 工作台在瀏覽器實際重播已保存的操作與斷言
+    And 顯示該次重播的實際結果而不是把保存成功當成測試通過
+    And 該腳本保留已提供的需求與相關情境對應並與標準專案CI測試分開列示
+    And 不會自動新增或修改target Git的CI測試檔案或CI測試清單
+
+  @AC-WB-023
+  Scenario Outline: 入庫前以對應語法解析器拒絕無效內容並保留有效版本
+    Given 工作台SQLite已有"<artifact>"的有效原文與結構化資料
+    And 使用者準備保存的同一檔案內容含語法錯誤
+    When 使用者要求將該"<artifact>"內容保存到SQLite
+    Then 工作台先以"<parser>"解析內容並拒絕將錯誤內容保存為有效版本
+    And 回報錯誤的檔案名稱與行號及欄號與原因
+    And 原有有效版本的原文與結構化資料及來源對應保持不變
+    Examples:
+      | case_id | artifact | parser              |
+      | gherkin | Gherkin  | Gherkin語法解析器    |
+      | tests   | spec.ts  | TypeScript語法解析器 |
+
+  @AC-WB-024
+  Scenario: 保存有效Gherkin原文及可查詢的結構化情境與步驟
+    Given 語法有效的Gherkin原文對應需求"REQ-DEMO-001"
+    And 原文含Scenario Outline的Scenario ID"AC-DEMO-001"及有順序的steps與兩列Examples
+    When 使用者將該Gherkin保存到SQLite
+    Then 讀回的完整原文與提交內容逐字相同
+    And 可結構化查詢需求編號與Scenario ID及各step的關鍵字與文字及順序
+    And 可結構化查詢Examples的欄名與各列值及case_id且保留列順序
+    And 原文與結構化資料均連結同一來源文件版本與內容hash
+
+  @AC-WB-025
+  Scenario: 保存標準生成spec.ts原文及明確的測試與來源情境對應
+    Given 指定來源版本的已確認Gherkin含情境"AC-DEMO-001"及Examples案例"a"與"b"
+    And 標準生成的spec.ts語法有效且測試"test-a"與"test-b"分別明確對應該情境的案例"a"與"b"
+    And 另一測試"test-a-extra"以不同test ID明確對應同一情境的案例"a"
+    When 使用者將該spec.ts與明確ID對應保存到SQLite
+    Then 讀回的完整spec.ts原文與提交內容逐字相同
+    And 可結構化查詢每個test ID及其需求編號與Scenario ID及Examples case_id
+    And 每筆對應可追溯spec.ts版本與內容hash及來源Gherkin版本與內容hash
+    And 相同Scenario ID下的不同Examples案例可各自對應不同測試
+    And 測試"test-a"與"test-a-extra"的映射均被保存且同時對應相同Scenario ID與Examples案例"a"
+    And 重新讀取時仍取得原本的來源版本而不是自動改指向最新Gherkin
+
+  @AC-WB-026
+  Scenario Outline: 標準生成測試的明確ID映射不完整或無效時不能入庫為有效版本
+    Given 工作台SQLite已有一份有效的標準生成spec.ts及其情境對應
+    And 待保存的新spec.ts通過TypeScript語法解析但其明確ID映射存在"<problem>"
+    When 使用者要求保存該標準生成測試與映射
+    Then 工作台依指定來源版本的Gherkin與明確test ID映射拒絕該次保存
+    And 回報"<problem>"及相關test ID或來源案例ID
+    And 未提供的情境對應不被自動推測或補造
+    And 原有有效spec.ts原文與結構化映射保持不變
+    Examples:
+      | case_id          | problem                                      |
+      | unmapped_test    | 有測試未提供明確的情境與案例對應               |
+      | missing_case     | 來源Gherkin有應生成的案例未對應任何測試         |
+      | duplicate_test   | 不同測試定義使用相同test ID                    |
+      | duplicate_case   | 完全相同test ID與來源案例的映射資料重複         |
+      | unknown_scenario | 引用指定來源版本中不存在的Scenario ID          |
+      | unknown_example  | 引用指定來源情境中不存在的Examples case_id      |
+
+  @AC-WB-027
+  Scenario: 未關聯需求情境的使用者自錄腳本仍可獨立保存及重播
+    Given 使用者已取得語法有效且未連結需求編號或Scenario ID的自錄Playwright腳本
+    When 使用者將該腳本另存到SQLite的使用者錄製腳本清單
+    Then 工作台保存完整原文且需求與情境對應維持未關聯
+    And 不要求補造需求或Scenario ID以通過標準生成測試的映射檢核
+    And 使用者可重新開啟該腳本並重播
+    And 該腳本仍獨立於標準專案CI且不會自動新增或修改target Git的CI測試
