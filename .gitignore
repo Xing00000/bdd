@@ -1,0 +1,7 @@
+node_modules/
+.bddgen-raw/
+.bddgen-negative/
+.test-fixtures/
+test-results/
+playwright-report/
+*.tsbuildinfo

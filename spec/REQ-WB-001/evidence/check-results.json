@@ -1,0 +1,38 @@
+{
+  "scope": "CODEGEN_SKELETON_ONLY",
+  "completionStatus": "PENDING",
+  "productE2E": "NOT_RUN",
+  "checks": [
+    {
+      "name": "generate",
+      "command": "node tools/generate.mjs",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/checks/generate.log"
+    },
+    {
+      "name": "mapping",
+      "command": "node tools/verify.mjs",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/checks/mapping.log"
+    },
+    {
+      "name": "list",
+      "command": "node node_modules/@playwright/test/cli.js test --list",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/checks/list.log"
+    },
+    {
+      "name": "typecheck",
+      "command": "node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/checks/typecheck.log"
+    },
+    {
+      "name": "tooling",
+      "command": "node --test tools/tooling.test.mjs",
+      "exitCode": 0,
+      "log": "spec/REQ-WB-001/evidence/checks/tooling.log"
+    }
+  ],
+  "allToolChecksPassed": true
+}

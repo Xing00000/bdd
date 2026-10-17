@@ -1,0 +1,17 @@
+$ node --test tools/tooling.test.mjs
+exitCode=0
+{"bddgenExit":0,"spec":"generated/skeleton/REQ-WB-001/workbench.feature.spec.ts","cases":44,"scenarios":28,"runtimeBehaviorPreserved":true}
+✔ real bddgen rejects missing bindings (498.291572ms)
+✔ real bddgen rejects ambiguous bindings (511.9699ms)
+✔ adapter rejects unknown source references and missing cases (47.863554ms)
+✔ codegen is reproducible without completion implementations (776.090707ms)
+✔ pending stub always fails explicitly (0.543664ms)
+✔ actual Playwright skeleton probe fails rather than passing or skipping (1283.117ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3479.323131

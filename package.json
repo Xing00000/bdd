@@ -1,0 +1,26 @@
+{
+  "name": "bdd-workbench-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "spec:generate": "node tools/generate.mjs",
+    "spec:verify": "node tools/verify.mjs",
+    "spec:list": "playwright test --list",
+    "spec:typecheck": "tsc --noEmit",
+    "test:tooling": "node --test tools/tooling.test.mjs",
+    "test:checks": "node tools/checks.mjs",
+    "test:skeleton:pending": "playwright test --grep \u672c\u5de5\u4f5c\u53f0\u81ea\u8eab\u4f9dGit\u4e2d\u7684\u78ba\u8a8d\u6d41\u7a0b\u958b\u767c"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "playwright-bdd": "9.2.1",
+    "typescript": "5.9.3",
+    "@types/node": "24.10.1",
+    "@cucumber/gherkin": "39.1.0",
+    "@cucumber/messages": "32.3.1"
+  }
+}

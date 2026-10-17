@@ -1,0 +1,9 @@
+{"exitCode":1}
+Missing step definitions: 1
+
+Given('unregistered fixture step', async ({}) => {
+  // Step: Given unregistered fixture step
+  // From: .bddgen-negative/missing.feature:3:5
+});
+
+Use snippets above to create missing steps.

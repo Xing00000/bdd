@@ -1,0 +1,3 @@
+$ node tools/generate.mjs
+exitCode=0
+{"bddgenExit":0,"spec":"generated/skeleton/REQ-WB-001/workbench.feature.spec.ts","cases":44,"scenarios":28,"runtimeBehaviorPreserved":true}
