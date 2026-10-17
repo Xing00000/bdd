@@ -17,7 +17,7 @@ import type { BrowserRuntimePort } from '../ports/runtime.js';
 import type { RecordingSecretResolver } from '../adapters/runtime/secrets.js';
 import { createFrameChannel } from './frame-channel.js';
 import { reportHtml } from './report-html.js';
-export interface ServerOptions {root:string;metadataFile:string;dataRoot:string;baseUrl:string;llm?:{baseUrl:string;apiKey:string;model:string};resolveRecordingSecret?:RecordingSecretResolver;logger?:boolean}
+export interface ServerOptions {root:string;metadataFile:string;dataRoot:string;baseUrl:string;llm?:import('../adapters/generation/types.ts').LlmOptions;resolveRecordingSecret?:RecordingSecretResolver;logger?:boolean}
 export async function createServer(options:ServerOptions) {
   const {root,dataRoot}=options;await mkdir(dataRoot,{recursive:true,mode:0o700});await mkdir(path.dirname(options.metadataFile),{recursive:true});
   const app=Fastify({logger:options.logger??false,bodyLimit:20*1024*1024});await app.register(websocket);
@@ -34,9 +34,9 @@ export async function createServer(options:ServerOptions) {
   };
   const wired=new Set<string>();
   function wireSession(sessionId:string,projectId:string){if(wired.has(sessionId))return;wired.add(sessionId);runtime.browser.subscribe(sessionId,event=>{
-    void (async()=>{const bindings=await core.store.all('SELECT b.*,r.project_id,r.requirement_id,r.definition_snapshot_json,c.test_definition_id,c.runtime_test_key FROM run_browser_bindings b JOIN runs r ON r.id=b.run_id JOIN case_results c ON c.id=b.case_result_id WHERE b.session_id=? AND b.context_ref=? AND b.page_id=?',[event.sessionId,event.contextRef,event.pageId]);
+    void (async()=>{const bindings=await core.store.all('SELECT b.*,r.project_id,r.requirement_id,r.feature_id,r.definition_snapshot_json,c.test_definition_id,c.runtime_test_key FROM run_browser_bindings b JOIN runs r ON r.id=b.run_id JOIN case_results c ON c.id=b.case_result_id WHERE b.session_id=? AND b.context_ref=? AND b.page_id=?',[event.sessionId,event.contextRef,event.pageId]);
       const base={...event,projectId};emit(base);
-      for(const b of bindings){const definition=JSON.parse(b.definition_snapshot_json).definitions.find((d:any)=>d.testKey===b.runtime_test_key);emit({...event,projectId:b.project_id,requirementId:b.requirement_id,runId:b.run_id,testKey:b.runtime_test_key,testDefinitionId:b.test_definition_id??definition?.id,caseResultId:b.case_result_id,bindingSeq:b.binding_seq});}
+      for(const b of bindings){const definition=JSON.parse(b.definition_snapshot_json).definitions.find((d:any)=>d.testKey===b.runtime_test_key);emit({...event,projectId:b.project_id,requirementId:b.requirement_id,featureId:b.feature_id,runId:b.run_id,testKey:b.runtime_test_key,testDefinitionId:b.test_definition_id??definition?.id,caseResultId:b.case_result_id,bindingSeq:b.binding_seq});}
     })().catch(error=>emit({type:'browser.error',projectId,sessionId,payload:{message:String(error.message)}}));
   });}
   const browser:BrowserRuntimePort=new Proxy(runtime.browser,{get(target,key){if(key==='create')return async(input:Parameters<BrowserRuntimePort['create']>[0])=>{const result=await target.create(input);wireSession(result.id,input.projectId);return result;};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});
@@ -63,19 +63,20 @@ export async function createServer(options:ServerOptions) {
   app.post('/projects',async(request,reply)=>{const b=body(request);let ref=b.workspaceRef;if(!ref){ref=path.join(dataRoot,'projects',randomUUID());await mkdir(ref,{recursive:true});}await workspace.existing(ref);reply.code(201);return core.createProject({name:b.name,workspaceRef:ref});});
   app.get('/projects/:p/requirements',request=>core.listRequirements(params(request).p));
   app.post('/projects/:p/requirements',async(request,reply)=>{reply.code(201);return core.createRequirement(params(request).p,body(request));});
-  app.get('/requirements/:r',request=>ext.current(params(request).r));
-  app.post('/documents/:d/versions',async(request,reply)=>{const result=await core.saveVersion(params(request).d,body(request));const row=await one('SELECT project_id,requirement_id FROM documents WHERE id=?',[params(request).d]);emit({type:'document.saved',projectId:row.project_id,requirementId:row.requirement_id,documentVersionId:result.versionId,payload:{}});reply.code(201);return result;});
+  app.post('/requirements/:r/features',async(request,reply)=>{reply.code(201);return core.createFeature(params(request).r,body(request));});
+  app.get('/requirements/:r',request=>ext.current(params(request).r,query(request).featureId));
+  app.post('/documents/:d/versions',async(request,reply)=>{const result=await core.saveVersion(params(request).d,body(request));const row=await one('SELECT project_id,requirement_id,feature_id FROM documents WHERE id=?',[params(request).d]);emit({type:'document.saved',projectId:row.project_id,requirementId:row.requirement_id,featureId:row.feature_id,documentVersionId:result.versionId,payload:{}});reply.code(201);return result;});
   app.get('/documents/:d/versions/:v',request=>core.getVersion(params(request).d,params(request).v));
   app.get('/documents/:d/versions/:v/structure',request=>core.structure(params(request).d,params(request).v));
-  for(const kind of ['gherkin','sd'] as const)app.post(`/requirements/:r/confirm-${kind}`,async request=>{const b=body(request),result=await core.confirm(params(request).r,kind,{versionId:b.versionId,rawSha256:b.rawSha256??b.hash});emit({type:'workflow.stageChanged',projectId:result.projectId,requirementId:result.id,payload:{stage:result.stage}});return result;});
-  app.post('/requirements/:r/return',request=>core.returnTo(params(request).r,body(request).artifactKind??body(request).kind));
-  app.post('/requirements/:r/start-development',request=>ext.beginDevelopment(params(request).r));
+  for(const kind of ['gherkin','sd'] as const)app.post(`/requirements/:r/confirm-${kind}`,async request=>{const b=body(request),result=await core.confirm(params(request).r,kind,{versionId:b.versionId,rawSha256:b.rawSha256??b.hash,featureId:b.featureId});emit({type:'workflow.stageChanged',projectId:result.projectId,requirementId:result.id,featureId:result.featureId,payload:{stage:result.stage}});return result;});
+  app.post('/requirements/:r/return',request=>core.returnTo(params(request).r,body(request).artifactKind??body(request).kind,body(request).featureId));
+  app.post('/requirements/:r/start-development',request=>ext.beginDevelopment(params(request).r,body(request).featureId));
   app.post('/requirements/:r/generate-sd',request=>ext.generateSd(params(request).r,body(request)));
   app.post('/requirements/:r/generate-tests',request=>ext.generated(params(request).r,body(request)));
   app.post('/requirements/:r/complete-tests',request=>ext.complete(params(request).r,body(request)));
-  app.get('/requirements/:r/generated-tests/export',request=>ext.exportBundle(params(request).r,query(request).versionId));
+  app.get('/requirements/:r/generated-tests/export',request=>ext.exportBundle(params(request).r,query(request).versionId,query(request).featureId));
   app.get('/requirements/:r/scenario-tests',request=>core.scenarioTests(params(request).r,query(request)));
-  app.get('/requirements/:r/source',request=>ext.source(params(request).r));
+  app.get('/requirements/:r/source',request=>ext.source(params(request).r,undefined,query(request).featureId));
   app.post('/requirements/:r/source',request=>ext.source(params(request).r,body(request)));
   app.post('/requirements/:r/pin-source',request=>ext.pinSource(params(request).r,body(request)));
   app.post('/requirements/:r/verify',async(request,reply)=>{const result=await runs.verify(params(request).r,body(request));reply.code(202);return result;});
@@ -104,21 +105,21 @@ export async function createServer(options:ServerOptions) {
   app.get('/recordings/:id/versions/:v',request=>core.getVersion(params(request).id,params(request).v));
   app.post('/scripts/:id/versions/:v/replay',async(request,reply)=>{reply.code(202);return runs.replay(params(request).id,params(request).v,body(request));});
   app.post('/repository-snapshots',request=>ext.snapshot(body(request)));
-  app.post('/requirements/:r/save-to-target-git',request=>ext.saveGit(params(request).r));
-  app.post('/requirements/:r/run-target-ci',request=>ext.runCi(params(request).r));
-  app.post('/terminals',async(request,reply)=>{const b=body(request),p=await ext.project(b.projectId);const r=b.requirementId?await ext.current(b.requirementId):null;if(r&&r.projectId!==p.id)throw notFound();const dir=await workspace.stageDirectory(p.id,r?.stage??'IMPLEMENTATION');const result=await runtime.terminal.create({workspaceRef:dir,cols:b.cols,rows:b.rows});reply.code(201);return {...result,workspaceRef:dir};});
+  app.post('/requirements/:r/save-to-target-git',request=>ext.saveGit(params(request).r,body(request).featureId));
+  app.post('/requirements/:r/run-target-ci',request=>ext.runCi(params(request).r,body(request).featureId));
+  app.post('/terminals',async(request,reply)=>{const b=body(request),p=await ext.project(b.projectId);const r=b.requirementId?await ext.current(b.requirementId,b.featureId):null;if(r&&r.projectId!==p.id)throw notFound();const dir=await workspace.stageDirectory(p.id,r?.stage??'IMPLEMENTATION');const result=await runtime.terminal.create({workspaceRef:dir,cols:b.cols,rows:b.rows});reply.code(201);return {...result,workspaceRef:dir};});
   app.delete('/terminals/:id',async request=>{runtime.terminal.closeTerminal(params(request).id);return {closed:true};});
   function checkOrigin(request:any){const origin=request.headers.origin;if(origin&&new URL(origin).host!==request.headers.host)throw Object.assign(new Error('WebSocket origin mismatch'),{statusCode:403,code:'INVALID_ORIGIN'});}
   app.get('/events',{websocket:true},(socket,request)=>{try{checkOrigin(request);const peer={socket,projectId:query(request).projectId};peers.add(peer);socket.on('close',()=>{peers.delete(peer);channel.forget(socket);});
-    void (async()=>{const bindings=await core.store.all("SELECT b.*,r.project_id,r.requirement_id,r.definition_snapshot_json,c.test_definition_id,c.runtime_test_key FROM run_browser_bindings b JOIN runs r ON r.id=b.run_id JOIN case_results c ON c.id=b.case_result_id WHERE r.status='RUNNING'"+(peer.projectId?' AND r.project_id=?':''),peer.projectId?[peer.projectId]:[]);
-      for(const b of bindings){if(socket.readyState!==1)return;const definition=JSON.parse(b.definition_snapshot_json).definitions.find((d:any)=>d.testKey===b.runtime_test_key),identity={projectId:b.project_id,requirementId:b.requirement_id,runId:b.run_id,testKey:b.runtime_test_key,testDefinitionId:b.test_definition_id??definition?.id,caseResultId:b.case_result_id,sessionId:b.session_id,contextRef:b.context_ref,pageId:b.page_id,bindingSeq:b.binding_seq};send(socket,{type:'run.browserBound',...identity});const unsubscribe=browser.subscribe(b.session_id,event=>{if(event.image&&event.contextRef===b.context_ref&&event.pageId===b.page_id)send(socket,{...event,...identity});});unsubscribe();}
+    void (async()=>{const bindings=await core.store.all("SELECT b.*,r.project_id,r.requirement_id,r.feature_id,r.definition_snapshot_json,c.test_definition_id,c.runtime_test_key FROM run_browser_bindings b JOIN runs r ON r.id=b.run_id JOIN case_results c ON c.id=b.case_result_id WHERE r.status='RUNNING'"+(peer.projectId?' AND r.project_id=?':''),peer.projectId?[peer.projectId]:[]);
+      for(const b of bindings){if(socket.readyState!==1)return;const definition=JSON.parse(b.definition_snapshot_json).definitions.find((d:any)=>d.testKey===b.runtime_test_key),identity={projectId:b.project_id,requirementId:b.requirement_id,featureId:b.feature_id,runId:b.run_id,testKey:b.runtime_test_key,testDefinitionId:b.test_definition_id??definition?.id,caseResultId:b.case_result_id,sessionId:b.session_id,contextRef:b.context_ref,pageId:b.page_id,bindingSeq:b.binding_seq};send(socket,{type:'run.browserBound',...identity});const unsubscribe=browser.subscribe(b.session_id,event=>{if(event.image&&event.contextRef===b.context_ref&&event.pageId===b.page_id)send(socket,{...event,...identity});});unsubscribe();}
     })().catch(error=>send(socket,{type:'browser.error',message:String(error.message)}));
   }catch(error){socket.close(1008,String((error as Error).message));}});
   app.get('/browser-sessions/:id',{websocket:true},(socket,request)=>{try{checkOrigin(request);const id=params(request).id;browser.attachment(id);const unsubscribe=browser.subscribe(id,event=>send(socket,event));socket.on('message',(data:Buffer)=>{try{void browser.input(id,JSON.parse(String(data))).catch(error=>send(socket,{type:'browser.error',message:error.message,code:error.code}));}catch(error){send(socket,{type:'browser.error',message:String((error as Error).message),code:'INVALID_INPUT'});}});socket.on('close',()=>{unsubscribe();channel.forget(socket);});}catch(error){socket.close(1008,String((error as Error).message));}});
   app.get('/terminals/:id',{websocket:true},(socket,request)=>{try{checkOrigin(request);const id=params(request).id,unsubscribe=runtime.terminal.subscribe(id,event=>send(socket,event));socket.on('message',(data:Buffer)=>{try{const value=JSON.parse(String(data));if(value.type==='input')runtime.terminal.input(id,value.data);else if(value.type==='resize')runtime.terminal.resize(id,value.cols,value.rows);else if(value.type==='close')runtime.terminal.closeTerminal(id);}catch(error){send(socket,{type:'error',message:String((error as Error).message)});}});socket.on('close',unsubscribe);}catch(error){socket.close(1008,String((error as Error).message));}});
-  const publicRoot=path.join(root,'product/public');let hasUi=false;try{hasUi=(await stat(path.join(publicRoot,'index.html'))).isFile();}catch{}
+  const publicRoot=path.join(root,'dist/public');let hasUi=false;try{hasUi=(await stat(path.join(publicRoot,'index.html'))).isFile();}catch{}
   if(hasUi){await app.register(staticFiles,{root:publicRoot,prefix:'/',wildcard:false});
-    app.addHook('onRequest',async(request,reply)=>{const pathname=request.url.split('?')[0];if(request.method==='GET'&&request.headers.accept?.includes('text/html')&&/^\/projects(?:\/[^/]+(?:\/(?:requirements|db|browser|recordings|integrations|runs)(?:\/[^/]+)?)?)?\/?$/.test(pathname))return reply.sendFile('index.html');});
+    app.addHook('onRequest',async(request,reply)=>{const pathname=request.url.split('?')[0];if(request.method==='GET'&&request.headers.accept?.includes('text/html')&&(/^\/projects(?:\/[^/]+(?:\/(?:requirements|db|browser|recordings|integrations|runs)(?:\/[^/]+)?)?)?\/?$/.test(pathname)||/^\/projects\/[^/]+\/requirements\/[^/]+\/tests\/?$/.test(pathname)))return reply.sendFile('index.html');});
     app.setNotFoundHandler((request,reply)=>request.method==='GET'&&request.headers.accept?.includes('text/html')?reply.sendFile('index.html'):reply.code(404).send({code:'NOT_FOUND',message:'Resource not found'}));}
   app.addHook('onClose',async()=>{clearInterval(frameDrain);channel.clear();for(const peer of peers)peer.socket.close();await runs.close();await browser.close();runtime.terminal.close();await runtime.targetDb.close();await core.close();});
   return {app,core,runtime,browser,extensions:ext,runs};

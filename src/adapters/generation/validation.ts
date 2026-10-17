@@ -33,7 +33,7 @@ export function createCompletionValidator(options: GenerationOptions) {
           diagnostic('bundle', 'Bundle files require path and rawText'); continue;
         }
         if (isAbsolute(file.path) || file.path.includes('\\') || file.path.split('/').some((segment: string) => ['..', 'node_modules', '.git'].includes(segment))
-          || ['package.json', 'validation.config.ts'].includes(file.path) || !/\.(?:[cm]?[jt]s|json|feature)$/.test(file.path)) {
+          || ['package.json', 'validation.config.ts'].includes(file.path) || !(/\.(?:[cm]?[jt]s|json|feature)$/.test(file.path)||file.path.endsWith('.sd.md'))) {
           diagnostic(file.path, 'Bundle path is outside the permitted relative source-file namespace'); continue;
         }
         if (files.has(file.path) && files.get(file.path) !== file.rawText) diagnostic(file.path, 'Conflicting duplicate bundle path');
@@ -86,10 +86,8 @@ export function createCompletionValidator(options: GenerationOptions) {
       const directory = await mkdtemp(join(resolve(options.artifactRoot), 'completion-check-'));
       // Uploaded/approved fixtures resolve through the repository's Playwright installation.
       // The validator, generated bundle and nested runner must share that registry.
-      let require = createRequire(join(resolve(options.root), 'package.json'));
-      let packagePath: string;
-      try { packagePath = require.resolve('@playwright/test/package.json'); }
-      catch { require = createRequire(join(resolve(options.root), 'product/package.json')); packagePath = require.resolve('@playwright/test/package.json'); }
+      const require = createRequire(join(resolve(options.root), 'package.json'));
+      const packagePath = require.resolve('@playwright/test/package.json');
       const moduleRoot = dirname(dirname(dirname(packagePath)));
       await symlink(moduleRoot, join(directory, 'node_modules'), 'dir');
       await writeFile(join(directory, 'package.json'), '{"type":"module"}\n');

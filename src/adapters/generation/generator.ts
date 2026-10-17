@@ -103,22 +103,25 @@ function adapt(raw: string, cases: Case[]) {
 export function createGenerator(options: GenerationOptions) {
   return {
     async generate(input: GenerationInput): Promise<GenerationResult> {
+      if(!input.requirementKey?.trim()||!input.featureKey?.trim()||typeof input.sd!=='string')throw new GenerationError(422,'GENERATION_IDENTITY_REQUIRED','Requirement, feature and SD are required');
+      const segment=(value:string)=>encodeURIComponent(value).replace(/\./g,'%2E');
+      const name=segment(input.featureKey),bundleDirectory=`spec/${segment(input.requirementKey)}/${name}`;
+      const featurePath=`${bundleDirectory}/${name}.feature`,stepPath=`${bundleDirectory}/${name}.steps.ts`,specPath=`${bundleDirectory}/${name}.feature.spec.ts`,configPath=`${bundleDirectory}/bdd.config.ts`;
+      const config=`import {defineConfig} from '@playwright/test';\nimport {defineBddConfig} from 'playwright-bdd';\nexport default defineConfig({testDir:defineBddConfig({features:${JSON.stringify(name+'.feature')},featuresRoot:'.',steps:[${JSON.stringify(name+'.steps.ts')}],outputDir:'.',missingSteps:'fail-on-gen',examplesTitleFormat:'<case_id>'}),testMatch:'**/*.spec.ts',workers:1,retries:0,forbidOnly:true});\n`;
       const sourceCases = parseCases(input), registry = definitions(input.stepDefinitions);
       await mkdir(options.artifactRoot, { recursive: true });
       const directory = await mkdtemp(join(resolve(options.artifactRoot), 'generation-'));
-      let require = createRequire(join(resolve(options.root), 'product/package.json'));
-      let packagePath: string;
-      try { packagePath = require.resolve('playwright-bdd/package.json'); }
-      catch { require = createRequire(join(resolve(options.root), 'package.json')); packagePath = require.resolve('playwright-bdd/package.json'); }
+      const require = createRequire(join(resolve(options.root), 'package.json'));
+      const packagePath = require.resolve('playwright-bdd/package.json');
       await symlink(dirname(dirname(packagePath)), join(directory, 'node_modules'), 'dir');
-      await mkdir(join(directory, 'features')); await mkdir(join(directory, 'steps')); await mkdir(join(directory, 'generated'));
-      await writeFile(join(directory, 'package.json'), '{"type":"module"}\n');
-      await writeFile(join(directory, 'features/workbench.feature'), input.feature);
-      await writeFile(join(directory, 'steps/pending.steps.ts'), registry.rawText);
-      await writeFile(join(directory, 'playwright.config.ts'), `import {defineConfig} from '@playwright/test';\nimport {defineBddConfig} from 'playwright-bdd';\nexport default defineConfig({testDir:defineBddConfig({features:'features/workbench.feature',featuresRoot:'features',steps:['steps/pending.steps.ts'],outputDir:'native',missingSteps:'fail-on-gen',examplesTitleFormat:'<case_id>'}),workers:1,retries:0,forbidOnly:true});\n`);
+      await mkdir(join(directory,bundleDirectory),{recursive:true});
+      await writeFile(join(directory,'package.json'),'{"type":"module"}\n');
+      await writeFile(join(directory,featurePath),input.feature);
+      await writeFile(join(directory,stepPath),registry.rawText);
+      await writeFile(join(directory,configPath),config);
       let stdout = '', stderr = '';
       try {
-        const result = await execute(process.execPath, [join(dirname(packagePath), 'dist/cli/index.js'), 'test', '--config', join(directory, 'playwright.config.ts')],
+        const result = await execute(process.execPath, [join(dirname(packagePath), 'dist/cli/index.js'), 'test', '--config', join(directory,configPath)],
           { cwd: directory, encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024 });
         stdout = result.stdout; stderr = result.stderr;
       } catch (cause: any) {
@@ -128,13 +131,10 @@ export function createGenerator(options: GenerationOptions) {
         throw new GenerationError(422, /Ambiguous|Multiple definitions matched/i.test(reason) ? 'AMBIGUOUS_STEPS' : 'UNDEFINED_OR_INVALID_STEPS', reason,
           [{ file: 'workbench.feature', line: 1, column: 1, reason }]);
       }
-      const natives = (await readdir(join(directory, 'native'))).filter(file => file.endsWith('.spec.js'));
+      const natives = (await readdir(join(directory,bundleDirectory))).filter(file => file.endsWith('.spec.js'));
       if (natives.length !== 1) throw new GenerationError(500, 'GENERATOR_FORMAT_CHANGED', 'Expected exactly one generated native spec');
-      const native = await readFile(join(directory, 'native', natives[0]), 'utf8'), converted = adapt(native, sourceCases);
-      const specPath = 'generated/workbench.feature.spec.ts';
-      const files = [{ path: specPath, rawText: converted.output }, { path: 'steps/pending.steps.ts', rawText: registry.rawText },
-        { path: 'features/workbench.feature', rawText: input.feature },
-        { path: 'workbench.config.ts', rawText: `import {defineConfig} from '@playwright/test';\nimport {defineBddConfig} from 'playwright-bdd';\nexport default defineConfig({testDir:defineBddConfig({features:'features/workbench.feature',featuresRoot:'features',steps:['steps/pending.steps.ts'],outputDir:'generated',missingSteps:'fail-on-gen',examplesTitleFormat:'<case_id>'}),testMatch:'**/*.spec.ts',workers:1,retries:0,forbidOnly:true});\n` }];
+      const native = await readFile(join(directory,bundleDirectory,natives[0]), 'utf8'), converted = adapt(native, sourceCases);
+      const files=[{path:specPath,rawText:converted.output},{path:stepPath,rawText:registry.rawText},{path:featurePath,rawText:input.feature},{path:`${bundleDirectory}/${name}.sd.md`,rawText:input.sd},{path:configPath,rawText:config}];
       await writeFile(join(directory, specPath), converted.output);
       await writeFile(join(directory, 'generation.log'), stdout + stderr);
       const manifest: Record<string, any> = {
@@ -142,7 +142,7 @@ export function createGenerator(options: GenerationOptions) {
         generator: { name: 'playwright-bdd', version: JSON.parse(await readFile(packagePath, 'utf8')).version,
           adapter: 'workbench-ts-metadata-v1', exitCode: 0 },
         runtimeBehaviorPreserved: true, featureSha256: sha(input.feature), specSha256: sha(converted.output),
-        nativeSha256: sha(native), specPath, scenarioCount: new Set(sourceCases.map(c => c.scenarioId)).size,
+        nativeSha256: sha(native), specPath, configPath,bundleDirectory, requirementKey:input.requirementKey,featureKey:input.featureKey, scenarioCount: new Set(sourceCases.map(c => c.scenarioId)).size,
         caseCount: sourceCases.length, cases: converted.cases,
         mappings: converted.cases.map(c => ({ testKey: c.testKey, scenarioId: c.scenarioId, caseId: c.caseId, sourceCaseId: c.sourceCaseId })),
         pendingSlots: registry.entries, uploadedDefinitionHashes: registry.uploadedHashes,

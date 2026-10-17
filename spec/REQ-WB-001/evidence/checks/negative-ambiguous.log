@@ -1,5 +1,0 @@
-{"exitCode":1}
-Error: Multiple definitions matched scenario step.
-Step: Given ambiguous fixture step # .bddgen-negative/ambiguous.feature:3:5
-  - Given 'ambiguous fixture step' # tests/skeleton/negative.steps.ts:4
-  - Given 'ambiguous fixture step' # tests/skeleton/negative.steps.ts:5

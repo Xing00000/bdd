@@ -1,4 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": ["completion.config.ts", "tests/completion/**/*.ts", "generated/completed/**/*.ts"]
-}

@@ -1,28 +1,51 @@
 {
-  "name": "bdd-workbench-tests",
-  "version": "0.0.0",
+  "name": "bdd-workbench",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=24 <25"
   },
   "scripts": {
-    "test": "node tools/completion/run-e2e.mjs",
-    "spec:generate": "node tools/completion/generate.mjs",
-    "spec:verify": "node tools/completion/verify.mjs",
+    "postinstall": "npm_config_build_from_source=true npm rebuild node-pty",
+    "build": "node tools/build.mjs",
+    "deploy": "npm run build && node tools/deploy.mjs",
+    "check": "tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p ui/tsconfig.json",
+    "start": "node dist/src/main.js",
+    "init-fixtures": "node tools/init-fixtures.mjs",
+    "serve-fixtures": "node tools/serve-fixtures.mjs",
+    "verify": "node tools/verify-app.mjs",
+    "test": "node tools/bdd/run-e2e.mjs",
+    "test:app": "node tools/test.mjs",
+    "test:e2e": "node tools/run-e2e.mjs",
+    "spec:generate": "node tools/bdd/generate.mjs",
+    "spec:verify": "node tools/bdd/verify.mjs",
     "spec:list": "playwright test --list --reporter=list",
-    "spec:typecheck": "tsc --noEmit -p completion.tsconfig.json",
-    "test:tooling": "node --import ./tools/completion/register-ts.mjs --test tools/completion/tooling.test.mjs",
-    "test:checks": "node tools/completion/checks.mjs",
-    "test:skeleton:list": "playwright test --config skeleton.config.ts --list --reporter=list",
-    "test:skeleton:pending": "playwright test --config skeleton.config.ts --grep 本工作台自身依Git中的確認流程開發"
+    "spec:typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:tooling": "node --import ./tools/bdd/register-ts.mjs --test tests/integration/bdd-tooling.test.mjs",
+    "test:checks": "node tools/bdd/checks.mjs"
   },
-  "devDependencies": {
+  "dependencies": {
+    "@cucumber/gherkin": "39.1.0",
+    "@cucumber/messages": "32.3.1",
+    "@fastify/static": "10.1.6",
+    "@fastify/websocket": "11.3.4",
     "@playwright/test": "1.64.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "fastify": "5.12.7",
+    "node-pty": "1.1.0",
     "playwright-bdd": "9.2.1",
     "typescript": "5.9.3",
+    "vue": "3.5.44"
+  },
+  "devDependencies": {
     "@types/node": "24.10.1",
-    "@cucumber/gherkin": "39.1.0",
-    "@cucumber/messages": "32.3.1"
+    "@vitejs/plugin-vue": "6.0.10",
+    "vite": "8.3.4",
+    "vue-tsc": "3.3.13"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
   }
 }

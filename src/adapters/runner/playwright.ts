@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdir, writeFile, readFile, symlink, lstat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, symlink, lstat, realpath } from 'node:fs/promises';
 import { resolve, join, isAbsolute, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -94,8 +94,11 @@ export function createPlaywrightRunner(input: {root: string; artifactRoot: strin
   }
   return {
     async prepare(runId: string, versions: RunnerVersion[], expectedKeys?: string[], independent = false): Promise<PreparedRun> {
-      const directory = resolve(input.artifactRoot, 'runs', runId);
-      await mkdir(join(directory, 'tests'), {recursive: true});
+      const requestedDirectory = resolve(input.artifactRoot, 'runs', runId);
+      await mkdir(join(requestedDirectory, 'tests'), {recursive: true});
+      // Playwright resolves test files to real paths. Its config and --test-list
+      // must use the same base, including when the workspace traverses symlinks.
+      const directory = await realpath(requestedDirectory);
       try { await lstat(join(directory, 'node_modules')); } catch { await symlink(join(input.root, 'node_modules'), join(directory, 'node_modules'), 'dir'); }
       await writeFile(join(directory, 'package.json'), '{"type":"module","private":true}\n');
       const materializations: PreparedRun['materializations'] = [];

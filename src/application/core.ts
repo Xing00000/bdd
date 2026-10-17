@@ -18,8 +18,9 @@ export type SaveVersionInput = {
   executionConfig?: Record<string, unknown>;
   actions?: Record<string, any>[];
 };
-export type ScenarioTestsQuery = { gherkinVersionId?: string; specVersionId?: string; skeletonVersionId?: string; testBaselineId?: string; runId?: string };
+export type ScenarioTestsQuery = { featureId?: string; gherkinVersionId?: string; specVersionId?: string; skeletonVersionId?: string; testBaselineId?: string; runId?: string };
 export type StartDevelopmentExpectations = {
+  featureId?: string;
   expectedSpecVersionId?: string;
   expectedSpecSha256?: string;
   expectedConfirmedGherkinVersionId?: string;
@@ -42,13 +43,21 @@ export async function createCore(metadataFile: string) {
     const fields = Object.keys(row);
     return { sql: `INSERT INTO ${table} (${fields.join(',')}) VALUES (${fields.map(() => '?').join(',')})`, params: Object.values(row), expectChanges: 1 };
   };
-  const stageGuard = (id: string, stage: string): SqlCommand => ({ sql: 'SELECT id FROM requirements WHERE id=? AND stage=?', params: [id, stage], mode: 'all', expectRows: 1 });
+  const stageGuard = (id: string, stage: string): SqlCommand => ({ sql: 'SELECT id FROM features WHERE id=? AND stage=?', params: [id, stage], mode: 'all', expectRows: 1 });
   const document = (id: string) => one('SELECT * FROM documents WHERE id=?', [id], 'Document');
   const requirement = (id: string) => one('SELECT * FROM requirements WHERE id=?', [id], 'Requirement');
+  const feature = (id: string) => one('SELECT * FROM features WHERE id=?', [id], 'Feature');
+  async function selectFeature(id:string,featureId?:string) {
+    await requirement(id);
+    const rows=await store.all('SELECT * FROM features WHERE requirement_id=? ORDER BY rowid',[id]);
+    if(featureId)return rows.find(row=>row.id===featureId)??fail(404,'NOT_FOUND','Feature does not belong to requirement');
+    if(rows.length!==1)fail(400,'FEATURE_REQUIRED','Select one Gherkin feature for this operation');
+    return rows[0];
+  }
   const head = async (id: string): Promise<Row | undefined> => (await store.all('SELECT v.* FROM document_heads h JOIN document_versions v ON v.id=h.version_id WHERE h.document_id=?', [id]))[0];
   function view(d: Row, v?: Row) {
     return {
-      id: String(d.id), documentId: String(d.id), projectId: d.project_id, requirementId: d.requirement_id,
+      id: String(d.id), documentId: String(d.id), projectId: d.project_id, requirementId: d.requirement_id, featureId: d.feature_id??null,
       kind: d.kind, purpose: d.purpose, fileName: d.file_name, versionId: v?.id ?? null,
       versionNo: v?.version_no ?? null, rawText: v?.raw_text ?? null, rawSha256: v?.raw_sha256 ?? null,
       sourceGherkinVersionId: v?.source_gherkin_version_id ?? null,
@@ -64,23 +73,23 @@ export async function createCore(metadataFile: string) {
     const actions = d.purpose === 'recording' ? (await store.all('SELECT payload_json FROM recording_actions WHERE spec_version_id=? ORDER BY ordinal', [versionId])).map(row => JSON.parse(row.payload_json)) : undefined;
     return { ...view(d, v), ...(actions ? { actions } : {}) };
   }
-  async function getRequirement(id: string) {
-    const r = await requirement(id), documents: Record<string, ReturnType<typeof view>> = {};
-    for (const d of await store.all("SELECT * FROM documents WHERE requirement_id=? AND purpose IN ('requirement','target_ci') ORDER BY id", [id]))
+  async function getRequirement(id: string, featureId?:string) {
+    const r = await requirement(id), f=await selectFeature(id,featureId), features=(await store.all('SELECT * FROM features WHERE requirement_id=? ORDER BY rowid',[id])).map(row=>({id:row.id as string,featureKey:row.feature_key as string,stage:row.stage as string})), documents: Record<string, ReturnType<typeof view>> = {};
+    for (const d of await store.all("SELECT * FROM documents WHERE feature_id=? AND purpose IN ('requirement','target_ci') ORDER BY id", [f.id]))
       documents[d.kind] = view(d, await head(d.id));
     const confirmations: Record<string, { versionId: string; rawSha256: string; confirmedAt: string }> = {};
-    for (const c of await store.all('SELECT * FROM confirmations WHERE requirement_id=?', [id]))
+    for (const c of await store.all('SELECT * FROM confirmations WHERE feature_id=?', [f.id]))
       confirmations[c.kind] = { versionId: c.version_id, rawSha256: c.raw_sha256, confirmedAt: c.confirmed_at };
-    const b = (await store.all("SELECT * FROM baselines WHERE requirement_id=? AND kind='tests' AND valid=1 ORDER BY rowid DESC LIMIT 1", [id]))[0];
-    return { id: r.id as string, projectId: r.project_id as string, requirementKey: r.requirement_key as string, stage: r.stage as string, documents, confirmations,
+    const b = (await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='tests' AND valid=1 ORDER BY rowid DESC LIMIT 1", [f.id]))[0];
+    return { id: r.id as string, projectId: r.project_id as string, requirementKey: r.requirement_key as string, featureId:f.id as string,featureKey:f.feature_key as string,features,stage: f.stage as string, documents, confirmations,
       baseline: b ? { id: b.id, sha256: b.sha256, valid: !!b.valid, manifest: JSON.parse(b.manifest_json) } : null };
   }
   const invalidation = (id: string, kind: string): SqlCommand[] => {
     const result: SqlCommand[] = [];
-    if (kind === 'gherkin') result.push({ sql: 'DELETE FROM confirmations WHERE requirement_id=?', params: [id] });
-    else if (kind === 'sd') result.push({ sql: "DELETE FROM confirmations WHERE requirement_id=? AND kind='sd'", params: [id] });
-    result.push({ sql: 'UPDATE baselines SET valid=0 WHERE requirement_id=?' + (kind === 'source' ? " AND kind='source'" : ''), params: [id] });
-    result.push({ sql: "UPDATE runs SET status='INVALID' WHERE requirement_id=?", params: [id] });
+    if (kind === 'gherkin') result.push({ sql: 'DELETE FROM confirmations WHERE feature_id=?', params: [id] });
+    else if (kind === 'sd') result.push({ sql: "DELETE FROM confirmations WHERE feature_id=? AND kind='sd'", params: [id] });
+    result.push({ sql: 'UPDATE baselines SET valid=0 WHERE feature_id=?' + (kind === 'source' ? " AND kind='source'" : ''), params: [id] });
+    result.push({ sql: "UPDATE runs SET status='INVALID' WHERE feature_id=?", params: [id] });
     return result;
   };
   function checkStage(d: Row, r?: Row) {
@@ -152,7 +161,7 @@ export async function createCore(metadataFile: string) {
     return commands;
   }
   async function saveVersionUnsafe(documentId: string, payload: SaveVersionInput, newDocument?: Row) {
-    const d = newDocument ?? await document(documentId), r = d.requirement_id ? await requirement(d.requirement_id) : undefined;
+    const d = newDocument ?? await document(documentId), r = d.feature_id ? await feature(d.feature_id) : undefined;
     checkStage(d, r);
     if (typeof payload.rawText !== 'string') fail(400, 'RAW_TEXT_REQUIRED', 'rawText must be a string');
     const raw = payload.rawText, hash = sha256(raw), versionId = randomUUID(), commands: SqlCommand[] = [];
@@ -163,7 +172,7 @@ export async function createCore(metadataFile: string) {
       fail(409, 'VERSION_CONFLICT', 'Document head changed; the submitted version was not saved');
     for (const [kind, expected] of [['gherkin', payload.expectedConfirmedGherkinVersionId], ['sd', payload.expectedConfirmedSdVersionId]] as const) {
       if (expected === undefined) continue;
-      const guard: SqlCommand = { sql: 'SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=c.version_id WHERE c.requirement_id=? AND c.kind=? AND c.version_id=? AND v.raw_sha256=c.raw_sha256', params: [d.requirement_id ?? null, kind, expected], mode: 'all', expectRows: 1 };
+      const guard: SqlCommand = { sql: 'SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=c.version_id WHERE c.feature_id=? AND c.kind=? AND c.version_id=? AND v.raw_sha256=c.raw_sha256', params: [d.feature_id ?? null, kind, expected], mode: 'all', expectRows: 1 };
       if (!(await store.all(guard.sql, guard.params)).length) fail(409, 'SOURCE_VERSION_MISMATCH', `Confirmed ${kind} version changed; the submitted version was not saved`);
       commands.push(guard);
     }
@@ -178,11 +187,11 @@ export async function createCore(metadataFile: string) {
     if (d.kind === 'gherkin' && sourceId) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Gherkin cannot reference a source Gherkin version' }]);
     if (d.kind === 'sd' || standard || sourceId) {
       if (!sourceId) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'A source Gherkin version is required' }]);
-      const source = (await store.all('SELECT v.*,d.kind,d.project_id,d.requirement_id FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=?', [sourceId]))[0];
-      if (!source || source.kind !== 'gherkin' || source.project_id !== d.project_id || source.requirement_id !== d.requirement_id)
+      const source = (await store.all('SELECT v.*,d.kind,d.project_id,d.requirement_id,d.feature_id FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=?', [sourceId]))[0];
+      if (!source || source.kind !== 'gherkin' || source.project_id !== d.project_id || source.requirement_id !== d.requirement_id || (d.feature_id && source.feature_id!==d.feature_id))
         invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Source Gherkin belongs to a different document kind, project or requirement' }]);
       if (d.kind === 'sd' || standard) {
-        const guard: SqlCommand = { sql: "SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=c.version_id WHERE c.requirement_id=? AND c.kind='gherkin' AND c.version_id=? AND c.raw_sha256=? AND v.raw_sha256=c.raw_sha256", params: [d.requirement_id, sourceId, source.raw_sha256], mode: 'all', expectRows: 1 };
+        const guard: SqlCommand = { sql: "SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=c.version_id WHERE c.feature_id=? AND c.kind='gherkin' AND c.version_id=? AND c.raw_sha256=? AND v.raw_sha256=c.raw_sha256", params: [d.feature_id, sourceId, source.raw_sha256], mode: 'all', expectRows: 1 };
         if (!(await store.all(guard.sql, guard.params)).length) fail(409, 'GHERKIN_NOT_CONFIRMED', 'Source Gherkin version must be currently confirmed');
         commands.push(guard);
       }
@@ -193,14 +202,14 @@ export async function createCore(metadataFile: string) {
     }
     let confirmedSd: Row | undefined;
     if (standard) {
-      const sd = (await store.all("SELECT v.* FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN documents d ON d.id=v.document_id JOIN document_heads h ON h.document_id=d.id AND h.version_id=c.version_id WHERE c.requirement_id=? AND c.kind='sd' AND v.raw_sha256=c.raw_sha256 AND v.source_gherkin_version_id=?", [d.requirement_id, sourceId]))[0];
+      const sd = (await store.all("SELECT v.* FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN documents d ON d.id=v.document_id JOIN document_heads h ON h.document_id=d.id AND h.version_id=c.version_id WHERE c.feature_id=? AND c.kind='sd' AND v.raw_sha256=c.raw_sha256 AND v.source_gherkin_version_id=?", [d.feature_id, sourceId]))[0];
       if (!sd) fail(409, 'SD_NOT_CONFIRMED', 'Current SD must be confirmed for the selected Gherkin');
       confirmedSd = sd;
       if (manifest?.sdSha256 && manifest.sdSha256 !== sd.raw_sha256) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest SD hash mismatch' }]);
       if (manifest?.sdVersionId && manifest.sdVersionId !== sd.id) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest SD version mismatch' }]);
       if (modernManifest && (manifest?.sdVersionId !== sd.id || manifest?.sdSha256 !== sd.raw_sha256))
         invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest schemaVersion>=2 requires the exact confirmed SD version and hash' }]);
-      commands.push({ sql: "SELECT version_id FROM confirmations WHERE requirement_id=? AND kind='sd' AND version_id=? AND raw_sha256=?", params: [d.requirement_id, sd.id, sd.raw_sha256], mode: 'all', expectRows: 1 });
+      commands.push({ sql: "SELECT version_id FROM confirmations WHERE feature_id=? AND kind='sd' AND version_id=? AND raw_sha256=?", params: [d.feature_id, sd.id, sd.raw_sha256], mode: 'all', expectRows: 1 });
     }
     if (standard && !testStage && !manifest) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Standard spec requires a manifest; Git imports must provide their immutable source reference' }]);
     if (standard && manifest?.specSha256 !== hash) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest specSha256 does not match submitted UTF-8 source' }]);
@@ -268,37 +277,37 @@ export async function createCore(metadataFile: string) {
     const camel = (row: Row): Row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()), value]));
     return { documentId, versionId, rawSha256: v.rawSha256, scenarios: scenarios.map(camel), stepGroups: stepGroups.map(camel), steps: steps.map(camel), exampleTables: exampleTables.map(camel), exampleColumns: exampleColumns.map(camel), sourceCases: sourceCases.map(camel), exampleCells: exampleCells.map(camel), testDefinitions: testDefinitions.map(camel), mappings: mappings.map(camel) };
   }
-  async function confirmUnsafe(requirementId: string, kind: 'gherkin' | 'sd', body: { versionId: string; rawSha256: string }) {
+  async function confirmUnsafe(requirementId: string, kind: 'gherkin' | 'sd', body: { versionId: string; rawSha256: string; featureId?:string }) {
     if (!['gherkin', 'sd'].includes(kind)) fail(400, 'INVALID_KIND', 'Unknown confirmation kind');
-    const r = await requirement(requirementId), expectedStage = kind === 'gherkin' ? 'GHERKIN' : 'SD';
+    const r = await selectFeature(requirementId,body.featureId), expectedStage = kind === 'gherkin' ? 'GHERKIN' : 'SD';
     if (r.stage !== expectedStage) fail(409, 'ARTIFACT_LOCKED_IN_STAGE', '此階段不可修改該產物');
-    const d = await one("SELECT * FROM documents WHERE requirement_id=? AND kind=? AND purpose='requirement'", [requirementId, kind], 'Document'), v = await head(d.id);
+    const d = await one("SELECT * FROM documents WHERE feature_id=? AND kind=? AND purpose='requirement'", [r.id, kind], 'Document'), v = await head(d.id);
     if (!v || v.id !== body.versionId || v.raw_sha256 !== body.rawSha256) fail(409, 'CONFIRMATION_VERSION_MISMATCH', 'Confirmation must bind the current version and exact raw SHA-256');
     const commands: SqlCommand[] = [];
     if (kind === 'sd') {
-      const source = (await store.all("SELECT c.*,h.version_id AS current_id,v.raw_sha256 AS current_hash FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id WHERE c.requirement_id=? AND c.kind='gherkin'", [requirementId]))[0];
+      const source = (await store.all("SELECT c.*,h.version_id AS current_id,v.raw_sha256 AS current_hash FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id WHERE c.feature_id=? AND c.kind='gherkin'", [r.id]))[0];
       if (!source || source.current_id !== source.version_id || source.current_hash !== source.raw_sha256 || v!.source_gherkin_version_id !== source.version_id) fail(409, 'GHERKIN_NOT_CONFIRMED', 'SD must reference the currently confirmed Gherkin');
-      commands.push({ sql: "SELECT version_id FROM confirmations WHERE requirement_id=? AND kind='gherkin' AND version_id=? AND raw_sha256=?", params: [requirementId, source.version_id, source.raw_sha256], mode: 'all', expectRows: 1 });
+      commands.push({ sql: "SELECT version_id FROM confirmations WHERE feature_id=? AND kind='gherkin' AND version_id=? AND raw_sha256=?", params: [r.id, source.version_id, source.raw_sha256], mode: 'all', expectRows: 1 });
     }
     commands.push({ sql: 'SELECT version_id FROM document_heads WHERE document_id=? AND version_id=?', params: [d.id, body.versionId], mode: 'all', expectRows: 1 },
-      { sql: 'INSERT INTO confirmations(requirement_id,kind,version_id,raw_sha256,confirmed_at) VALUES(?,?,?,?,?) ON CONFLICT(requirement_id,kind) DO UPDATE SET version_id=excluded.version_id,raw_sha256=excluded.raw_sha256,confirmed_at=excluded.confirmed_at', params: [requirementId, kind, body.versionId, body.rawSha256, new Date().toISOString()], expectChanges: 1 },
-      { sql: 'UPDATE requirements SET stage=? WHERE id=? AND stage=?', params: [kind === 'gherkin' ? 'SD' : 'TESTS', requirementId, expectedStage], expectChanges: 1 });
-    await store.batch(commands); return getRequirement(requirementId);
+      { sql: 'INSERT INTO confirmations(feature_id,requirement_id,kind,version_id,raw_sha256,confirmed_at) VALUES(?,?,?,?,?,?) ON CONFLICT(feature_id,kind) DO UPDATE SET version_id=excluded.version_id,raw_sha256=excluded.raw_sha256,confirmed_at=excluded.confirmed_at', params: [r.id, requirementId, kind, body.versionId, body.rawSha256, new Date().toISOString()], expectChanges: 1 },
+      { sql: 'UPDATE features SET stage=? WHERE id=? AND stage=?', params: [kind === 'gherkin' ? 'SD' : 'TESTS', r.id, expectedStage], expectChanges: 1 });
+    await store.batch(commands); return getRequirement(requirementId,r.id);
   }
   async function scenarioTests(requirementId: string, query: ScenarioTestsQuery = {}) {
-    const r = await getRequirement(requirementId);
+    const r = await getRequirement(requirementId,query.featureId);
     let specVersionId = query.specVersionId ?? query.skeletonVersionId ?? r.documents.spec?.versionId;
     let sourceId = query.gherkinVersionId ?? r.confirmations.gherkin?.versionId ?? r.documents.gherkin?.versionId;
     if (query.testBaselineId) {
-      await one("SELECT id FROM baselines WHERE id=? AND requirement_id=? AND kind='tests'", [query.testBaselineId, requirementId], 'Baseline');
+      await one("SELECT id FROM baselines WHERE id=? AND feature_id=? AND kind='tests'", [query.testBaselineId, r.featureId], 'Baseline');
       const versions = await store.all('SELECT v.*,d.kind FROM baseline_documents bd JOIN document_versions v ON v.id=bd.document_version_id JOIN documents d ON d.id=v.document_id WHERE bd.baseline_id=?', [query.testBaselineId]);
       specVersionId = versions.find(v => v.kind === 'spec')?.id; sourceId = versions.find(v => v.kind === 'gherkin')?.id;
     }
     if (!sourceId) return { requirementId, gherkinVersionId: null, specVersionId: null, testBaselineId: r.baseline?.id ?? null, scenarios: [], cases: [] };
-    await one("SELECT v.id FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=? AND d.requirement_id=? AND d.kind='gherkin'", [sourceId, requirementId], 'Source Gherkin');
-    const spec = specVersionId ? await one("SELECT v.* FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=? AND d.requirement_id=? AND d.kind='spec'", [specVersionId, requirementId], 'Spec') : undefined;
+    await one("SELECT v.id FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=? AND d.feature_id=? AND d.kind='gherkin'", [sourceId, r.featureId], 'Source Gherkin');
+    const spec = specVersionId ? await one("SELECT v.* FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=? AND d.feature_id=? AND d.kind='spec'", [specVersionId, r.featureId], 'Spec') : undefined;
     if (spec && spec.source_gherkin_version_id !== sourceId) fail(409, 'SOURCE_VERSION_MISMATCH', 'Spec snapshot references a different Gherkin version');
-    if (query.runId) await one('SELECT id FROM runs WHERE id=? AND requirement_id=?', [query.runId, requirementId], 'Run');
+    if (query.runId) await one('SELECT id FROM runs WHERE id=? AND feature_id=?', [query.runId, r.featureId], 'Run');
     const cases = await store.all('SELECT c.*,s.scenario_key,sv.title,sv.ordinal,sv.scenario_kind FROM source_cases c JOIN scenarios s ON s.id=c.scenario_id JOIN scenario_versions sv ON sv.gherkin_version_id=c.gherkin_version_id AND sv.scenario_id=c.scenario_id WHERE c.gherkin_version_id=? ORDER BY sv.ordinal,c.row_ordinal', [sourceId]);
     const allTests = specVersionId ? await store.all('SELECT t.*,m.source_case_id FROM test_definitions t JOIN test_case_mappings m ON m.test_definition_id=t.id WHERE t.spec_version_id=? ORDER BY t.test_key', [specVersionId]) : [];
     const readiness = spec?.test_stage === 'COMPLETED' ? 'COMPLETED' : 'PENDING_COMPLETION';
@@ -326,16 +335,24 @@ export async function createCore(metadataFile: string) {
       const id = randomUUID(); await store.batch([insert('projects', { id, name: input.name, workspace_ref: input.workspaceRef })]);
       return { id, name: input.name, workspaceRef: input.workspaceRef };
     }); },
-    async listRequirements(projectId: string) { await one('SELECT id FROM projects WHERE id=?', [projectId], 'Project'); return Promise.all((await store.all('SELECT id FROM requirements WHERE project_id=? ORDER BY rowid', [projectId])).map(r => getRequirement(r.id))); },
+    async listRequirements(projectId: string) { await one('SELECT id FROM projects WHERE id=?', [projectId], 'Project'); return Promise.all((await store.all('SELECT * FROM requirements WHERE project_id=? ORDER BY rowid', [projectId])).map(async r => ({id:r.id,projectId:r.project_id,requirementKey:r.requirement_key,features:(await store.all('SELECT id,feature_key featureKey,stage FROM features WHERE requirement_id=? ORDER BY rowid',[r.id]))}))); },
     createRequirement(projectId: string, input: { requirementKey: string }) { return mutation(async () => {
       await one('SELECT id FROM projects WHERE id=?', [projectId], 'Project');
       if (!input.requirementKey?.trim()) fail(400, 'INVALID_REQUIREMENT', 'requirementKey is required');
       if ((await store.all('SELECT id FROM requirements WHERE project_id=? AND requirement_key=?', [projectId, input.requirementKey])).length) fail(409, 'REQUIREMENT_EXISTS', 'requirementKey already exists in this project');
-      const id = randomUUID(), commands = [insert('requirements', { id, project_id: projectId, requirement_key: input.requirementKey, stage: 'GHERKIN' })];
-      for (const kind of ['gherkin', 'sd', 'spec']) commands.push(insert('documents', { id: randomUUID(), project_id: projectId, requirement_id: id, kind, purpose: kind === 'spec' ? 'target_ci' : 'requirement', file_name: kind === 'gherkin' ? `${input.requirementKey}.feature` : kind === 'sd' ? 'SD.md' : `${input.requirementKey}.spec.ts` }));
+      const id = randomUUID(),featureId=randomUUID(), commands = [insert('requirements', { id, project_id: projectId, requirement_key: input.requirementKey }),insert('features',{id:featureId,requirement_id:id,feature_key:input.requirementKey,stage:'GHERKIN'})];
+      for (const kind of ['gherkin', 'sd', 'spec']) commands.push(insert('documents', { id: randomUUID(), project_id: projectId, requirement_id: id, feature_id:featureId, kind, purpose: kind === 'spec' ? 'target_ci' : 'requirement', file_name: kind === 'gherkin' ? `${input.requirementKey}.feature` : kind === 'sd' ? `${input.requirementKey}.sd.md` : `${input.requirementKey}.feature.spec.ts` }));
       await store.batch(commands); return getRequirement(id);
     }); },
-    getRequirement, getVersion, structure, scenarioTests,
+    getRequirement, selectFeature, getVersion, structure, scenarioTests,
+    createFeature(requirementId:string,input:{featureKey:string}) {return mutation(async()=>{
+      const r=await requirement(requirementId);
+      if(typeof input.featureKey!=='string'||!input.featureKey.trim()||/[\/\\\0]/.test(input.featureKey))fail(400,'INVALID_FEATURE','A featureKey without path separators is required');
+      if((await store.all('SELECT id FROM features WHERE requirement_id=? AND feature_key=?',[requirementId,input.featureKey])).length)fail(409,'FEATURE_EXISTS','Feature already exists');
+      const id=randomUUID(),commands=[insert('features',{id,requirement_id:requirementId,feature_key:input.featureKey,stage:'GHERKIN'})];
+      for(const [kind,suffix] of [['gherkin','.feature'],['sd','.sd.md'],['spec','.feature.spec.ts']])commands.push(insert('documents',{id:randomUUID(),project_id:r.project_id,requirement_id:requirementId,feature_id:id,kind,purpose:kind==='spec'?'target_ci':'requirement',file_name:input.featureKey+suffix}));
+      await store.batch(commands);return getRequirement(requirementId,id);
+    });},
     saveVersion(documentId: string, payload: SaveVersionInput) { return mutation(() => saveVersionUnsafe(documentId, payload)); },
     createScript(input: { projectId: string; requirementId?: string | null; purpose: 'recording' | 'integration'; rawText: string; actions?: Record<string, any>[]; sourceGherkinVersionId?: string | null; mappings?: Record<string, any>[]; executionConfig?: Record<string, unknown>; fileName?: string }) { return mutation(async () => {
       await one('SELECT id FROM projects WHERE id=?', [input.projectId], 'Project');
@@ -347,19 +364,19 @@ export async function createCore(metadataFile: string) {
         manifest: input.mappings?.length ? { sourceGherkinVersionId: input.sourceGherkinVersionId, specSha256: sha256(input.rawText), mappings: input.mappings } : null }, d);
       return { ...result, id };
     }); },
-    confirm(requirementId: string, kind: 'gherkin' | 'sd', body: { versionId: string; rawSha256: string }) { return mutation(() => confirmUnsafe(requirementId, kind, body)); },
-    returnTo(requirementId: string, artifactKind: string) { return mutation(async () => {
-      const r = await requirement(requirementId);
+    confirm(requirementId: string, kind: 'gherkin' | 'sd', body: { versionId: string; rawSha256: string; featureId?:string }) { return mutation(() => confirmUnsafe(requirementId, kind, body)); },
+    returnTo(requirementId: string, artifactKind: string,featureId?:string) { return mutation(async () => {
+      const r = await selectFeature(requirementId,featureId);
       const kind = ({ Gherkin: 'gherkin', SD: 'sd', 'spec.ts': 'spec', '測試': 'spec', '測試基線': 'spec', '產品程式': 'source', implementation: 'source', tests: 'spec' } as Record<string, string>)[artifactKind] ?? artifactKind;
       const target = ({ gherkin: 'GHERKIN', sd: 'SD', spec: 'TESTS', source: 'IMPLEMENTATION' } as Record<string, string>)[kind];
       if (!target) fail(400, 'INVALID_ARTIFACT', 'Unknown artifact kind');
       const order = ['GHERKIN', 'SD', 'TESTS', 'IMPLEMENTATION', 'VERIFICATION', 'VERIFIED'];
       if (order.indexOf(target) > order.indexOf(r.stage)) fail(409, 'INVALID_STAGE_TRANSITION', 'Return cannot skip forward over workflow gates');
-      await store.batch([...invalidation(requirementId, kind), { sql: 'UPDATE requirements SET stage=? WHERE id=? AND stage=?', params: [target, requirementId, r.stage], expectChanges: 1 }]);
-      return getRequirement(requirementId);
+      await store.batch([...invalidation(r.id, kind), { sql: 'UPDATE features SET stage=? WHERE id=? AND stage=?', params: [target, r.id, r.stage], expectChanges: 1 }]);
+      return getRequirement(requirementId,r.id);
     }); },
     startDevelopment(requirementId: string, expectations: StartDevelopmentExpectations = {}) { return mutation(async () => {
-      const r = await getRequirement(requirementId);
+      const r = await getRequirement(requirementId,expectations.featureId);
       if (r.stage !== 'TESTS' || !r.confirmations.gherkin || !r.confirmations.sd) fail(409, 'WORKFLOW_GATE_NOT_MET', 'Gherkin and SD must be confirmed before development');
       if (expectations.expectedSpecVersionId !== undefined && expectations.expectedSpecVersionId !== r.documents.spec?.versionId || expectations.expectedSpecSha256 !== undefined && expectations.expectedSpecSha256 !== r.documents.spec?.rawSha256)
         fail(409, 'VERSION_CONFLICT', 'The validated test snapshot version/hash changed before development');
@@ -376,12 +393,12 @@ export async function createCore(metadataFile: string) {
       const tests = await store.all('SELECT t.*,m.source_case_id FROM test_definitions t JOIN test_case_mappings m ON m.test_definition_id=t.id WHERE t.spec_version_id=? ORDER BY t.test_key', [spec.versionId]);
       if (!tests.length) fail(409, 'MAPPING_INVALID', 'Cannot create an empty test baseline');
       const baselineId = randomUUID(), manifest = { gherkinVersionId: r.confirmations.gherkin.versionId, gherkinSha256: r.confirmations.gherkin.rawSha256, sdVersionId: r.confirmations.sd.versionId, sdSha256: r.confirmations.sd.rawSha256, specVersionId: spec.versionId, specSha256: spec.rawSha256, tests: tests.map(t => ({ testDefinitionId: t.id, testKey: t.test_key, sourceCaseId: t.source_case_id })) }, json = JSON.stringify(manifest);
-      const commands: SqlCommand[] = [stageGuard(requirementId, 'TESTS'), { sql: "UPDATE baselines SET valid=0 WHERE requirement_id=? AND kind='tests'", params: [requirementId] }, insert('baselines', { id: baselineId, requirement_id: requirementId, kind: 'tests', manifest_json: json, sha256: sha256(json), valid: 1 })];
-      for (const kind of ['gherkin', 'sd']) commands.push({ sql: 'SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=v.id WHERE c.requirement_id=? AND c.kind=? AND c.version_id=? AND c.raw_sha256=? AND v.raw_sha256=c.raw_sha256', params: [requirementId, kind, r.confirmations[kind].versionId, r.confirmations[kind].rawSha256], mode: 'all', expectRows: 1 });
+      const commands: SqlCommand[] = [stageGuard(r.featureId, 'TESTS'), { sql: "UPDATE baselines SET valid=0 WHERE feature_id=? AND kind='tests'", params: [r.featureId] }, insert('baselines', { id: baselineId, requirement_id: requirementId,feature_id:r.featureId, kind: 'tests', manifest_json: json, sha256: sha256(json), valid: 1 })];
+      for (const kind of ['gherkin', 'sd']) commands.push({ sql: 'SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=v.id WHERE c.feature_id=? AND c.kind=? AND c.version_id=? AND c.raw_sha256=? AND v.raw_sha256=c.raw_sha256', params: [r.featureId, kind, r.confirmations[kind].versionId, r.confirmations[kind].rawSha256], mode: 'all', expectRows: 1 });
       commands.push({ sql: 'SELECT h.version_id FROM document_heads h JOIN document_versions v ON v.id=h.version_id WHERE h.document_id=? AND h.version_id=? AND v.raw_sha256=?', params: [spec.id, spec.versionId, spec.rawSha256], mode: 'all', expectRows: 1 });
       for (const versionId of [r.confirmations.gherkin.versionId, r.confirmations.sd.versionId, spec.versionId]) commands.push(insert('baseline_documents', { baseline_id: baselineId, document_version_id: versionId }));
-      commands.push({ sql: "UPDATE requirements SET stage='IMPLEMENTATION' WHERE id=? AND stage='TESTS'", params: [requirementId], expectChanges: 1 });
-      await store.batch(commands); return getRequirement(requirementId);
+      commands.push({ sql: "UPDATE features SET stage='IMPLEMENTATION' WHERE id=? AND stage='TESTS'", params: [r.featureId], expectChanges: 1 });
+      await store.batch(commands); return getRequirement(requirementId,r.featureId);
     }); },
     async close() { await serial; await store.close(); },
   };

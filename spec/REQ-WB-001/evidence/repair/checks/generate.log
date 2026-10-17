@@ -1,3 +1,0 @@
-$ node tools/completion/generate.mjs
-exitCode=0
-{"scope":"COMPLETION_TOOLING_ONLY","bddgenExit":0,"scenarios":28,"cases":44,"specPath":"generated/completed/REQ-WB-001/workbench.feature.spec.ts","productE2E":"NOT_RUN"}

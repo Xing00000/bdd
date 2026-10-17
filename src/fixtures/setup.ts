@@ -57,7 +57,18 @@ export async function initializeFixtureEnvironment(options: { workspaceRoot?: st
     WB_TARGET_PASSWORD: password, WB_SOURCE_REF: sourceRef,
   };
   // This file contains a fixture-only secret; never print or commit its contents.
-  await writeFile(path.join(root, 'product.env'), Object.entries(env).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n') + '\n', { mode: 0o600 });
+  const environmentFile=path.join(root,'product.env');
+  const environmentText=Object.entries(env).map(([key,value])=>`${key}=${JSON.stringify(value)}`).join('\n')+'\n';
+  try{await writeFile(environmentFile,environmentText,{flag:'wx',mode:0o600});}
+  catch(error){
+    if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;
+    const existing=Object.fromEntries((await readFile(environmentFile,'utf8')).split('\n').filter(Boolean).map(line=>{
+      const separator=line.indexOf('=');
+      if(separator<1)throw new Error('Existing fixture environment has an invalid entry');
+      return [line.slice(0,separator),JSON.parse(line.slice(separator+1))];
+    }));
+    if(Object.entries(env).some(([key,value])=>existing[key]!==value))throw new Error('Existing fixture environment differs; choose a new fixture directory instead of overwriting it');
+  }
   return { root, metadataFile, targetDb, targetRepo, password, sourceRef, targetPort, env };
 }
 

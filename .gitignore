@@ -1,13 +1,10 @@
 node_modules/
-.bddgen-raw/
 .bddgen-negative/
+spec/**/*.feature.spec.js
 .test-fixtures/
 test-results/
 playwright-report/
 *.tsbuildinfo
 .workbench/
-product/dist/
-product/public/
-ui/dist/
-src/node_modules
-ui/node_modules
+dist/
+deploy/

@@ -1,18 +1,13 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
-import { schema } from './schema.ts';
+import { applyMetadataMigrations } from './migrations.ts';
 import type { SqlCommand } from '../../ports/store.ts';
 
 let db: DatabaseSync;
 try {
   db = new DatabaseSync(workerData.file, { timeout: 5000 });
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA trusted_schema=OFF;');
-  const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
-  if (version === 0) {
-    db.exec('BEGIN IMMEDIATE');
-    try { db.exec(schema); db.exec('PRAGMA user_version=1; COMMIT'); }
-    catch (error) { db.exec('ROLLBACK'); throw error; }
-  } else if (version !== 1) throw new Error(`Unsupported metadata schema version ${version}`);
+  applyMetadataMigrations(db);
   parentPort!.postMessage({ ready: true, sqliteVersion: db.prepare('SELECT sqlite_version() AS version').get()!.version });
 } catch (error) {
   parentPort!.postMessage({ ready: false, error: serialize(error) });

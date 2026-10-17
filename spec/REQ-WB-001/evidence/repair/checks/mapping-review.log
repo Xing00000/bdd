@@ -1,3 +1,0 @@
-$ node tools/completion/verify.mjs
-exitCode=0
-{"scope":"TEST_IMPLEMENTATION_CHECKS","frozenFiles":29,"scenarios":28,"cases":44,"directSteps":174,"expandedSteps":319,"pendingSlots":0,"reviewedCases":44,"productE2E":"NOT_RUN"}

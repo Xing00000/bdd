@@ -1,0 +1,13 @@
+import {createServer} from '../dist/src/http/server.js';
+import {createTargetApp} from '../dist/src/fixtures/target-app.js';
+import {allowlistedRecordingSecretResolver} from '../dist/src/adapters/runtime/secrets.js';
+import {llmFromEnvironment} from '../dist/src/adapters/generation/config.js';
+import {fixtureEnvironment,root} from './environment.mjs';
+import path from 'node:path';
+const env=await fixtureEnvironment();Object.assign(process.env,env);
+const server=await createServer({root,metadataFile:env.WB_METADATA_DB,dataRoot:path.join(root,'.workbench/e2e'),baseUrl:env.WB_BASE_URL,resolveRecordingSecret:allowlistedRecordingSecretResolver({'target-fixture-password':()=>env.WB_TARGET_PASSWORD}),llm:llmFromEnvironment(process.env)});
+const target=await createTargetApp({file:env.WB_TARGET_DB,password:env.WB_TARGET_PASSWORD});
+await target.listen({host:'127.0.0.1',port:Number(new URL(env.WB_TARGET_BASE_URL).port)});
+await server.app.listen({host:'127.0.0.1',port:Number(new URL(env.WB_BASE_URL).port)});
+console.log(JSON.stringify({workbench:env.WB_BASE_URL,target:env.WB_TARGET_BASE_URL,metadataFile:env.WB_METADATA_DB}));
+let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;void Promise.all([target.close(),server.app.close()]);});

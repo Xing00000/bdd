@@ -35,7 +35,7 @@ export function createRuns(options: Options) {
   async function one(sql: string, params: any[] = [], label = 'Resource'): Promise<Row> { const row = (await store.all(sql, params))[0]; if (!row) fail(404, 'NOT_FOUND', label + ' not found'); return row; }
   const snapshot = (run: Row) => JSON.parse(run.definition_snapshot_json) as Snapshot;
   const definitions = async (runId: string) => snapshot(await one('SELECT * FROM runs WHERE id=?', [runId], 'Run'));
-  async function publish(run: Row, event: Record<string, any>) { await emit({eventId: randomUUID(), projectId: run.project_id, requirementId: run.requirement_id, runId: run.id, ...event}); }
+  async function publish(run: Row, event: Record<string, any>) { await emit({eventId: randomUUID(), projectId: run.project_id, requirementId: run.requirement_id,featureId:run.feature_id, runId: run.id, ...event}); }
   async function applicableSteps(gherkinVersionId: string | null, scenarioId: string | null) {
     const groups = await store.all('SELECT * FROM step_groups WHERE gherkin_version_id=?', [gherkinVersionId]);
     const scenario = groups.find(group => group.scenario_id === scenarioId && group.scope === 'scenario');
@@ -93,7 +93,7 @@ export function createRuns(options: Options) {
       updates.push({sql: "UPDATE runs SET status=?,environment_snapshot_json=? WHERE id=? AND status!='INVALID'", params: [status, JSON.stringify(environment), runId]});
       if (run.requirement_id) {
         const verified = status === 'PASSED' && run.execution_scope === 'ALL_REQUIRED' && data.required.length > 0 && data.required.length === data.definitions.length;
-        updates.push({sql: "UPDATE requirements SET stage=? WHERE id=? AND stage IN ('VERIFICATION','VERIFIED') AND EXISTS(SELECT 1 FROM baselines WHERE id=? AND valid=1)", params: [verified ? 'VERIFIED' : 'VERIFICATION', run.requirement_id, run.baseline_id]});
+        updates.push({sql: "UPDATE features SET stage=? WHERE id=? AND stage IN ('VERIFICATION','VERIFIED') AND EXISTS(SELECT 1 FROM baselines WHERE id=? AND valid=1)", params: [verified ? 'VERIFIED' : 'VERIFICATION', run.feature_id, run.baseline_id]});
       }
       await store.batch(updates);
       await publish(run, {type: 'run.completed', payload: {status}});
@@ -127,21 +127,24 @@ export function createRuns(options: Options) {
 
   async function verify(requirementId: string, body: any) {
     const requirement = await one('SELECT * FROM requirements WHERE id=?', [requirementId], 'Requirement');
-    const currentSpecs = await store.all("SELECT v.test_stage FROM document_heads h JOIN document_versions v ON v.id=h.version_id JOIN documents d ON d.id=h.document_id WHERE d.requirement_id=? AND d.purpose='target_ci'", [requirementId]);
+    const features=await store.all('SELECT * FROM features WHERE requirement_id=? ORDER BY rowid',[requirementId]);
+    if(!body.featureId&&features.length!==1)fail(400,'FEATURE_REQUIRED','Select one Gherkin feature for verification');
+    const feature=features.find(row=>row.id===(body.featureId??features[0]?.id))??fail(404,'NOT_FOUND','Feature does not belong to requirement');
+    const currentSpecs = await store.all("SELECT v.test_stage FROM document_heads h JOIN document_versions v ON v.id=h.version_id JOIN documents d ON d.id=h.document_id WHERE d.feature_id=? AND d.purpose='target_ci'", [feature.id]);
     if (!currentSpecs.length || currentSpecs.some(spec => spec.test_stage !== 'COMPLETED')) fail(409, 'TESTS_PENDING_COMPLETION', 'Tests are pending completion');
-    if (!['IMPLEMENTATION', 'VERIFICATION', 'VERIFIED'].includes(requirement.stage)) fail(409, 'WORKFLOW_GATE_NOT_MET', 'Verification requires a fixed completed test baseline');
-    const baseline = await one("SELECT * FROM baselines WHERE id=? AND requirement_id=? AND kind='tests'", [body.testBaselineId ?? '', requirementId], 'Test baseline');
+    if (!['IMPLEMENTATION', 'VERIFICATION', 'VERIFIED'].includes(feature.stage)) fail(409, 'WORKFLOW_GATE_NOT_MET', 'Verification requires a fixed completed test baseline');
+    const baseline = await one("SELECT * FROM baselines WHERE id=? AND feature_id=? AND kind='tests'", [body.testBaselineId ?? '', feature.id], 'Test baseline');
     if (!baseline.valid || hash(baseline.manifest_json) !== baseline.sha256 || (body.hash && body.hash !== baseline.sha256) || (body.testBaselineHash && body.testBaselineHash !== baseline.sha256)) fail(409, 'BASELINE_INVALID', 'Test baseline is invalid or its hash does not match');
     if (typeof body.sourceRef !== 'string' || !body.sourceRef.trim()) fail(422, 'SOURCE_REF_REQUIRED', 'Pin a source revision before verification');
     const sourceSnapshot = await options.resolveSource(requirement.project_id, body.sourceRef);
     if (!sourceSnapshot || !/^[0-9a-f]{40,64}$/.test(sourceSnapshot.resolvedCommit)) fail(422, 'INVALID_SOURCE_REF', 'Source must resolve to a real immutable Git commit');
-    const sourceBaselines = await store.all("SELECT * FROM baselines WHERE requirement_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC", [requirementId]);
+    const sourceBaselines = await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC", [feature.id]);
     if (sourceBaselines.length && !sourceBaselines.some(row => { const value = JSON.parse(row.manifest_json); return hash(row.manifest_json) === row.sha256 && value.resolvedCommit === sourceSnapshot.resolvedCommit; })) fail(409, 'SOURCE_VERSION_MISMATCH', 'Requested source does not match the pinned source baseline');
     const versions = await store.all('SELECT v.*,d.kind,d.file_name FROM baseline_documents bd JOIN document_versions v ON v.id=bd.document_version_id JOIN documents d ON d.id=v.document_id WHERE bd.baseline_id=?', [baseline.id]);
     const gherkin = versions.find(version => version.kind === 'gherkin'), sd = versions.find(version => version.kind === 'sd'), specs = versions.filter(version => version.kind === 'spec');
     if (!gherkin || !sd || !specs.length || specs.some(spec => spec.test_stage !== 'COMPLETED')) fail(409, 'BASELINE_INVALID', 'Baseline must fix Gherkin, SD and completed tests');
     for (const version of versions) if (hash(version.raw_text) !== version.raw_sha256) fail(409, 'DOCUMENT_HASH_MISMATCH', 'Baseline document hash mismatch');
-    const confirmations = await store.all('SELECT * FROM confirmations WHERE requirement_id=?', [requirementId]);
+    const confirmations = await store.all('SELECT * FROM confirmations WHERE feature_id=?', [feature.id]);
     if (![gherkin, sd].every(version => confirmations.some(confirmation => confirmation.version_id === version.id && confirmation.raw_sha256 === version.raw_sha256))) fail(409, 'CONFIRMATION_INVALID', 'Baseline must match the current confirmed document versions and hashes');
     if (sd.source_gherkin_version_id !== gherkin.id || specs.some(spec => spec.source_gherkin_version_id !== gherkin.id)) fail(409, 'SOURCE_VERSION_MISMATCH', 'Baseline source Gherkin mismatch');
     const sourceCases = await store.all('SELECT c.*,s.scenario_key FROM source_cases c JOIN scenarios s ON s.id=c.scenario_id WHERE c.gherkin_version_id=? ORDER BY c.scenario_id,c.row_ordinal', [gherkin.id]);
@@ -166,13 +169,13 @@ export function createRuns(options: Options) {
       sourceCases, materializations: prepared.materializations, discovery: prepared.selected, createdAt: new Date().toISOString()};
     const connection = (await store.all('SELECT * FROM target_connections WHERE project_id=? ORDER BY rowid LIMIT 1', [requirement.project_id]))[0];
     await mutation(async () => {
-      const commands: SqlCommand[] = [{sql: 'SELECT id FROM requirements WHERE id=? AND stage=?', params: [requirementId, requirement.stage], mode: 'all', expectRows: 1},
+      const commands: SqlCommand[] = [{sql: 'SELECT id FROM features WHERE id=? AND stage=?', params: [feature.id, feature.stage], mode: 'all', expectRows: 1},
         {sql: 'SELECT id FROM baselines WHERE id=? AND valid=1 AND sha256=?', params: [baseline.id, baseline.sha256], mode: 'all', expectRows: 1},
-        insert('runs', {id: runId, project_id: requirement.project_id, requirement_id: requirementId, origin: 'target_ci', execution_scope: mode, baseline_id: baseline.id, connection_id: connection?.id ?? null,
+        insert('runs', {id: runId, project_id: requirement.project_id, requirement_id: requirementId,feature_id:feature.id, origin: 'target_ci', execution_scope: mode, baseline_id: baseline.id, connection_id: connection?.id ?? null,
           source_ref: sourceSnapshot.resolvedCommit, definition_snapshot_json: JSON.stringify(definition), environment_snapshot_json: JSON.stringify({runner: 'Playwright', version: '1.64.1', baseUrl: options.baseUrl, targetUrl: connection?.app_base_url ?? null, sourceRef: body.sourceRef, sourceSnapshot, testBaselineHash: baseline.sha256, checks: {parser: 'PASSED', mapping: 'PASSED', discovery: 'PASSED', typecheck: 'NOT_RUN', execution: 'NOT_RUN'}}), status: 'RUNNING'})];
       for (const id of selectedCases) commands.push(insert('run_source_cases', {run_id: runId, source_case_id: id}));
       for (const test of selected) commands.push(insert('run_test_selection', {run_id: runId, test_definition_id: test.id}));
-      commands.push({sql: 'UPDATE requirements SET stage=? WHERE id=?', params: ['VERIFICATION', requirementId]});
+      commands.push({sql: 'UPDATE features SET stage=? WHERE id=?', params: ['VERIFICATION', feature.id]});
       await store.batch(commands);
     });
     launch(runId, prepared, body.executor);

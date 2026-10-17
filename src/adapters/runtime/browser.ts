@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Browser, BrowserContext, BrowserServer, Frame, Locator, Page } from 'playwright';
+import type { Browser, BrowserContext, Frame, Locator, Page } from 'playwright';
 import type { BrowserAttachment, BrowserEvent, BrowserInput, BrowserRuntimePort } from '../../ports/runtime.js';
 import { RuntimeAdapterError, invalid, requiredText } from './errors.js';
 import { ActionRecorder, decodeDomAction, installDomRecorder, locatorRecipe, type LocatorRecipe } from './recorder.js';
@@ -14,22 +14,22 @@ type Session = {
 
 export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
   private sessions = new Map<string, Session>();
-  private launched?: Promise<{ server: BrowserServer; browser: Browser }>;
+  private launched?: Promise<{ endpoint: string; browser: Browser }>;
   private closed = false;
 
-  private launch(): Promise<{ server: BrowserServer; browser: Browser }> {
+  private launch(): Promise<{ endpoint: string; browser: Browser }> {
     if (this.closed) return Promise.reject(new RuntimeAdapterError('RUNTIME_CLOSED', 'Browser runtime is closed', 409));
     if (!this.launched) this.launched = (async () => {
-      let server: BrowserServer | undefined;
+      let browser: Browser | undefined;
       try {
         const { chromium } = await import('playwright');
         // Only the official installed browser. No executable fallback, sandbox
         // override, alternate download host, or externally exposed RPC endpoint.
-        server = await chromium.launchServer({ headless: true, chromiumSandbox: true, host: '127.0.0.1' });
-        const browser = await chromium.connect(server.wsEndpoint());
-        return { server, browser };
+        browser = await chromium.launch({ headless: true, chromiumSandbox: true });
+        const { endpoint } = await browser.bind('BDD workbench managed browser', { host: '127.0.0.1', port: 0 });
+        return { endpoint, browser };
       } catch (cause) {
-        await server?.close().catch(() => undefined);
+        await browser?.close().catch(() => undefined);
         this.launched = undefined;
         throw new RuntimeAdapterError('BROWSER_UNAVAILABLE', 'Official Playwright Chromium with sandbox is unavailable; no live browser was created', 503, { cause });
       }
@@ -40,10 +40,10 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
   async create(input: { projectId: string; workspaceRef?: string; targetUrl?: string }): Promise<BrowserAttachment> {
     requiredText(input.projectId, 'projectId');
     if (input.targetUrl) navigationUrl(input.targetUrl);
-    const { browser, server } = await this.launch();
+    const { browser, endpoint } = await this.launch();
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false });
     const session: Session = {
-      id: randomUUID(), contextRef: randomUUID(), context, endpoint: server.wsEndpoint(), activePageId: '',
+      id: randomUUID(), contextRef: randomUUID(), context, endpoint, activePageId: '',
       pages: new Map(), pageIds: new WeakMap(), listeners: new Set(), frameSequence: 0, frameScheduled: false,
       inputTail: Promise.resolve(), recordTail: Promise.resolve(), closed: false,
     };
@@ -272,7 +272,7 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
   async close(): Promise<void> {
     this.closed = true;
     await Promise.all([...this.sessions.keys()].map((id) => this.closeSession(id)));
-    if (this.launched) { const running = await this.launched.catch(() => undefined); await running?.browser.close().catch(() => undefined); await running?.server.close().catch(() => undefined); }
+    if (this.launched) { const running = await this.launched.catch(() => undefined); await running?.browser.close().catch(() => undefined); }
   }
 }
 
