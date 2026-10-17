@@ -3,15 +3,27 @@
   "phase": "gherkin_review",
   "status": "pending",
   "featurePath": "specs/workbench.feature",
-  "featureSha256": "86d554273183a5d88e66d7592b405063f308a7928c2e85d006674e85338f8ff7",
-  "scenarioCount": 31,
-  "expandedCaseCount": 35,
+  "featureSha256": "da84a28d430987a646ea10f7d0f131059dc563d881b3a180da3ebcb65ae39126",
+  "scenarioCount": 16,
+  "expandedCaseCount": 24,
   "baseCommit": "a1dffc11c9e29664a15287574a59c83d272864cc",
+  "previousSubmissionCommit": "9fb0633eabaef230aa4049f5d28607b7e8d0a6fe",
   "reviewBranch": "spec/workbench-gherkin-review",
   "approval": null,
   "approver": null,
   "approvedAt": null,
-  "sdStatus": "not_started_pending_gherkin_confirmation",
-  "implementationStatus": "stopped_unapproved_partial_files_preserved_outside_repository",
-  "note": "提交與靜態檔案檢查不是使用者批准。未執行Gherkin或產品測試。"
+  "scope": "single_gherkin_source_with_core_features_and_product_stage_controls",
+  "syntaxCheck": {
+    "method": "existing_read_only_gherkin_parser",
+    "parserVersion": "39.1.0",
+    "parseErrors": 0,
+    "scenarioCount": 16,
+    "expandedCaseCount": 24
+  },
+  "stepMappingStatus": "not_created_in_current_phase",
+  "generationStatus": "NOT_RUN_FOR_CURRENT_REVISION",
+  "productE2EStatus": "NOT_RUN",
+  "sdStatus": "pending_gherkin_confirmation",
+  "earlierOutOfPhaseArtifactsPreservedOutsideRepository": true,
+  "note": "僅.feature為需求來源；README為簡短入口，metadata不需另行審閱。語法解析不是生成、測試通過或使用者批准。"
 }
