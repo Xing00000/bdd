@@ -1,0 +1,3 @@
+$ node tools/verify.mjs
+exitCode=0
+{"scope":"CODEGEN_SKELETON_ONLY","scenarios":28,"sourceCases":44,"generatedTests":44,"registeredPendingPatterns":174,"expandedStepMatches":319,"missingSteps":0,"ambiguousSteps":0,"completionStatus":"PENDING","productE2E":"NOT_RUN"}

@@ -1,0 +1,3 @@
+$ node tools/completion/verify.mjs
+exitCode=0
+{"scope":"COMPLETION_TOOLING_ONLY","frozenFiles":29,"scenarios":28,"cases":44,"stepPatterns":174,"expandedStepMatches":319,"missing":0,"ambiguous":0,"pendingSlots":0,"productE2E":"NOT_RUN"}

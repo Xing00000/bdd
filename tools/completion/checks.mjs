@@ -1,0 +1,8 @@
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { hash } from '../generate.mjs';
+const dir='spec/REQ-WB-001/evidence/completion/checks';fs.mkdirSync(dir,{recursive:true});
+const commands=[['source-skeleton',['tools/verify.mjs']],['generate',['tools/completion/generate.mjs']],['mapping',['tools/completion/verify.mjs']],['list',['node_modules/@playwright/test/cli.js','test','--config','completion.config.ts','--list','--reporter=list']],['typecheck',['node_modules/typescript/bin/tsc','--noEmit','-p','completion.tsconfig.json']],['tooling',['--import','./tools/completion/register-ts.mjs','--test','tools/completion/tooling.test.mjs']]];
+const checks=[];
+for(const [name,args] of commands){const r=spawnSync(process.execPath,args,{encoding:'utf8',maxBuffer:10*1024*1024});const file=dir+'/'+name+'.log';fs.writeFileSync(file,`$ node ${args.join(' ')}\nexitCode=${r.status}\n${r.stdout??''}${r.stderr??''}`);checks.push({name,command:'node '+args.join(' '),exitCode:r.status,log:file,logSha256:hash(fs.readFileSync(file))});console.log(name+': exit '+r.status);if(r.error||r.status!==0){process.exitCode=1;break;}}
+const manifestPath='spec/REQ-WB-001/evidence/completion/generation-manifest.json';const result={scope:'COMPLETION_TOOLING_ONLY',sourceSkeletonCommit:'95fb2960aa56cce22c17ad40b5cfa535da315a28',manifestPath,manifestSha256:hash(fs.readFileSync(manifestPath)),productE2E:'NOT_RUN',checks,allToolChecksPassed:checks.length===commands.length&&checks.every(c=>c.exitCode===0)};fs.writeFileSync('spec/REQ-WB-001/evidence/completion/check-results.json',JSON.stringify(result,null,2)+'\n');

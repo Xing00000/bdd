@@ -1,52 +1,58 @@
-# BDD 軟體開發工作台：codegen 骨架版
+# BDD 軟體開發工作台：LLM 測試補齊版
 
-本版只完成 **Gherkin → playwright-bdd → spec.ts 骨架與來源映射**，狀態為 **待 LLM 補齊**。沒有產品 server／Vue／DB 功能，也沒有 UI 操作、業務斷言、DB 驗證、截圖／報告的補齊實作。產品 E2E 為 **NOT_RUN**。
+本版在已推送的純骨架 commit `95fb2960aa56cce22c17ad40b5cfa535da315a28` 上，完成 **28 Scenario IDs／44 cases 的測試程式補齊**。產品尚未實作，產品 E2E 為 **NOT_RUN**；沒有以工具檢查成功宣稱產品驗收通過。
 
-批准基準為 commit `40a4c0df3fddf37225d7b0975a94a206d66f98bb` 的 [feature](spec/REQ-WB-001/workbench.feature)（28 IDs／44 cases）與 [SD 0.4](spec/REQ-WB-001/SD.md)，原文/hash 固定。文件頭保留原快照文字；使用者最新確認與本次範圍記在 [review.json](spec/REQ-WB-001/review.json)。本次只授權第一個 codegen commit，沒有 push 或開始補齊／第二 commit 的授權。
+[workbench.feature](spec/REQ-WB-001/workbench.feature) 與 [SD 0.4](spec/REQ-WB-001/SD.md) 維持已核准的原文/hash。文件頭的歷史快照文字不改寫；最新確認與本階段授權在 [review.json](spec/REQ-WB-001/review.json)。本次只做第二個本地測試 commit，不 push 或進入產品開發。
 
-## 重現命令
+## 兩版快照
 
-需要 Node.js 24。依賴鎖於 package-lock.json，不需要產品、LLM、DB、被測網站或下載瀏覽器。
+| 階段 | 位置與狀態 |
+|---|---|
+| Codegen skeleton | [generated/skeleton/](generated/skeleton/REQ-WB-001/workbench.feature.spec.ts)、tests/skeleton/、原 generation-manifest 與工具證據保持原 bytes。執行 stub 預期明確失敗，狀態 PENDING_COMPLETION。 |
+| LLM completion | [generated/completed/](generated/completed/REQ-WB-001/workbench.feature.spec.ts) 載入 tests/completion/ 的操作、斷言、fixtures、逐步截圖與報告。相同 44 個 testKey／來源 case，不刪除或改寫原骨架。 |
 
-```sh
-npm ci --ignore-scripts --cache /tmp/bdd-npm-cache
-npm run test:checks
-```
+[補齊 manifest](spec/REQ-WB-001/evidence/completion/generation-manifest.json) 固定來源 skeleton commit／spec hash／manifest hash／bundle hash、feature／SD hash、全部實作檔 hash 與 test／step 映射。原套件、config 與生成器輸入保持不變，因此沿用已鎖定的測試依賴，不另安裝依賴或下載瀏覽器。
 
-各項檢查可分別執行：
+## 重現與檢查
 
-```sh
-npm run spec:generate
-npm run spec:verify
-npm run spec:list
-npm run spec:typecheck
-npm run test:tooling
-```
-
-底層實際呼叫 `BDDGEN_RAW=1 node_modules/.bin/bddgen test --config playwright.config.ts`。bddgen 9.2.1 原生輸出 JS；確定性 adapter 增加明確 test ID annotation 與 metadata 型別斷言，保存到 [generated/skeleton/REQ-WB-001/workbench.feature.spec.ts](generated/skeleton/REQ-WB-001/workbench.feature.spec.ts)。移除新增 annotation 並擦除型別後，必須與原生 JS 一致；來源行號保持不變。生成檔不要手改。
-
-## 為什麼有 stub
-
-playwright-bdd 需要註冊 step pattern 才能生成。tests/skeleton/registry.json 由批准 Gherkin 自動取得 pattern、參數位置與來源行號；它沒有操作 plan。skeleton.steps.ts 只註冊這些 pattern，執行時呼叫 pending.ts 並拋出 **UnimplementedStepError / PENDING_IMPLEMENTATION**。沒有空函式、skip 或永真業務斷言。
+Node.js 24；全新 checkout 可執行 `npm ci --ignore-scripts --cache /tmp/bdd-npm-cache`。補齊版命令：
 
 ```sh
-npm run test:skeleton:pending
+node tools/completion/checks.mjs
 ```
 
-這是負面殼探測，**預期 exit 1，1 failed、0 passed、0 skipped**，不是產品 E2E。只有骨架時不能標示驗收通過；`--list` 找到測試也不表示已實作。
+依序檢查來源殼完整性、真正 bddgen 生成、完整映射、Playwright --list、TypeScript 與九項工具測試。工具測試會重新生成並要求 spec／manifest 完全一致；原殼／文件／工具證據的 29 個固定檔不得改變。沒有產品也能執行這些工具檢查。明確的回歸結果保存在 [check-results](spec/REQ-WB-001/evidence/completion/check-results.json) 與同目錄 checks/*.log。
 
-## 可審閱證據與檔案
+```sh
+node tools/completion/generate.mjs
+node tools/completion/verify.mjs
+node node_modules/@playwright/test/cli.js test --config completion.config.ts --list --reporter=list
+node node_modules/typescript/bin/tsc --noEmit -p completion.tsconfig.json
+node --import ./tools/completion/register-ts.mjs --test tools/completion/tooling.test.mjs
+```
 
-- [manifest](spec/REQ-WB-001/evidence/generation-manifest.json)：批准來源 hash、原生／TS 輸出 hash、codegen 輸入 hash、28 個 ID／44 個唯一案例與步驟映射。codegen 輸入只含 skeleton，不掃入後階段實作。
-- [checks](spec/REQ-WB-001/evidence/check-results.json) 與 checks/*.log：bddgen、映射、44 tests discovery、型別、六項工具檢查，以及 pending 預期失敗探測的原始輸出。
-- tests/skeleton/：純註冊與 pending stub；missing／negative.steps.ts 只供生成器缺漏／歧義負測試，正常設定不載入。
-- tools/generate.mjs、verify.mjs、checks.mjs、tooling.test.mjs：可重現生成與工具驗證。
-- playwright*.config.ts、tsconfig.json、package*.json、.gitignore：必要測試工具設定。
+第一版的 npm scripts 仍保留。它的舊 test:checks 會重寫第一版歷史 log，應在該 commit 的獨立 checkout 重現；本版 checks 只將新證據寫入 evidence/completion/。生成檔不要手改。
 
-實際檢查：五個命令 exit 0；28 Scenario IDs、44 tests、174 個 pending patterns、319 個展開 step 匹配，缺漏／歧義 0；六項工具測試通過。重複生成的 spec 與 manifest 完全一致。這些都是 **codegen 工具結果**，不代表產品驗收通過。
+## 實際補齊內容
 
-## 後續階段
+- 174 個精確 patterns／319 個展開 step 都有非空操作計畫；UI/API、文件版本／SQLite 投影、Git commit、PTY 真實輸出、錄製與重播都使用產品及專用 fixture。
+- AC005 在同一原情境內使用兩個獨立 project：完整 Gherkin／SD／context 須真正完成；缺預期資訊的 Gherkin／SD／骨架不得含 expected 值，須留下 questions 與待補狀態。兩者都不得改上游。
+- AC015 真正從 UI 送出保存候選，檢查畫面提示、HTTP 拒絕及原文／投影／來源未變。AC016 透過 UI 退回階段。
+- AC017～020 經 DB UI 改 A→B、重查、登出／重登入，驗證 B 編輯與管理頁拒絕；拒絕前後帳號比較以改 B 後為基準，重跑先還原 A／initial。故意失敗的 nested fixture 要留下實際 A/B mismatch 及 failure 圖。
+- AC028 從真實情境清單選 a，核對本 run 完整集合為 test-a／test-a-extra，test-b 不執行且 NOT_RUN；檢查兩個 tests 的同 run/current test/session/context/page、JPEG 與 canvas 像素及每步圖片/hash。局部通過維持 coverageComplete=false，不使全案 VERIFIED。
+- managed resolver 依完整 session/context/page marker 找恰好一頁，可有多個 contexts。沒有採 contexts()[0]、iframe 或 trace 冒充 live。
+- StepEvidence／managed runner 保存操作與斷言圖片、實際／預期值與失敗。Reporter 對空集合、部分執行、重複 ID、skip、缺斷言／步驟／圖片拒絕假綠燈；截圖失敗保留原 assertion 錯誤。
 
-原完整補齊草稿、舊生成稿與目前工作稿已在原雲端工作區建立可恢復且逐檔驗證的備份，沒有放入此骨架版。此 commit 完成後停止；之後依使用者指示，LLM 才能以本骨架/hash 為來源建立獨立補齊快照與第二個 commit，保留本版骨架，不覆寫或混入第一版。
+詳細 DTO、selectors、內部 runner 接線與必要產品能力見 [測試接線契約](tests/completion/CONTRACT.md)。這些是供產品實作對齊的測試介面，尚未有對應 server/Vue/DB adapter 實作。
 
-本 bdd 專案的文件與標準測試保存在 Git；每次需求的 feature、唯一 SD 與確認紀錄同置 `spec/<requirementId>/`，doc/ 只用 ADR，未新增 requirements.md 或其他 SD。
+## 產品 E2E 尚未執行
+
+```sh
+node tools/completion/run-e2e.mjs
+```
+
+必須先提供真實工作台、被測網站、產品初始化的專用 metadata/target DB、測試帳號、來源版本與專用 target Git/CI。當前這些前置條件未配置，入口在瀏覽器或測試啟動前停止：**exit 2／NOT_RUN**，見 [e2e-status](spec/REQ-WB-001/evidence/completion/e2e-status.json)。沒有實際產品 E2E 截圖或成功報告。
+
+產品存在後，真正執行才會生成 `playwright-report/completion/` HTML、`test-results/completion/playwright.json` 與 `evidence-chain.json`。目前僅固定完成測試程式快照；工具通過不能取代這些執行證據。
+
+原完整舊稿、pre-codegen 工作樹與開始補齊前的 95fb296 快照均在 `/workspace/bdd-stage-snapshots/` 可恢復；不將舊 27／43 manifest 冒充本版。此 repo 的 feature、唯一當次 SD、確認紀錄與標準測試仍保存在 Git，doc/ 只供 ADR。

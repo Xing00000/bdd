@@ -1,0 +1,18 @@
+{
+  "sourceCommit": "95fb2960aa56cce22c17ad40b5cfa535da315a28",
+  "completionManifestPath": "spec/REQ-WB-001/evidence/completion/generation-manifest.json",
+  "completionManifestSha256": "748806156ad5131af6b2e281df0975437331e4ab0f5d7fe9946db401df9ce08e",
+  "productE2E": "NOT_RUN",
+  "executionAttempted": false,
+  "reason": "Product and dedicated fixtures are not configured; prerequisite check stopped before browser/test execution",
+  "missing": [
+    "WB_BASE_URL",
+    "WB_TARGET_BASE_URL",
+    "WB_METADATA_DB",
+    "WB_TARGET_DB",
+    "WB_TARGET_PASSWORD",
+    "WB_SOURCE_REF",
+    "WB_TARGET_REPO"
+  ],
+  "exitCode": 2
+}
