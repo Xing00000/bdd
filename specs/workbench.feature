@@ -1,6 +1,6 @@
 # language: en
 # 待使用者確認；目前只允許Gherkin與簡短階段說明，不含step、spec.ts、SD或產品實作。
-# 核心範圍：16個Scenario ID、24個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
+# 核心範圍：20個Scenario ID、28個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
 Feature: 多人共用的BDD軟體開發工作台
   人類共用專案與集中文件
   依Gherkin確認、SD確認、測試產生、開發、驗證的順序工作
@@ -110,6 +110,7 @@ Feature: 多人共用的BDD軟體開發工作台
     And 報告列出各驗收案例的實際執行結果
     And 報告可對應Gherkin案例與被驗證的程式版本
     And 未通過或未執行的案例不被報成通過
+    And Playwright截圖可對應Scenario與step及該步驟實際結果
 
   @AC-WB-014
   Scenario: 缺少測試步驟實作不能當成通過
@@ -149,3 +150,43 @@ Feature: 多人共用的BDD軟體開發工作台
       | sd      | SD       | SD確認                      |
       | tests   | 測試基線 | test generation/completion |
       | source  | 產品程式 | implementation             |
+
+  # 以下DB情境只操作被測專案的測試資料庫，不表示操作正式資料庫。
+  @AC-WB-017
+  Scenario: spec透過Playwright操作網頁版DB並斷言測試資料
+    Given 被測專案的測試資料庫有帳號"scenario_user"且角色為"A"與狀態為"active"
+    When spec使用Playwright開啟工作台網頁版DB介面並查詢"scenario_user"
+    Then spec斷言實際查詢資料的角色為"A"且狀態為"active"
+    And 每個Playwright操作與斷言步驟保存截圖並對應Scenario與step
+    And 只有實際資料斷言符合預期才算該步驟通過
+
+  @AC-WB-018
+  Scenario: 修改被測帳號角色後重新登入驗證允許與拒絕的操作
+    Given 被測專案的測試帳號"scenario_user"在測試資料庫角色為"A"且已登入被測網站
+    And 被測網站角色"A"僅可閱讀測試文件而角色"B"可編輯測試文件但不可管理帳號
+    When spec使用Playwright透過工作台網頁版DB將"scenario_user"角色由"A"改為"B"並保存
+    And spec重新查詢測試資料並斷言角色已實際變成"B"
+    And spec登出被測網站的舊登入狀態並以"scenario_user"重新登入
+    And spec在被測網站將"scenario_document"內容改為"edited"並開啟管理帳號頁面
+    Then spec斷言新登入頁面可看到角色"B"的編輯入口且文件保存成功
+    And spec透過網頁版DB斷言"scenario_document"的實際內容為"edited"
+    And spec斷言管理帳號頁面顯示拒絕且帳號資料沒有因此變更
+    And spec在前置資料確認與DB變更後及重新登入後保存截圖
+    And spec在每個主要操作與斷言步驟保存截圖並關聯實際結果
+
+  @AC-WB-019
+  Scenario: 人類測試流程的斷言失敗時留下截圖與失敗證據
+    Given spec正在執行被測專案測試資料庫變更與重新登入的端到端情境
+    When spec在網頁畫面或DB資料斷言得到與預期不同的實際結果
+    Then Playwright保存失敗當下頁面的截圖
+    And 報告列出該Scenario與失敗step及預期值與實際值及截圖
+    And 該案例標示失敗而不因截圖保存成功改成通過
+
+  @AC-WB-020
+  Scenario: 重跑前重建明確的測試資料與登入初始狀態
+    Given 上一次執行已將測試帳號"scenario_user"改為角色"B"且測試文件內容已變更
+    When spec開始下一次執行並透過網頁版DB將該測試帳號角色設為"A"與"scenario_document"內容設為"initial"
+    And spec結束被測網站上一輪的登入狀態
+    Then spec斷言測試資料庫中的角色為"A"且"scenario_document"內容為"initial"
+    And Playwright保存本次前置資料初始狀態的截圖
+    And 本次情境從該初始狀態重新執行DB變更與登入及操作驗證流程
