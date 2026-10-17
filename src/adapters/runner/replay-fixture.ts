@@ -11,7 +11,7 @@ type Execution = {runId: string; testKey: string; testDefinitionId: string; sour
 const wrapped = new WeakMap<object, object>();
 let active: ReplayCapture | undefined;
 
-class ReplayCapture {
+export class ReplayCapture {
   private index = 0;
   private proxies = new WeakMap<object, any>();
   private queue: Promise<unknown> = Promise.resolve();
@@ -67,18 +67,20 @@ class ReplayCapture {
   }
   wrap<T extends object>(target: T): T {
     if (this.proxies.has(target)) return this.proxies.get(target);
-    const locators = new Set(['locator', 'getByRole', 'getByText', 'getByLabel', 'getByTestId', 'getByPlaceholder', 'getByAltText', 'getByTitle', 'filter', 'first', 'last', 'nth', 'and', 'or']);
-    const actions = new Set(['goto', 'reload', 'goBack', 'goForward', 'evaluate', 'click', 'dblclick', 'fill', 'clear', 'press', 'type', 'pressSequentially', 'check', 'uncheck', 'setChecked', 'selectOption', 'setInputFiles', 'hover', 'focus', 'blur', 'dragTo', 'tap']);
+    const locators = new Set(['locator', 'frameLocator', 'contentFrame', 'owner', 'getByRole', 'getByText', 'getByLabel', 'getByTestId', 'getByPlaceholder', 'getByAltText', 'getByTitle', 'filter', 'first', 'last', 'nth', 'and', 'or']);
+    const actions = new Set(['goto', 'reload', 'goBack', 'goForward', 'evaluate', 'click', 'dblclick', 'fill', 'clear', 'press', 'type', 'pressSequentially', 'check', 'uncheck', 'setChecked', 'selectOption', 'setInputFiles', 'hover', 'focus', 'blur', 'dragTo', 'tap', 'down', 'up', 'insertText', 'wheel', 'move']);
     const proxy = new Proxy(target, {get: (object: any, property: string | symbol) => {
       const value = object[property];
       if (property === 'keyboard' || property === 'mouse' || property === 'touchscreen') return this.wrap(value);
       if (typeof value !== 'function') return value;
+      if (['elementHandle', 'elementHandles', '$', '$$', '$eval', '$$eval', 'waitForSelector'].includes(String(property)))
+        return () => {throw this.unsupported('ElementHandle replay has no registered owning page evidence; use managed locators');};
       if (property === 'newPage' || property === 'newContext' || property === 'newCDPSession' || property === 'newBrowserCDPSession')
         return () => {throw this.unsupported('Independent replay currently supports its initial managed page and context only');};
-      if (property === 'context' || property === 'browser' || property === 'page') return (...args: unknown[]) => {
+      if (property === 'context' || property === 'browser' || property === 'page' || property === 'frame' || property === 'mainFrame' || property === 'parentFrame') return (...args: unknown[]) => {
         const result = value.apply(object, args); return result ? this.wrap(result) : result;
       };
-      if (property === 'pages' || property === 'contexts') return (...args: unknown[]) => value.apply(object, args).map((member: object) => this.wrap(member));
+      if (property === 'pages' || property === 'contexts' || property === 'frames' || property === 'childFrames') return (...args: unknown[]) => value.apply(object, args).map((member: object) => this.wrap(member));
       if (typeof property === 'string' && locators.has(property)) return (...args: unknown[]) => this.wrap(value.apply(object, args));
       if (typeof property === 'string' && actions.has(property)) return (...args: unknown[]) => this.capture(property, () => value.apply(object, args.map(arg => arg && typeof arg === 'object' ? wrapped.get(arg as object) ?? arg : arg)));
       return value.bind(object);

@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { sha, syntax } from './definitions.js';
 import { declaredIds } from './llm.js';
 import type { GenerationOptions } from './types.js';
+import { inspectAcceptance } from './semantic-validation.js';
 
 const execute = promisify(execFile);
 type Input = { rawText: string; files?: { path: string; rawText: string }[]; manifest: Record<string, any> };
@@ -15,11 +16,12 @@ export type CompletionReceipt = {
   passed: boolean; checks: Record<string, boolean>; diagnostics: Diagnostic[]; discoveredTestKeys: string[];
   scope: 'IMPLEMENTATION_CHECKS_ONLY'; productE2E: 'NOT_RUN'; specSha256: string;
   fileHashes: Record<string, string>; isolation: 'CLOUD_CHILD_PROCESS';
+  acceptance?: ReturnType<typeof inspectAcceptance>;
 };
 export function createCompletionValidator(options: GenerationOptions) {
   return {
     async validateCompletion(input: Input): Promise<CompletionReceipt> {
-      const receipt: CompletionReceipt = { passed: false, checks: { syntax: false, pendingAndDisabled: false, mapping: false, typecheck: false, discovery: false },
+      const receipt: CompletionReceipt = { passed: false, checks: { syntax: false, pendingAndDisabled: false, mapping: false, typecheck: false, acceptanceImplementation: false, discovery: false },
         diagnostics: [], discoveredTestKeys: [], scope: 'IMPLEMENTATION_CHECKS_ONLY', productE2E: 'NOT_RUN',
         specSha256: sha(input.rawText), fileHashes: {}, isolation: 'CLOUD_CHILD_PROCESS' };
       const diagnostic = (file: string, reason: string, line = 1, column = 1) => receipt.diagnostics.push({ file, line, column, reason });
@@ -82,10 +84,12 @@ export function createCompletionValidator(options: GenerationOptions) {
       receipt.checks.mapping = true;
       await mkdir(options.artifactRoot, { recursive: true });
       const directory = await mkdtemp(join(resolve(options.artifactRoot), 'completion-check-'));
-      let require = createRequire(join(resolve(options.root), 'product/package.json'));
+      // Uploaded/approved fixtures resolve through the repository's Playwright installation.
+      // The validator, generated bundle and nested runner must share that registry.
+      let require = createRequire(join(resolve(options.root), 'package.json'));
       let packagePath: string;
       try { packagePath = require.resolve('@playwright/test/package.json'); }
-      catch { require = createRequire(join(resolve(options.root), 'package.json')); packagePath = require.resolve('@playwright/test/package.json'); }
+      catch { require = createRequire(join(resolve(options.root), 'product/package.json')); packagePath = require.resolve('@playwright/test/package.json'); }
       const moduleRoot = dirname(dirname(dirname(packagePath)));
       await symlink(moduleRoot, join(directory, 'node_modules'), 'dir');
       await writeFile(join(directory, 'package.json'), '{"type":"module"}\n');
@@ -106,6 +110,11 @@ export function createCompletionValidator(options: GenerationOptions) {
       }
       if (receipt.diagnostics.length) { await writeFile(join(directory, 'receipt.json'), JSON.stringify(receipt, null, 2)); return receipt; }
       receipt.checks.typecheck = true;
+      const acceptance = inspectAcceptance(program, program.getSourceFile(join(directory, specPath))!, required, directory);
+      receipt.acceptance = acceptance;
+      receipt.diagnostics.push(...acceptance.diagnostics);
+      receipt.checks.acceptanceImplementation = acceptance.passed;
+      if (!acceptance.passed) { await writeFile(join(directory, 'receipt.json'), JSON.stringify({ ...receipt, acceptance }, null, 2)); return receipt; }
       await writeFile(join(directory, 'validation.config.ts'), `export default {testDir:'.',testMatch:${JSON.stringify(specPath)},workers:1,retries:0,forbidOnly:true,reporter:'json',outputDir:'./results'};\n`);
       try {
         const result = await execute(process.execPath, ['--max-old-space-size=256', join(dirname(packagePath), 'cli.js'), 'test', '--config',

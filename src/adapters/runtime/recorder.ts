@@ -71,10 +71,11 @@ export function emitRecording(actions: readonly RecordedAction[]): string {
   const handledPopups = new Set<number>();
   actions.forEach((action, index) => {
     if (action.kind !== 'popup') return;
-    for (let i = index - 1; i >= 0; i--) {
-      const candidate = actions[i];
-      if (candidate.pageId === action.openerPageId && candidate.kind === 'click' && !popupForClick.has(i)) { popupForClick.set(i, action); handledPopups.add(index); break; }
-    }
+    // Opener identity alone does not prove which earlier action caused a
+    // popup. Only the immediate click can be paired; ambiguous sequences stay
+    // an explicit incomplete draft instead of guessing across other actions.
+    const i = index - 1, candidate = actions[i];
+    if (candidate?.pageId === action.openerPageId && candidate.kind === 'click' && !popupForClick.has(i)) { popupForClick.set(i, action); handledPopups.add(index); }
   });
   actions.forEach((action, index) => {
     if (handledPopups.has(index)) return;
@@ -113,6 +114,7 @@ export function installDomRecorder(options: { bindingName: string }): void {
   host.__workbenchRecorderDocumentId = documentId;
   const pending = new Set<Promise<unknown>>();
   const secretNames = new Map<Element, string>();
+  let keyboardActivation: { element: Element; form: Element | null } | undefined;
   function recipe(element: Element): LocatorRecipe | undefined {
     const testId = element.getAttribute('data-testid');
     if (testId) return { kind: 'testId', value: testId };
@@ -137,7 +139,11 @@ export function installDomRecorder(options: { bindingName: string }): void {
   document.addEventListener('click', (event) => {
     if (!event.isTrusted) return;
     const element = target(event)?.closest('button,a,input,select,textarea,[role="button"],[data-testid]') ?? target(event);
-    if (!element || element.matches('textarea,select,[contenteditable="true"]') || element instanceof HTMLInputElement && !['button', 'submit', 'reset'].includes(element.type)) return;
+    if (!element) return;
+    // Enter can dispatch a trusted, detail=0 activation click on the submit
+    // button. The key press already replays that activation; a second recorded
+    // click could submit twice or target a button on the next document.
+    if (event.detail === 0 && keyboardActivation && (element === keyboardActivation.element || keyboardActivation.form && element.closest('form') === keyboardActivation.form)) return;
     const locator = recipe(element); send(locator ? { kind: 'click', locator } : { kind: 'unsupported' });
   }, true);
   document.addEventListener('input', (event) => {
@@ -159,6 +165,10 @@ export function installDomRecorder(options: { bindingName: string }): void {
   document.addEventListener('keydown', (event) => {
     if (!event.isTrusted || !['Enter', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
     const element = target(event); const locator = element && recipe(element);
-    if (locator) send({ kind: 'press', locator, key: event.key });
+    if (locator) {
+      if (event.key === 'Enter' && element) keyboardActivation = { element, form: element.closest('form') };
+      send({ kind: 'press', locator, key: event.key });
+    }
   }, true);
+  document.addEventListener('keyup', (event) => { if (event.key === 'Enter') keyboardActivation = undefined; }, true);
 }

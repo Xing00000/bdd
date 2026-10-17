@@ -78,6 +78,7 @@ export function createPlaywrightRunner(input: {root: string; artifactRoot: strin
       processChild.once('close', async code => {
         children.delete(processChild);
         clearTimeout(timer);
+        for(const [key,value] of Object.entries(env))if(/^WB_SECRET_[A-Z0-9_]+$/.test(key)&&value){stdout=stdout.replaceAll(value,'[REDACTED]');stderr=stderr.replaceAll(value,'[REDACTED]');}
         if (log) await writeFile(log, JSON.stringify({code, stdout, stderr, overflow}, null, 2));
         resolveResult({code: overflow ? 2 : code ?? 2, stdout, stderr});
       });
@@ -137,14 +138,14 @@ export function createPlaywrightRunner(input: {root: string; artifactRoot: strin
       await writeFile(join(directory, 'discovery.json'), JSON.stringify({tests, selected, materializations}, null, 2));
       return {directory, config, configSha256: hash(await readFile(config)), selection, selectionSha256: hash(await readFile(selection)), tests, selected, materializations};
     },
-    async execute(runId: string, prepared: PreparedRun, token: string) {
+    async execute(runId: string, prepared: PreparedRun, token: string, recordingSecrets:Record<string,string>={}) {
       // Rehash runtime copies immediately before execution; never run a stale prepared script.
       for (const file of prepared.materializations) if (hash(await readFile(file.file)) !== file.materializedSha256)
         throw new CoreError(409, 'RUNTIME_ARTIFACT_CHANGED', 'Prepared runner script changed before execution');
       if (hash(await readFile(prepared.config)) !== prepared.configSha256 || hash(await readFile(prepared.selection)) !== prepared.selectionSha256)
         throw new CoreError(409, 'RUNTIME_ARTIFACT_CHANGED', 'Prepared runner configuration or exact test selection changed before execution');
       return command(['test', '--config', prepared.config, '--test-list', prepared.selection, '--project=workbench'], prepared.directory,
-        {WB_BASE_URL: input.baseUrl, WB_RUN_ID: runId, WB_RUN_EVENT_TOKEN: token}, join(prepared.directory, 'process.json'));
+        {...recordingSecrets,WB_BASE_URL: input.baseUrl, WB_RUN_ID: runId, WB_RUN_EVENT_TOKEN: token}, join(prepared.directory, 'process.json'));
     },
     async close() {
       closing = true;

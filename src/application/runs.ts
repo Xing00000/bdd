@@ -5,8 +5,11 @@ import type { Store, Row, SqlCommand } from '../ports/store.ts';
 import type { BrowserRuntimePort, BrowserAttachment } from '../ports/runtime.ts';
 import { CoreError } from '../domain/errors.ts';
 import type {TestRunnerPort, PreparedRun} from '../ports/runner.ts';
+import {requiredRecordingSecretAliases,resolveRecordingSecrets,type RecordingSecretResolver} from '../domain/recording-secrets.js';
 
 interface Options {store: Store; browser: BrowserRuntimePort; runner: TestRunnerPort; artifactRoot: string; root: string; baseUrl: string; emit: (event: Record<string, any>) => void | Promise<void>;
+  resolveSource: (projectId: string, sourceRef: string) => Promise<{sourceRef: string; resolvedCommit: string; repositoryRef?: string; [key: string]: unknown}>;
+  resolveRecordingSecret?: RecordingSecretResolver;
   executeCi?: (input: {runId: string; prepared: PreparedRun; env: NodeJS.ProcessEnv}) => Promise<{code: number; stdout: string; stderr: string}>}
 interface Definition {id: string; testKey: string; sourceCaseId: string; scenarioId: string | null; scenarioEntityId: string | null; caseId: string | null; specVersionId: string}
 interface Snapshot {gherkinVersionId: string | null; versions: string[]; definitions: Definition[]; required: Definition[]; sourceCases: Row[]; materializations: PreparedRun['materializations']; discovery: unknown; createdAt: string}
@@ -19,11 +22,14 @@ function fail(status: number, code: string, message: string): never { throw new 
 export function createRuns(options: Options) {
   const {store, browser, artifactRoot, emit} = options;
   const runner = options.runner;
-  const contexts = new Map<string, {app: BrowserAttachment; db: BrowserAttachment; sourceSteps: Record<string, string>}>();
+  const contexts = new Map<string, {app: BrowserAttachment; db?: BrowserAttachment; sourceSteps: Record<string, string>}>();
   const eventIds = new Set<string>();
   const runnerCompletions = new Map<string, any>();
   const started = new Set<string>();
+  const bindingSequences = new Map<string, number>();
   const completion = new Map<string, Promise<void>>();
+  const recordingSecretValues=new Map<string,string[]>();
+  function redact(value:any,secrets:string[]):any {if(typeof value==='string'){for(const secret of secrets)if(secret)value=value.replaceAll(secret,'[REDACTED]');return value;}if(Array.isArray(value))return value.map(item=>redact(item,secrets));if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,redact(item,secrets)]));return value;}
   let writes: Promise<unknown> = Promise.resolve();
   function mutation<T>(body: () => Promise<T>): Promise<T> { const task = writes.then(body, body); writes = task.then(() => undefined, () => undefined); return task; }
   async function one(sql: string, params: any[] = [], label = 'Resource'): Promise<Row> { const row = (await store.all(sql, params))[0]; if (!row) fail(404, 'NOT_FOUND', label + ' not found'); return row; }
@@ -82,8 +88,8 @@ export function createRuns(options: Options) {
       if (processResult && processResult.code !== 0 && !failed) incomplete = true;
       const status = failed ? 'FAILED' : incomplete ? 'INCOMPLETE' : 'PASSED';
       const environment = JSON.parse(run.environment_snapshot_json);
-      environment.execution = {status, exitCode: processResult?.code ?? null, error: executionError ? String(executionError) : null,
-        stderr: processResult?.stderr.slice(-16_000) ?? null, reporter: receipt ?? null, finishedAt: new Date().toISOString()};
+      environment.execution = {status, exitCode: processResult?.code ?? null, error: executionError ? redact(String(executionError),recordingSecretValues.get(runId)??[]) : null,
+        stderr: redact(processResult?.stderr.slice(-16_000) ?? null,recordingSecretValues.get(runId)??[]), reporter: receipt ?? null, finishedAt: new Date().toISOString()};
       updates.push({sql: "UPDATE runs SET status=?,environment_snapshot_json=? WHERE id=? AND status!='INVALID'", params: [status, JSON.stringify(environment), runId]});
       if (run.requirement_id) {
         const verified = status === 'PASSED' && run.execution_scope === 'ALL_REQUIRED' && data.required.length > 0 && data.required.length === data.definitions.length;
@@ -97,21 +103,23 @@ export function createRuns(options: Options) {
     await mkdir(directory, {recursive: true});
     await writeFile(join(directory, 'report.json'), JSON.stringify(report, null, 2));
   }
-  function launch(runId: string, prepared: PreparedRun, executor?: string) {
+  function launch(runId: string, prepared: PreparedRun, executor?: string, recordingSecrets:Record<string,string>={}) {
+    recordingSecretValues.set(runId,Object.values(recordingSecrets));
     const task = (async () => {
       try {
         const token = randomUUID();
         const result = executor === 'target_ci'
           ? options.executeCi ? await options.executeCi({runId, prepared, env: {WB_BASE_URL: options.baseUrl, WB_RUN_ID: runId, WB_RUN_EVENT_TOKEN: token}}) : (() => {throw new CoreError(503, 'CI_EXECUTOR_UNCONFIGURED', 'Target CI executor is not configured');})()
-          : await runner.execute(runId, prepared, token);
+          : await runner.execute(runId, prepared, token,recordingSecrets);
         await finalize(runId, result);
       }
       catch (error) { await finalize(runId, null, error); }
       finally {
         const matching = [...contexts.entries()].filter(([key]) => key.startsWith(runId + '\0'));
-        const sessions = new Set(matching.flatMap(([, context]) => [context.app.sessionId, context.db.sessionId]));
+        const sessions = new Set(matching.flatMap(([, context]) => [context.app.sessionId, ...(context.db ? [context.db.sessionId] : [])]));
         await Promise.allSettled([...sessions].map(id => browser.closeSession(id)));
         for (const [key] of matching) contexts.delete(key);
+        recordingSecretValues.delete(runId);
       }
     })().catch(error => { console.error('Run finalization failed:', runId, String(error)); });
     completion.set(runId, task);
@@ -125,8 +133,10 @@ export function createRuns(options: Options) {
     const baseline = await one("SELECT * FROM baselines WHERE id=? AND requirement_id=? AND kind='tests'", [body.testBaselineId ?? '', requirementId], 'Test baseline');
     if (!baseline.valid || hash(baseline.manifest_json) !== baseline.sha256 || (body.hash && body.hash !== baseline.sha256) || (body.testBaselineHash && body.testBaselineHash !== baseline.sha256)) fail(409, 'BASELINE_INVALID', 'Test baseline is invalid or its hash does not match');
     if (typeof body.sourceRef !== 'string' || !body.sourceRef.trim()) fail(422, 'SOURCE_REF_REQUIRED', 'Pin a source revision before verification');
+    const sourceSnapshot = await options.resolveSource(requirement.project_id, body.sourceRef);
+    if (!sourceSnapshot || !/^[0-9a-f]{40,64}$/.test(sourceSnapshot.resolvedCommit)) fail(422, 'INVALID_SOURCE_REF', 'Source must resolve to a real immutable Git commit');
     const sourceBaselines = await store.all("SELECT * FROM baselines WHERE requirement_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC", [requirementId]);
-    if (sourceBaselines.length && !sourceBaselines.some(row => { const value = JSON.parse(row.manifest_json); return value.sourceRef === body.sourceRef || value.resolvedCommit === body.sourceRef; })) fail(409, 'SOURCE_VERSION_MISMATCH', 'Requested source does not match the pinned source baseline');
+    if (sourceBaselines.length && !sourceBaselines.some(row => { const value = JSON.parse(row.manifest_json); return hash(row.manifest_json) === row.sha256 && value.resolvedCommit === sourceSnapshot.resolvedCommit; })) fail(409, 'SOURCE_VERSION_MISMATCH', 'Requested source does not match the pinned source baseline');
     const versions = await store.all('SELECT v.*,d.kind,d.file_name FROM baseline_documents bd JOIN document_versions v ON v.id=bd.document_version_id JOIN documents d ON d.id=v.document_id WHERE bd.baseline_id=?', [baseline.id]);
     const gherkin = versions.find(version => version.kind === 'gherkin'), sd = versions.find(version => version.kind === 'sd'), specs = versions.filter(version => version.kind === 'spec');
     if (!gherkin || !sd || !specs.length || specs.some(spec => spec.test_stage !== 'COMPLETED')) fail(409, 'BASELINE_INVALID', 'Baseline must fix Gherkin, SD and completed tests');
@@ -159,7 +169,7 @@ export function createRuns(options: Options) {
       const commands: SqlCommand[] = [{sql: 'SELECT id FROM requirements WHERE id=? AND stage=?', params: [requirementId, requirement.stage], mode: 'all', expectRows: 1},
         {sql: 'SELECT id FROM baselines WHERE id=? AND valid=1 AND sha256=?', params: [baseline.id, baseline.sha256], mode: 'all', expectRows: 1},
         insert('runs', {id: runId, project_id: requirement.project_id, requirement_id: requirementId, origin: 'target_ci', execution_scope: mode, baseline_id: baseline.id, connection_id: connection?.id ?? null,
-          source_ref: body.sourceRef, definition_snapshot_json: JSON.stringify(definition), environment_snapshot_json: JSON.stringify({runner: 'Playwright', version: '1.64.1', baseUrl: options.baseUrl, targetUrl: connection?.app_base_url ?? null, sourceRef: body.sourceRef, testBaselineHash: baseline.sha256, checks: {parser: 'PASSED', mapping: 'PASSED', discovery: 'PASSED', typecheck: 'NOT_RUN', execution: 'NOT_RUN'}}), status: 'RUNNING'})];
+          source_ref: sourceSnapshot.resolvedCommit, definition_snapshot_json: JSON.stringify(definition), environment_snapshot_json: JSON.stringify({runner: 'Playwright', version: '1.64.1', baseUrl: options.baseUrl, targetUrl: connection?.app_base_url ?? null, sourceRef: body.sourceRef, sourceSnapshot, testBaselineHash: baseline.sha256, checks: {parser: 'PASSED', mapping: 'PASSED', discovery: 'PASSED', typecheck: 'NOT_RUN', execution: 'NOT_RUN'}}), status: 'RUNNING'})];
       for (const id of selectedCases) commands.push(insert('run_source_cases', {run_id: runId, source_case_id: id}));
       for (const test of selected) commands.push(insert('run_test_selection', {run_id: runId, test_definition_id: test.id}));
       commands.push({sql: 'UPDATE requirements SET stage=? WHERE id=?', params: ['VERIFICATION', requirementId]});
@@ -177,11 +187,12 @@ export function createRuns(options: Options) {
     const key = runId + '\0' + testKey;
     if (!contexts.has(key)) {
       const project = await one('SELECT * FROM projects WHERE id=?', [run.project_id]);
-      const connection = run.connection_id ? await one('SELECT * FROM target_connections WHERE id=?', [run.connection_id]) : null;
-      if (!connection) fail(409, 'TARGET_CONNECTION_REQUIRED', 'Configure the real target application database connection');
-      const app = await browser.create({projectId: run.project_id, workspaceRef: project.workspace_ref, targetUrl: connection.app_base_url ?? undefined});
-      let db: BrowserAttachment;
-      try { db = await browser.create({projectId: run.project_id, workspaceRef: project.workspace_ref, targetUrl: new URL('/projects/' + run.project_id + '/db/' + connection.id, options.baseUrl).href}); }
+      const connection = run.connection_id ? await one('SELECT * FROM target_connections WHERE id=? AND project_id=?', [run.connection_id, run.project_id]) : null;
+      if (!connection && run.execution_scope !== 'INDEPENDENT') fail(409, 'TARGET_CONNECTION_REQUIRED', 'Configure the real target application database connection');
+      const environment = JSON.parse(run.environment_snapshot_json);
+      const app = await browser.create({projectId: run.project_id, workspaceRef: project.workspace_ref, targetUrl: environment.targetUrl ?? connection?.app_base_url ?? undefined});
+      let db: BrowserAttachment | undefined;
+      try {if (connection) db = await browser.create({projectId: run.project_id, workspaceRef: project.workspace_ref, targetUrl: new URL('/projects/' + run.project_id + '/db/' + connection.id, options.baseUrl).href});}
       catch (error) { await browser.closeSession(app.sessionId); throw error; }
       let sourceSteps: Record<string, string>;
       if (run.execution_scope === 'INDEPENDENT') sourceSteps = {'4': 'recording:4', '5': 'recording:5', '6': 'recording:6'};
@@ -193,7 +204,7 @@ export function createRuns(options: Options) {
     }
     const managed = contexts.get(key)!;
     return {runId, testDefinitionId: test.id, sourceCaseId: test.sourceCaseId, testKey,
-      sourceSteps: managed.sourceSteps, app: managed.app, db: managed.db, dbUiUrl: new URL('/projects/' + run.project_id + '/db/' + run.connection_id, options.baseUrl).href};
+      sourceSteps: managed.sourceSteps, app: managed.app, db: managed.db, dbUiUrl: run.connection_id ? new URL('/projects/' + run.project_id + '/db/' + run.connection_id, options.baseUrl).href : null};
   }
 
   async function binding(runId: string) {
@@ -211,7 +222,9 @@ export function createRuns(options: Options) {
       const run = await one('SELECT * FROM runs WHERE id=?', [runId], 'Run');
       if (event.runId !== runId || run.status !== 'RUNNING') fail(409, 'RUN_EVENT_INVALID', 'Event does not belong to an active run');
       if (!event.eventId || typeof event.eventId !== 'string' || eventIds.has(event.eventId)) fail(409, 'EVENT_DUPLICATED', 'Event ID must be unique');
-      const data = snapshot(run), payload = event.payload ?? {};
+      const data = snapshot(run),secrets=recordingSecretValues.get(runId)??[];
+      const original=event.payload??{},payload=secrets.length?{...redact(Object.fromEntries(Object.entries(original).filter(([key])=>key!=='screenshot')),secrets),...(original.screenshot?{screenshot:original.screenshot}:{})}:original;
+      event={...event,payload};
       if (event.type === 'run.completed') {
         runnerCompletions.set(runId, payload); eventIds.add(event.eventId); return {accepted: true};
       }
@@ -225,8 +238,10 @@ export function createRuns(options: Options) {
       }
       if (event.type === 'run.testStarted') {
         if (started.has(runId + '\0' + test.testKey)) fail(409, 'TEST_DUPLICATED', 'Test started more than once');
+        const previous = (await store.all('SELECT binding_seq FROM run_browser_bindings WHERE run_id=?', [runId]))[0];
+        bindingSequences.set(runId, Math.max(bindingSequences.get(runId) ?? 0, previous?.binding_seq ?? 0));
+        await store.batch([{sql: 'DELETE FROM run_browser_bindings WHERE run_id=? AND case_result_id<>?', params: [runId, result.id]}, {sql: 'UPDATE case_results SET status=? WHERE id=?', params: ['RUNNING', result.id]}]);
         started.add(runId + '\0' + test.testKey);
-        await store.run('UPDATE case_results SET status=? WHERE id=?', ['RUNNING', result.id]);
       } else if (event.type === 'run.testFinished') {
         if (!started.has(runId + '\0' + test.testKey)) fail(409, 'TEST_NOT_STARTED', 'Test finished without an actual start event');
         const unsupported = (payload.errors ?? []).some((error: unknown) => String(error).includes('UNSUPPORTED_MANAGED_PAGE'));
@@ -237,11 +252,12 @@ export function createRuns(options: Options) {
         await store.batch([{sql: 'UPDATE case_results SET status=? WHERE id=?', params: [status, result.id]}, {sql: 'UPDATE runs SET environment_snapshot_json=? WHERE id=?', params: [JSON.stringify(environment), runId]}]);
       } else if (event.type === 'run.browserBound') {
         const managed = contexts.get(runId + '\0' + test.testKey);
-        const identity = managed && [managed.app, managed.db].find(attachment => attachment.sessionId === event.sessionId && attachment.contextRef === event.contextRef && attachment.pageId === event.pageId);
+        const identity = managed && [managed.app, managed.db].find(attachment => !!attachment && attachment.sessionId === event.sessionId && attachment.contextRef === event.contextRef && attachment.pageId === event.pageId);
         if (!identity) fail(403, 'BROWSER_BINDING_INVALID', 'Page is not a managed page belonging to this test');
         const previous = (await store.all('SELECT binding_seq FROM run_browser_bindings WHERE run_id=?', [runId]))[0];
-        const seq = (previous?.binding_seq ?? 0) + 1;
+        const seq = Math.max(previous?.binding_seq ?? 0, bindingSequences.get(runId) ?? 0) + 1;
         await store.run('INSERT INTO run_browser_bindings(run_id,case_result_id,session_id,context_ref,page_id,binding_seq) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET case_result_id=excluded.case_result_id,session_id=excluded.session_id,context_ref=excluded.context_ref,page_id=excluded.page_id,binding_seq=excluded.binding_seq', [runId, result.id, event.sessionId, event.contextRef, event.pageId, seq]);
+        bindingSequences.set(runId, seq);
         eventIds.add(event.eventId);
         await publish(run, {...event, caseResultId: result.id, testDefinitionId: test.id, bindingSeq: seq});
         return {accepted: true, bindingSeq: seq};
@@ -319,13 +335,35 @@ export function createRuns(options: Options) {
     const version = await one("SELECT v.*,d.project_id,d.requirement_id,d.purpose,d.file_name FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=? AND v.document_id=? AND d.kind='spec'", [versionId, documentId], 'Script version');
     if (!['recording', 'integration'].includes(version.purpose)) fail(409, 'SCRIPT_PURPOSE_INVALID', 'Use verify for standard target CI tests');
     if (body.projectId && body.projectId !== version.project_id) fail(422, 'PROJECT_MISMATCH', 'Script belongs to a different project');
+    const savedConfig = JSON.parse(version.execution_config_json ?? '{}');
+    const actions=(await store.all('SELECT payload_json FROM recording_actions WHERE spec_version_id=? ORDER BY ordinal',[versionId])).map(row=>JSON.parse(row.payload_json));
+    const requiredAliases=requiredRecordingSecretAliases(version.raw_text,actions);
+    const recordingSecrets=await resolveRecordingSecrets({projectId:version.project_id,requiredAliases,bindings:savedConfig.secretBindings,resolve:options.resolveRecordingSecret});
     const runId = randomUUID(), prepared = await runner.prepare(runId, [version as any], undefined, true);
     const runtimeDefinitions: Definition[] = prepared.selected.map(test => ({id: randomUUID(), testKey: test.testKey, sourceCaseId: 'script:' + versionId, scenarioId: null, scenarioEntityId: null, caseId: null, specVersionId: versionId}));
     const data: Snapshot = {gherkinVersionId: version.source_gherkin_version_id, versions: [version.id], definitions: runtimeDefinitions, required: runtimeDefinitions, sourceCases: [], materializations: prepared.materializations, discovery: prepared.selected, createdAt: new Date().toISOString()};
-    const connection = (await store.all('SELECT * FROM target_connections WHERE project_id=? ORDER BY rowid LIMIT 1', [version.project_id]))[0];
+    function target(value: unknown): string | null {
+      if (value === undefined || value === null || value === '') return null;
+      try {if (typeof value !== 'string') throw Error(); const url = new URL(value); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw Error(); return url.href;}
+      catch {fail(422, 'TARGET_URL_INVALID', 'Replay target must be a valid HTTP(S) URL without embedded credentials');}
+    }
+    const targetUrl = target(body.targetUrl || savedConfig.targetUrl);
+    const connectionId = body.connectionId ?? savedConfig.connectionId;
+    const connections = await store.all('SELECT * FROM target_connections WHERE project_id=? ORDER BY rowid', [version.project_id]);
+    let connection: Row | undefined;
+    if (connectionId) {
+      connection = connections.find(row => row.id === connectionId);
+      if (!connection) fail(422, 'PROJECT_MISMATCH', 'Replay connection does not belong to this script project');
+      if (targetUrl && targetUrl !== target(connection.app_base_url)) fail(422, 'TARGET_CONNECTION_MISMATCH', 'Replay target URL differs from the selected connection');
+    } else if (targetUrl && connections.length) {
+      const matching = connections.filter(row => target(row.app_base_url) === targetUrl);
+      if (matching.length !== 1) fail(422, 'TARGET_CONNECTION_MISMATCH', 'Replay target URL must match exactly one project connection');
+      connection = matching[0];
+    } else if (connections.length === 1) connection = connections[0];
+    else if (connections.length > 1) fail(422, 'TARGET_CONNECTION_REQUIRED', 'Select the replay target explicitly when this project has multiple connections');
     await store.batch([insert('runs', {id: runId, project_id: version.project_id, requirement_id: null, origin: version.purpose, execution_scope: 'INDEPENDENT', script_version_id: versionId, connection_id: connection?.id ?? null,
-      definition_snapshot_json: JSON.stringify(data), environment_snapshot_json: JSON.stringify({runner: 'Playwright', targetUrl: body.targetUrl ?? connection?.app_base_url, scriptSha256: version.raw_sha256, checks: {parser: 'PASSED', discovery: 'PASSED', execution: 'NOT_RUN'}}), status: 'RUNNING'})]);
-    launch(runId, prepared);
+      definition_snapshot_json: JSON.stringify(data), environment_snapshot_json: JSON.stringify({runner: 'Playwright', targetUrl: targetUrl ?? connection?.app_base_url ?? null, scriptSha256: version.raw_sha256, checks: {parser: 'PASSED', discovery: 'PASSED', execution: 'NOT_RUN'}}), status: 'RUNNING'})]);
+    launch(runId, prepared,undefined,recordingSecrets);
     return {runId, scope: 'INDEPENDENT', scriptVersionId: versionId, expectedTestKeys: runtimeDefinitions.map(test => test.testKey)};
   }
 
@@ -335,7 +373,7 @@ export function createRuns(options: Options) {
     await runner.close();
     await Promise.all([...completion.values()]);
     await writes;
-    const sessions = new Set([...contexts.values()].flatMap(value => [value.app.sessionId, value.db.sessionId]));
+    const sessions = new Set([...contexts.values()].flatMap(value => [value.app.sessionId, ...(value.db ? [value.db.sessionId] : [])]));
     await Promise.allSettled([...sessions].map(id => browser.closeSession(id)));
     contexts.clear();
   }};

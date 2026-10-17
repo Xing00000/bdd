@@ -7,6 +7,10 @@ import { parseGherkin, parseTypeScript, type ParsedGherkin, type ParsedTest } fr
 export const sha256 = (raw: string | Uint8Array): string => createHash('sha256').update(raw).digest('hex');
 export type SaveVersionInput = {
   rawText: string;
+  expectedCurrentVersionId?: string | null;
+  baseVersionId?: string | null;
+  expectedConfirmedGherkinVersionId?: string;
+  expectedConfirmedSdVersionId?: string;
   sourceGherkinVersionId?: string | null;
   testStage?: 'SKELETON' | 'COMPLETION_DRAFT' | 'COMPLETED' | null;
   sourceSkeletonVersionId?: string | null;
@@ -15,6 +19,14 @@ export type SaveVersionInput = {
   actions?: Record<string, any>[];
 };
 export type ScenarioTestsQuery = { gherkinVersionId?: string; specVersionId?: string; skeletonVersionId?: string; testBaselineId?: string; runId?: string };
+export type StartDevelopmentExpectations = {
+  expectedSpecVersionId?: string;
+  expectedSpecSha256?: string;
+  expectedConfirmedGherkinVersionId?: string;
+  expectedConfirmedGherkinSha256?: string;
+  expectedConfirmedSdVersionId?: string;
+  expectedConfirmedSdSha256?: string;
+};
 
 export async function createCore(metadataFile: string) {
   const store = await createSqliteStore(metadataFile);
@@ -116,15 +128,25 @@ export async function createCore(metadataFile: string) {
       const test = testsByKey.get(mapping.testKey), location = { line: test?.line ?? 1, column: test?.column ?? 1, testKey: mapping.testKey };
       if (!test) { errors.push({ ...location, reason: `Mapping references undeclared test ${mapping.testKey}` }); continue; }
       const source = available.find(row => mapping.sourceCaseId ? row.id === mapping.sourceCaseId : (row.scenario_key === mapping.scenarioId || row.scenario_id === mapping.scenarioId) && row.case_key === mapping.caseId);
-      if (!source) { errors.push({ ...location, sourceCaseKey: `${mapping.scenarioId}/${mapping.caseId}`, reason: 'Mapping references nonexistent or different-version Scenario/Examples case' }); continue; }
+      if (!source) {
+        const knownScenario = mapping.sourceCaseId || available.some(row => row.scenario_key === mapping.scenarioId || row.scenario_id === mapping.scenarioId);
+        errors.push({ ...location, sourceCaseKey: mapping.sourceCaseId ?? `${mapping.scenarioId}/${mapping.caseId}`,
+          reason: knownScenario ? '引用指定來源情境中不存在的Examples case_id' : '引用指定來源版本中不存在的Scenario ID' });
+        continue;
+      }
+      if (mapping.sourceCaseId && (mapping.scenarioId !== undefined && ![source.scenario_key, source.scenario_id].includes(mapping.scenarioId) || mapping.caseId !== undefined && mapping.caseId !== source.case_key)) {
+        errors.push({ ...location, sourceCaseKey: `${mapping.scenarioId ?? source.scenario_key}/${mapping.caseId ?? source.case_key}`,
+          reason: `明確sourceCaseId ${mapping.sourceCaseId}與Scenario ID或Examples case_id不一致` });
+        continue;
+      }
       const pair = `${test.testKey}\0${source.id}`;
-      if (pairs.has(pair)) { errors.push({ ...location, sourceCaseKey: source.case_key, reason: 'Duplicate test/source mapping' }); continue; }
+      if (pairs.has(pair)) { errors.push({ ...location, sourceCaseKey: `${source.scenario_key}/${source.case_key}`, reason: '完全相同test ID與來源案例的映射資料重複' }); continue; }
       pairs.add(pair); matched.add(test.testKey); covered.add(source.id);
       commands.push(insert('test_case_mappings', { test_definition_id: definitionIds.get(test.testKey)!, source_case_id: source.id }));
     }
     if (standard) {
-      for (const test of tests) if (!matched.has(test.testKey)) errors.push({ ...test, reason: `Test ${test.testKey} has no source mapping` });
-      for (const source of available) if (!covered.has(source.id)) errors.push({ line: 1, column: 1, sourceCaseKey: `${source.scenario_key}/${source.case_key}`, reason: 'Source case has no corresponding test' });
+      for (const test of tests) if (!matched.has(test.testKey)) errors.push({ ...test, reason: `有測試未提供明確的情境與案例對應：${test.testKey}` });
+      for (const source of available) if (!covered.has(source.id)) errors.push({ line: 1, column: 1, sourceCaseKey: `${source.scenario_key}/${source.case_key}`, reason: '來源Gherkin有應生成的案例未對應任何測試' });
     }
     if (errors.length) invalid(d.file_name, 'MAPPING_INVALID', errors);
     return commands;
@@ -134,8 +156,20 @@ export async function createCore(metadataFile: string) {
     checkStage(d, r);
     if (typeof payload.rawText !== 'string') fail(400, 'RAW_TEXT_REQUIRED', 'rawText must be a string');
     const raw = payload.rawText, hash = sha256(raw), versionId = randomUUID(), commands: SqlCommand[] = [];
+    const expectedHead = payload.expectedCurrentVersionId !== undefined ? payload.expectedCurrentVersionId : payload.baseVersionId;
+    if (payload.expectedCurrentVersionId !== undefined && payload.baseVersionId !== undefined && payload.expectedCurrentVersionId !== payload.baseVersionId)
+      fail(400, 'INVALID_VERSION_EXPECTATION', 'Expected current version and baseVersionId disagree');
+    if (expectedHead !== undefined && ((await head(documentId))?.id ?? null) !== expectedHead)
+      fail(409, 'VERSION_CONFLICT', 'Document head changed; the submitted version was not saved');
+    for (const [kind, expected] of [['gherkin', payload.expectedConfirmedGherkinVersionId], ['sd', payload.expectedConfirmedSdVersionId]] as const) {
+      if (expected === undefined) continue;
+      const guard: SqlCommand = { sql: 'SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=c.version_id WHERE c.requirement_id=? AND c.kind=? AND c.version_id=? AND v.raw_sha256=c.raw_sha256', params: [d.requirement_id ?? null, kind, expected], mode: 'all', expectRows: 1 };
+      if (!(await store.all(guard.sql, guard.params)).length) fail(409, 'SOURCE_VERSION_MISMATCH', `Confirmed ${kind} version changed; the submitted version was not saved`);
+      commands.push(guard);
+    }
     const sourceId = payload.sourceGherkinVersionId ?? null, standard = d.kind === 'spec' && d.purpose === 'target_ci';
     const testStage = payload.testStage ?? null, skeletonId = payload.sourceSkeletonVersionId ?? null, manifest = payload.manifest ?? null;
+    const modernManifest = Number(manifest?.schemaVersion ?? 0) >= 2;
     if (manifest && (typeof manifest !== 'object' || Array.isArray(manifest))) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'manifest must be an object' }]);
     if (d.kind !== 'spec' && (testStage || skeletonId || manifest)) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Only spec documents may carry test-stage metadata' }]);
     if (testStage && (!standard || !['SKELETON', 'COMPLETION_DRAFT', 'COMPLETED'].includes(testStage))) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Invalid test stage or document purpose' }]);
@@ -154,11 +188,18 @@ export async function createCore(metadataFile: string) {
       }
       if (manifest?.sourceGherkinVersionId && manifest.sourceGherkinVersionId !== sourceId) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest source Gherkin version mismatch' }]);
       if (manifest?.gherkinSha256 && manifest.gherkinSha256 !== source.raw_sha256) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest Gherkin hash mismatch' }]);
+      if (standard && modernManifest && (manifest?.sourceGherkinVersionId !== sourceId || manifest?.gherkinSha256 !== source.raw_sha256))
+        invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest schemaVersion>=2 requires the exact confirmed Gherkin version and hash' }]);
     }
+    let confirmedSd: Row | undefined;
     if (standard) {
       const sd = (await store.all("SELECT v.* FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN documents d ON d.id=v.document_id JOIN document_heads h ON h.document_id=d.id AND h.version_id=c.version_id WHERE c.requirement_id=? AND c.kind='sd' AND v.raw_sha256=c.raw_sha256 AND v.source_gherkin_version_id=?", [d.requirement_id, sourceId]))[0];
       if (!sd) fail(409, 'SD_NOT_CONFIRMED', 'Current SD must be confirmed for the selected Gherkin');
+      confirmedSd = sd;
       if (manifest?.sdSha256 && manifest.sdSha256 !== sd.raw_sha256) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest SD hash mismatch' }]);
+      if (manifest?.sdVersionId && manifest.sdVersionId !== sd.id) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest SD version mismatch' }]);
+      if (modernManifest && (manifest?.sdVersionId !== sd.id || manifest?.sdSha256 !== sd.raw_sha256))
+        invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Manifest schemaVersion>=2 requires the exact confirmed SD version and hash' }]);
       commands.push({ sql: "SELECT version_id FROM confirmations WHERE requirement_id=? AND kind='sd' AND version_id=? AND raw_sha256=?", params: [d.requirement_id, sd.id, sd.raw_sha256], mode: 'all', expectRows: 1 });
     }
     if (standard && !testStage && !manifest) invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Standard spec requires a manifest; Git imports must provide their immutable source reference' }]);
@@ -172,6 +213,9 @@ export async function createCore(metadataFile: string) {
         invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Source skeleton must be SKELETON of this document and source Gherkin' }]);
       if (manifest?.sourceSkeletonSha256 !== skeleton.raw_sha256 || (manifest?.sourceSkeletonVersionId && manifest.sourceSkeletonVersionId !== skeletonId) || (manifest?.sourceSkeletonManifestSha256 && manifest.sourceSkeletonManifestSha256 !== skeleton.test_manifest_sha256))
         invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Source skeleton version/hash/manifest mismatch' }]);
+      const skeletonManifest = skeleton.test_manifest_json ? JSON.parse(skeleton.test_manifest_json) : {};
+      if (confirmedSd && (skeletonManifest.sdVersionId ? skeletonManifest.sdVersionId !== confirmedSd.id : Number(confirmedSd.version_no) > 1))
+        fail(409, 'REGENERATE_SKELETON_REQUIRED', 'Source skeleton is not bound to this confirmed SD version; regenerate tests before completion');
     }
     let parserName: string | null = null, parserVersion: string | null = null;
     if (d.kind === 'gherkin') {
@@ -180,6 +224,9 @@ export async function createCore(metadataFile: string) {
     } else if (d.kind === 'spec') {
       const parsed = parseTypeScript(raw, d.file_name, standard); parserName = 'typescript'; parserVersion = '5.9.3';
       if (testStage === 'COMPLETED' && parsed.pending) fail(409, 'TESTS_PENDING_COMPLETION', 'Unimplemented steps cannot form a completed test snapshot');
+      // Validate the submitted mapping before comparing against the immutable
+      // skeleton, so its actual missing/duplicate/unknown reference is reported.
+      commands.push(...await mappedTests(d, versionId, parsed.tests, sourceId, manifest, standard));
       if (skeleton) {
         const oldMappings = await store.all('SELECT t.test_key,c.id AS source_case_id,c.scenario_id,c.case_key FROM test_definitions t JOIN test_case_mappings m ON m.test_definition_id=t.id JOIN source_cases c ON c.id=m.source_case_id WHERE t.spec_version_id=?', [skeletonId]);
         for (const old of oldMappings) {
@@ -188,9 +235,10 @@ export async function createCore(metadataFile: string) {
             invalid(d.file_name, 'MAPPING_INVALID', [{ line: 1, column: 1, testKey: old.test_key, reason: 'Completion cannot delete or remap a source skeleton test' }]);
         }
       }
-      commands.push(...await mappedTests(d, versionId, parsed.tests, sourceId, manifest, standard));
     }
     const current = await head(documentId), max = await one('SELECT COALESCE(MAX(version_no),0) AS n FROM document_versions WHERE document_id=?', [documentId]);
+    if (expectedHead !== undefined && (current?.id ?? null) !== expectedHead)
+      fail(409, 'VERSION_CONFLICT', 'Document head changed; the submitted version was not saved');
     const manifestJson = manifest ? JSON.stringify(manifest) : null;
     const version = insert('document_versions', { id: versionId, document_id: documentId, version_no: Number(max.n) + 1, raw_text: raw, raw_sha256: hash, parser_name: parserName, parser_version: parserVersion, projection_schema_version: 1,
       source_gherkin_version_id: sourceId, test_stage: testStage, source_skeleton_version_id: skeletonId, test_manifest_json: manifestJson, test_manifest_sha256: manifestJson ? sha256(manifestJson) : null,
@@ -198,6 +246,7 @@ export async function createCore(metadataFile: string) {
     const transaction = [...(newDocument ? [insert('documents', newDocument)] : []), version, ...commands];
     for (const [index, action] of (payload.actions ?? []).entries()) transaction.push(insert('recording_actions', { spec_version_id: versionId, ordinal: index + 1, page_key: String(action.pageKey ?? action.pageId ?? 'page-1'), action_kind: String(action.kind ?? action.type ?? 'unknown'), locator_json: action.locator ? JSON.stringify(action.locator) : null, payload_json: JSON.stringify(action) }));
     if (r && d.purpose !== 'recording' && d.purpose !== 'integration') transaction.push(...invalidation(r.id, d.kind), stageGuard(r.id, r.stage));
+    if (expectedHead !== undefined) transaction.push({ sql: 'SELECT document_id FROM document_heads WHERE document_id=?' + (expectedHead === null ? '' : ' AND version_id=?'), params: expectedHead === null ? [documentId] : [documentId, expectedHead], mode: 'all', expectRows: expectedHead === null ? 0 : 1 });
     if (current) transaction.push({ sql: 'UPDATE document_heads SET version_id=? WHERE document_id=? AND version_id=?', params: [versionId, documentId, current.id], expectChanges: 1 });
     else transaction.push(insert('document_heads', { document_id: documentId, version_id: versionId }));
     await store.batch(transaction);
@@ -301,7 +350,7 @@ export async function createCore(metadataFile: string) {
     confirm(requirementId: string, kind: 'gherkin' | 'sd', body: { versionId: string; rawSha256: string }) { return mutation(() => confirmUnsafe(requirementId, kind, body)); },
     returnTo(requirementId: string, artifactKind: string) { return mutation(async () => {
       const r = await requirement(requirementId);
-      const kind = ({ Gherkin: 'gherkin', SD: 'sd', 'spec.ts': 'spec', '測試': 'spec', '產品程式': 'source', implementation: 'source', tests: 'spec' } as Record<string, string>)[artifactKind] ?? artifactKind;
+      const kind = ({ Gherkin: 'gherkin', SD: 'sd', 'spec.ts': 'spec', '測試': 'spec', '測試基線': 'spec', '產品程式': 'source', implementation: 'source', tests: 'spec' } as Record<string, string>)[artifactKind] ?? artifactKind;
       const target = ({ gherkin: 'GHERKIN', sd: 'SD', spec: 'TESTS', source: 'IMPLEMENTATION' } as Record<string, string>)[kind];
       if (!target) fail(400, 'INVALID_ARTIFACT', 'Unknown artifact kind');
       const order = ['GHERKIN', 'SD', 'TESTS', 'IMPLEMENTATION', 'VERIFICATION', 'VERIFIED'];
@@ -309,20 +358,27 @@ export async function createCore(metadataFile: string) {
       await store.batch([...invalidation(requirementId, kind), { sql: 'UPDATE requirements SET stage=? WHERE id=? AND stage=?', params: [target, requirementId, r.stage], expectChanges: 1 }]);
       return getRequirement(requirementId);
     }); },
-    startDevelopment(requirementId: string) { return mutation(async () => {
+    startDevelopment(requirementId: string, expectations: StartDevelopmentExpectations = {}) { return mutation(async () => {
       const r = await getRequirement(requirementId);
       if (r.stage !== 'TESTS' || !r.confirmations.gherkin || !r.confirmations.sd) fail(409, 'WORKFLOW_GATE_NOT_MET', 'Gherkin and SD must be confirmed before development');
+      if (expectations.expectedSpecVersionId !== undefined && expectations.expectedSpecVersionId !== r.documents.spec?.versionId || expectations.expectedSpecSha256 !== undefined && expectations.expectedSpecSha256 !== r.documents.spec?.rawSha256)
+        fail(409, 'VERSION_CONFLICT', 'The validated test snapshot version/hash changed before development');
+      for (const [kind, versionId, rawSha256] of [['gherkin', expectations.expectedConfirmedGherkinVersionId, expectations.expectedConfirmedGherkinSha256], ['sd', expectations.expectedConfirmedSdVersionId, expectations.expectedConfirmedSdSha256]] as const)
+        if (versionId !== undefined && versionId !== r.confirmations[kind].versionId || rawSha256 !== undefined && rawSha256 !== r.confirmations[kind].rawSha256)
+          fail(409, 'SOURCE_VERSION_MISMATCH', `The validated ${kind} confirmation version/hash changed before development`);
       for (const kind of ['gherkin', 'sd']) if (r.documents[kind]?.versionId !== r.confirmations[kind].versionId || r.documents[kind]?.rawSha256 !== r.confirmations[kind].rawSha256)
         fail(409, 'CONFIRMATION_VERSION_MISMATCH', 'Development must use current confirmed document heads');
       const spec = r.documents.spec;
       if (!spec?.versionId || spec.testStage !== 'COMPLETED') fail(409, 'TESTS_PENDING_COMPLETION', 'Tests are pending completion');
       if (spec.sourceGherkinVersionId !== r.confirmations.gherkin.versionId || r.documents.sd.sourceGherkinVersionId !== r.confirmations.gherkin.versionId) fail(409, 'SOURCE_VERSION_MISMATCH', 'Completed baseline must reference current confirmed documents');
+      if (spec.manifest?.sdVersionId ? spec.manifest.sdVersionId !== r.confirmations.sd.versionId : Number(r.documents.sd.versionNo) > 1)
+        fail(409, 'REGENERATE_SKELETON_REQUIRED', 'Completed tests are not bound to this confirmed SD version; regenerate and complete tests');
       const tests = await store.all('SELECT t.*,m.source_case_id FROM test_definitions t JOIN test_case_mappings m ON m.test_definition_id=t.id WHERE t.spec_version_id=? ORDER BY t.test_key', [spec.versionId]);
       if (!tests.length) fail(409, 'MAPPING_INVALID', 'Cannot create an empty test baseline');
       const baselineId = randomUUID(), manifest = { gherkinVersionId: r.confirmations.gherkin.versionId, gherkinSha256: r.confirmations.gherkin.rawSha256, sdVersionId: r.confirmations.sd.versionId, sdSha256: r.confirmations.sd.rawSha256, specVersionId: spec.versionId, specSha256: spec.rawSha256, tests: tests.map(t => ({ testDefinitionId: t.id, testKey: t.test_key, sourceCaseId: t.source_case_id })) }, json = JSON.stringify(manifest);
       const commands: SqlCommand[] = [stageGuard(requirementId, 'TESTS'), { sql: "UPDATE baselines SET valid=0 WHERE requirement_id=? AND kind='tests'", params: [requirementId] }, insert('baselines', { id: baselineId, requirement_id: requirementId, kind: 'tests', manifest_json: json, sha256: sha256(json), valid: 1 })];
       for (const kind of ['gherkin', 'sd']) commands.push({ sql: 'SELECT c.version_id FROM confirmations c JOIN document_versions v ON v.id=c.version_id JOIN document_heads h ON h.document_id=v.document_id AND h.version_id=v.id WHERE c.requirement_id=? AND c.kind=? AND c.version_id=? AND c.raw_sha256=? AND v.raw_sha256=c.raw_sha256', params: [requirementId, kind, r.confirmations[kind].versionId, r.confirmations[kind].rawSha256], mode: 'all', expectRows: 1 });
-      commands.push({ sql: 'SELECT version_id FROM document_heads WHERE document_id=? AND version_id=?', params: [spec.id, spec.versionId], mode: 'all', expectRows: 1 });
+      commands.push({ sql: 'SELECT h.version_id FROM document_heads h JOIN document_versions v ON v.id=h.version_id WHERE h.document_id=? AND h.version_id=? AND v.raw_sha256=?', params: [spec.id, spec.versionId, spec.rawSha256], mode: 'all', expectRows: 1 });
       for (const versionId of [r.confirmations.gherkin.versionId, r.confirmations.sd.versionId, spec.versionId]) commands.push(insert('baseline_documents', { baseline_id: baselineId, document_version_id: versionId }));
       commands.push({ sql: "UPDATE requirements SET stage='IMPLEMENTATION' WHERE id=? AND stage='TESTS'", params: [requirementId], expectChanges: 1 });
       await store.batch(commands); return getRequirement(requirementId);

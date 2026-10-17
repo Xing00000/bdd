@@ -86,7 +86,7 @@ test('source projection mismatch and computed step patterns are rejected before 
 test('completion structural validation runs true typecheck and exact Playwright discovery without claiming runtime success', async () => {
   const { generator } = await adapters();
   const rawText = `import {test,expect} from '@playwright/test';
-test('a',{annotation:{type:'workbenchTestId',description:'test-a'}},async()=>{expect(process.version).toMatch(/^v/);});\n`;
+test('a',{annotation:{type:'workbenchTestId',description:'test-a'}},async({page})=>{await page.goto('http://127.0.0.1:9999');await page.getByTestId('title').fill('saved');await expect(page.getByTestId('title')).toHaveValue('saved');});\n`;
   const manifest = { specPath: 'generated/check.spec.ts', mappings: [{ testKey: 'test-a', scenarioId: 'AC-GEN-001', caseId: 'a' }] };
   const receipt = await generator.validateCompletion({ rawText, manifest });
   assert.equal(receipt.passed, true, JSON.stringify(receipt.diagnostics));
@@ -129,5 +129,14 @@ test('LLM HTTP protocol preserves provider questions and rejects removed accepta
     assert.match(requests[0].messages[0].content, /Do not remove/);
     proposal = { status: 'completed', questions: [], rawText: "test('other',{annotation:{type:'workbenchTestId',description:'other'}},async()=>{});" };
     await assert.rejects(() => llm.complete({ gherkin: feature, sd: 'SD', skeleton }), (error: any) => error.code === 'LLM_ACCEPTANCE_CHANGED');
+    const mapping = { testKey: 'test-extra', scenarioId: 'AC-GEN-001', caseId: 'a' };
+    proposal = { status: 'completed', questions: [], rawText: skeleton + "\ntest('extra',{annotation:{type:'workbenchTestId',description:'test-extra'}},async()=>{});", mappings: [mapping] };
+    const additional = await llm.complete({ gherkin: feature, sd: 'SD', skeleton });
+    assert.deepEqual(additional.mappings, [mapping]);
+    assert.equal(additional.proposalOnly, true);
+    assert.match(requests.at(-1).messages[0].content, /explicit mappings to known source/);
+    proposal.mappings = [{ testKey: 'test-extra', caseId: 'a' }];
+    await assert.rejects(() => llm.complete({ gherkin: feature, sd: 'SD', skeleton }),
+      (error: any) => error.code === 'LLM_RESPONSE_INVALID' && /未猜測來源/.test(error.message));
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });

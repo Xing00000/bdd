@@ -26,7 +26,7 @@ export function parseGherkin(raw: string, file: string): ParsedGherkin {
   const scenarios: ParsedScenario[] = [], groups: ParsedGroup[] = [];
   const diagnostics: Omit<Diagnostic, 'code'>[] = [], keys = new Set<string>();
   const steps = (source: any[]): ParsedStep[] => source.map(step => ({
-    keyword: step.keyword, text: step.text, line: step.location.line, column: step.location.column ?? 1,
+    keyword: step.keyword.trimEnd(), text: step.text, line: step.location.line, column: step.location.column ?? 1,
     argument: step.docString ? { docString: step.docString } : step.dataTable ? { dataTable: step.dataTable } : null,
   }));
   const visit = (children: readonly any[], parent: string, scope: 'feature_background' | 'rule_background') => {
@@ -132,7 +132,8 @@ export function parseTypeScript(raw: string, file: string, standard: boolean): P
   visit(source);
   const seen = new Set<string>();
   for (const test of tests) {
-    if (!test.testKey || seen.has(test.testKey)) diagnostics.push({ ...test, reason: `Duplicate or empty test ID ${test.testKey}` });
+    if (!test.testKey || seen.has(test.testKey)) diagnostics.push({ ...test,
+      reason: test.testKey ? `不同測試定義使用相同test ID：${test.testKey}` : '測試必須提供非空的明確test ID' });
     seen.add(test.testKey);
   }
   if (standard && !tests.length) diagnostics.push({ line: 1, column: 1, reason: 'Standard spec must contain explicit test declarations' });

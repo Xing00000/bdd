@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { runInNewContext } from 'node:vm';
 import { SqliteTargetAdapter } from '../src/adapters/runtime/target-db.js';
 import { PtyTerminalAdapter } from '../src/adapters/runtime/terminal.js';
 import { PlaywrightBrowserAdapter } from '../src/adapters/runtime/browser.js';
-import { ActionRecorder, decodeDomAction, emitRecording } from '../src/adapters/runtime/recorder.js';
+import { ActionRecorder, decodeDomAction, emitRecording, installDomRecorder } from '../src/adapters/runtime/recorder.js';
 import { quoteIdentifier, singleStatement, splitStatements } from '../src/adapters/runtime/sql.js';
 
 test('target SQLite executes actual DDL, bound DML, schema introspection and transactions in a worker', async (t) => {
@@ -117,6 +118,95 @@ test('recording emitter uses structured data for frame locators and declares unr
   assert.equal(quoteIdentifier('odd"table'), '"odd""table"');
   assert.equal(singleStatement("SELECT ';' AS value; -- trailing comment"), "SELECT ';' AS value; -- trailing comment");
   assert.equal(splitStatements("SELECT ';'; /* ; */ SELECT 'a'';b'; -- ;").length, 2);
+  const ambiguous = emitRecording([
+    { kind: 'navigate', pageId: 'p1', url: 'https://example.test/' },
+    { kind: 'click', pageId: 'p1', locator: { kind: 'testId', value: 'unrelated-earlier-click' } },
+    { kind: 'assertion', pageId: 'p1', locator: { kind: 'testId', value: 'status' }, assertionType: 'text', expected: 'ready' },
+    { kind: 'popup', pageId: 'p2', openerPageId: 'p1' },
+  ]);
+  assert.doesNotMatch(ambiguous, /waitForEvent\('popup'\)/);
+  assert.match(ambiguous, /Recording needs manual completion: unresolved page p2/);
+});
+
+test('DOM recorder unit fixture retains editable-field clicks and avoids double-recording Enter activation', async () => {
+  // Explicit DOM fixture, not browser integration evidence. The function under
+  // test is the same self-contained function serialized by addInitScript.
+  class ElementFixture {
+    tagName = 'DIV'; id = ''; parentElement: ElementFixture | null = null; children: ElementFixture[] = [];
+    attributes: Record<string, string> = {}; form: ElementFixture | null = null;
+    getAttribute(name: string) { return this.attributes[name] ?? null; }
+    closest(selector: string): ElementFixture | null { return selector === 'form' ? this.form : this; }
+    matches(_selector: string) { return false; }
+  }
+  class HtmlFixture extends ElementFixture { isContentEditable = false; textContent = ''; }
+  class InputFixture extends HtmlFixture { type = 'text'; value = ''; labels: never[] = []; }
+  class TextareaFixture extends HtmlFixture { value = ''; labels: never[] = []; }
+  class SelectFixture extends HtmlFixture { selectedOptions: never[] = []; }
+  const listeners = new Map<string, ((event: unknown) => void)[]>(), captured: any[] = [];
+  const documentFixture = { documentElement: new HtmlFixture(), addEventListener(name: string, callback: (event: unknown) => void) { listeners.set(name, [...listeners.get(name) ?? [], callback]); } };
+  const sandbox = { document: documentFixture, crypto: { randomUUID: () => 'fixture-document' }, CSS: { escape: (value: string) => value },
+    Element: ElementFixture, HTMLElement: HtmlFixture, HTMLInputElement: InputFixture, HTMLTextAreaElement: TextareaFixture, HTMLSelectElement: SelectFixture,
+    capture: async (action: unknown) => { captured.push(action); } };
+  runInNewContext(`(${installDomRecorder.toString()})({bindingName:'capture'})`, sandbox);
+  const dispatch = (name: string, target: ElementFixture, extras: object = {}) => {
+    for (const listener of listeners.get(name) ?? []) listener({ isTrusted: true, composedPath: () => [target], ...extras });
+  };
+  const textarea = new TextareaFixture(); textarea.tagName = 'TEXTAREA'; textarea.attributes['data-testid'] = 'document-content';
+  dispatch('click', textarea, { detail: 1 });
+  assert.equal(captured[0].kind, 'click');
+  assert.equal(captured[0].locator.value, 'document-content');
+  const form = new HtmlFixture(), input = new InputFixture(), submit = new HtmlFixture();
+  input.attributes['data-testid'] = 'username'; input.form = form;
+  submit.tagName = 'BUTTON'; submit.attributes['data-testid'] = 'login-submit'; submit.form = form;
+  dispatch('keydown', input, { key: 'Enter' });
+  dispatch('click', submit, { detail: 0 });
+  dispatch('keyup', input, { key: 'Enter' });
+  assert.deepEqual(captured.map(action => action.kind), ['click', 'press']);
+  dispatch('click', submit, { detail: 1 });
+  assert.equal(captured.at(-1).kind, 'click', 'a later genuine pointer click must remain recorded');
+  dispatch('click', textarea, { detail: 1, isTrusted: false });
+  assert.equal(captured.length, 3, 'script-dispatched events do not masquerade as human input');
+  await (sandbox as typeof sandbox & { __workbenchRecorderFlush: () => Promise<unknown> }).__workbenchRecorderFlush();
+});
+
+test('recording lifecycle unit fixture drains an accepted popup and excludes late pre-start popup events', async () => {
+  // Explicit Playwright contract doubles exercise recording boundaries only.
+  // This test does not launch a browser, emit frames, or prove live recording.
+  const browser = new PlaywrightBrowserAdapter();
+  const internals = browser as unknown as { sessions: Map<string, any>; registerPage: (session: any, page: any) => Promise<{ id: string; ready: Promise<void> }> };
+  const opener = { frames: () => [], url: () => 'https://example.test/' };
+  const recorder = new ActionRecorder();
+  recorder.append({ kind: 'navigate', pageId: 'opener', url: opener.url() });
+  recorder.append({ kind: 'click', pageId: 'opener', locator: { kind: 'testId', value: 'popup-link' } });
+  const session = {
+    id: 'unit-lifecycle', contextRef: 'unit-context', endpoint: 'unit://not-a-browser', activePageId: 'opener',
+    context: { close: async () => undefined }, pages: new Map([['opener', { id: 'opener', page: opener, ready: Promise.resolve() }]]),
+    pageIds: new WeakMap<object, string>([[opener, 'opener']]), listeners: new Set(), frameSequence: 0, frameScheduled: false,
+    inputTail: Promise.resolve(), recordTail: Promise.resolve(), recorder: recorder as ActionRecorder | undefined, closed: false,
+  };
+  internals.sessions.set(session.id, session);
+  const popupFixture = (ready: Promise<void>) => ({
+    addInitScript: () => ready, evaluate: async () => undefined, opener: async () => opener,
+    on: () => undefined, screencast: { start: async () => undefined }, frames: () => [], url: () => 'https://example.test/popup',
+  });
+  try {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const accepted = await internals.registerPage(session, popupFixture(gate));
+    let settled = false;
+    const stopping = browser.stopRecording(session.id).then(result => { settled = true; return result; });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(settled, false, 'stop must wait for page setup already accepted at its boundary');
+    release();
+    const stopped = await stopping;
+    assert.ok(stopped.actions.some(action => (action as { kind: string; pageId: string }).kind === 'popup' && (action as { pageId: string }).pageId === accepted.id));
+    let releaseBeforeStart!: () => void;
+    const beforeStart = await internals.registerPage(session, popupFixture(new Promise<void>(resolve => { releaseBeforeStart = resolve; })));
+    await browser.startRecording(session.id);
+    releaseBeforeStart(); await beforeStart.ready;
+    const next = await browser.stopRecording(session.id);
+    assert.equal(next.actions.filter(action => (action as { kind: string }).kind === 'popup').length, 0, 'a page observed before start must not later masquerade as a newly recorded popup');
+  } finally { await browser.close(); }
 });
 
 test('official sandboxed browser either supplies a real managed JPEG session or explicitly reports unavailable', { timeout: 60000 }, async (t) => {

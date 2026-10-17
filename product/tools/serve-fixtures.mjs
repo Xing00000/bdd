@@ -1,10 +1,11 @@
 import {createServer} from '../dist/src/http/server.js';
 import {createTargetApp} from '../dist/src/fixtures/target-app.js';
+import {allowlistedRecordingSecretResolver} from '../dist/src/adapters/runtime/secrets.js';
 import {fixtureEnvironment,root} from './environment.mjs';
 import path from 'node:path';
 const env=await fixtureEnvironment();Object.assign(process.env,env);
 const apiKey=process.env.WB_LLM_API_KEY??process.env.OPENAI_API_KEY;
-const server=await createServer({root,metadataFile:env.WB_METADATA_DB,dataRoot:path.join(root,'.workbench/e2e'),baseUrl:env.WB_BASE_URL,llm:apiKey&&process.env.WB_LLM_MODEL?{apiKey,baseUrl:process.env.WB_LLM_BASE_URL??'https://api.openai.com/v1',model:process.env.WB_LLM_MODEL}:undefined});
+const server=await createServer({root,metadataFile:env.WB_METADATA_DB,dataRoot:path.join(root,'.workbench/e2e'),baseUrl:env.WB_BASE_URL,resolveRecordingSecret:allowlistedRecordingSecretResolver({'target-fixture-password':()=>env.WB_TARGET_PASSWORD}),llm:apiKey&&process.env.WB_LLM_MODEL?{apiKey,baseUrl:process.env.WB_LLM_BASE_URL??'https://api.openai.com/v1',model:process.env.WB_LLM_MODEL}:undefined});
 const target=await createTargetApp({file:env.WB_TARGET_DB,password:env.WB_TARGET_PASSWORD});
 await target.listen({host:'127.0.0.1',port:Number(new URL(env.WB_TARGET_BASE_URL).port)});
 await server.app.listen({host:'127.0.0.1',port:Number(new URL(env.WB_BASE_URL).port)});

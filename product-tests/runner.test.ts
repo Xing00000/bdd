@@ -5,11 +5,14 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import { createCore } from '../src/application/core.ts';
 import { createRuns } from '../src/application/runs.ts';
 import { createPlaywrightRunner, discoveredTests, exactSelection } from '../src/adapters/runner/playwright.ts';
 import type {BrowserRuntimePort} from '../src/ports/runtime.ts';
 import type {TestRunnerPort} from '../src/ports/runner.ts';
+import {createCompletionValidator} from '../src/adapters/generation/validation.ts';
+import {specText} from '../tests/completion/fixtures/content.ts';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const root = resolve(process.cwd());
@@ -21,12 +24,21 @@ const noBrowser: BrowserRuntimePort = {
 };
 async function setup(t: {after: (body: () => Promise<void>) => void}) {
   const dir = await mkdtemp(join(tmpdir(), 'workbench-runner-')), core = await createCore(join(dir, 'metadata.sqlite'));
+  await writeFile(join(dir, 'app.ts'), 'export const version = 1;\n');
+  execFileSync('git', ['init', '-b', 'main', dir], {stdio: 'pipe'});
+  execFileSync('git', ['-C', dir, 'add', '--', 'app.ts'], {stdio: 'pipe'});
+  execFileSync('git', ['-C', dir, '-c', 'user.name=Runner Fixture', '-c', 'user.email=runner@localhost', 'commit', '-m', 'Fixture source baseline'], {stdio: 'pipe'});
+  const sourceRef = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
+  async function resolveSource(_projectId: string, ref: string) {
+    const resolvedCommit = execFileSync('git', ['-C', dir, 'rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
+    return {sourceRef: ref, resolvedCommit, repositoryRef: dir};
+  }
   const project = await core.createProject({name: 'runner product unit', workspaceRef: dir}), req = await core.createRequirement(project.id, {requirementKey: 'REQ-RUN-001'});
   const g = await core.saveVersion(req.documents.gherkin.id, {rawText: feature}); await core.confirm(req.id, 'gherkin', {versionId: g.versionId!, rawSha256: g.rawSha256!});
   const sd = await core.saveVersion(req.documents.sd.id, {rawText: '# SD\nDDL/DML\n', sourceGherkinVersionId: g.versionId}); await core.confirm(req.id, 'sd', {versionId: sd.versionId!, rawSha256: sd.rawSha256!});
   const sk = await core.saveVersion(req.documents.spec.id, {rawText: raw(true), sourceGherkinVersionId: g.versionId, testStage: 'SKELETON', manifest: {specSha256: sha(raw(true)), gherkinSha256: g.rawSha256, sdSha256: sd.rawSha256, mappings}});
   t.after(async () => {await core.close(); await rm(dir, {recursive: true, force: true});});
-  return {dir, core, req, g, sd, sk, async completed() {
+  return {dir, core, req, g, sd, sk, sourceRef, resolveSource, async completed() {
     await core.saveVersion(req.documents.spec.id, {rawText: raw(), sourceGherkinVersionId: g.versionId, sourceSkeletonVersionId: sk.versionId, testStage: 'COMPLETED', manifest: {specSha256: sha(raw()), sourceSkeletonSha256: sk.rawSha256, gherkinSha256: g.rawSha256, sdSha256: sd.rawSha256, mappings}});
     return core.startDevelopment(req.id);
   }};
@@ -38,6 +50,18 @@ test('runner selection resolves full nested titles and rejects duplicate stable 
   assert.equal(exactSelection(tests, ['stable']).length, 1);
   assert.throws(() => exactSelection([...tests, ...tests], ['stable']), /resolves to 2/);
   assert.throws(() => exactSelection(tests, []), /empty/);
+});
+
+test('approved managed fixture spec typechecks and discovers through one repository Playwright registry', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'workbench-approved-fixture-check-'));
+  t.after(() => rm(dir, {recursive: true, force: true}));
+  const rawText = specText('http://127.0.0.1:1', true);
+  const validator = createCompletionValidator({root, artifactRoot: dir});
+  const receipt = await validator.validateCompletion({rawText, manifest: {specPath: 'demo.spec.ts', mappings: ['test-a', 'test-b', 'test-a-extra'].map(testKey => ({testKey}))}});
+  assert.equal(receipt.checks.typecheck, true, JSON.stringify(receipt.diagnostics));
+  assert.equal(receipt.checks.discovery, true, JSON.stringify(receipt.diagnostics));
+  assert.deepEqual(receipt.discoveredTestKeys.sort(), ['test-a', 'test-a-extra', 'test-b']);
+  assert.equal(receipt.productE2E, 'NOT_RUN');
 });
 
 test('real Playwright discovery keeps bundle imports and selects both a tests without b', async t => {
@@ -55,9 +79,17 @@ test('real Playwright discovery keeps bundle imports and selects both a tests wi
 
 test('application rejects skeleton verification before creating any run', async t => {
   const env = await setup(t), runner = createPlaywrightRunner({root, artifactRoot: env.dir, baseUrl: 'http://127.0.0.1:1'});
-  const runs = createRuns({store: env.core.store, browser: noBrowser, runner, root, artifactRoot: env.dir, baseUrl: 'http://127.0.0.1:1', emit() {}});
+  const runs = createRuns({store: env.core.store, browser: noBrowser, runner, root, artifactRoot: env.dir, baseUrl: 'http://127.0.0.1:1', resolveSource: env.resolveSource, emit() {}});
   t.after(() => runs.close());
   await assert.rejects(runs.verify(env.req.id, {testBaselineId: null, sourceRef: 'commit', selection: {mode: 'SELECTED_CASES', sourceCaseIds: ['a']}}), (error: any) => error.code === 'TESTS_PENDING_COMPLETION');
+  assert.equal((await env.core.store.all('SELECT * FROM runs')).length, 0);
+});
+
+test('verification rejects an unknown Git revision before creating a run', async t => {
+  const env = await setup(t), ready = await env.completed(), runner = createPlaywrightRunner({root, artifactRoot: env.dir, baseUrl: 'http://127.0.0.1:1'});
+  const runs = createRuns({store: env.core.store, browser: noBrowser, runner, root, artifactRoot: env.dir, baseUrl: 'http://127.0.0.1:1', resolveSource: env.resolveSource, emit() {}});
+  t.after(() => runs.close());
+  await assert.rejects(runs.verify(env.req.id, {testBaselineId: ready.baseline!.id, sourceRef: 'nonexistent-source-revision', selection: {mode: 'ALL_REQUIRED', sourceCaseIds: []}}));
   assert.equal((await env.core.store.all('SELECT * FROM runs')).length, 0);
 });
 
@@ -124,10 +156,10 @@ test('actual passing Playwright process without required browser step evidence r
   await new Promise<void>(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
   const baseUrl = `http://127.0.0.1:${(server.address() as {port: number}).port}`;
   const runner = createPlaywrightRunner({root, artifactRoot: env.dir, baseUrl});
-  runs = createRuns({store: env.core.store, browser: noBrowser, runner, root, artifactRoot: env.dir, baseUrl, emit() {}});
+  runs = createRuns({store: env.core.store, browser: noBrowser, runner, root, artifactRoot: env.dir, baseUrl, resolveSource: env.resolveSource, emit() {}});
   t.after(async () => {await runs.close(); await new Promise<void>((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));});
   const source = await env.core.store.all("SELECT id FROM source_cases WHERE gherkin_version_id=? AND case_key='a'", [env.g.versionId!]);
-  const result = await runs.verify(env.req.id, {testBaselineId: ready.baseline!.id, sourceRef: 'unit-source-revision', selection: {mode: 'SELECTED_CASES', sourceCaseIds: [source[0].id]}});
+  const result = await runs.verify(env.req.id, {testBaselineId: ready.baseline!.id, sourceRef: env.sourceRef, selection: {mode: 'SELECTED_CASES', sourceCaseIds: [source[0].id]}});
   assert.deepEqual(result.expectedTestKeys.sort(), ['test-a', 'test-a-extra']);
   const selected = await env.core.store.all('SELECT t.test_key FROM run_test_selection s JOIN test_definitions t ON t.id=s.test_definition_id WHERE s.run_id=? ORDER BY t.test_key', [result.runId]);
   assert.deepEqual(selected.map(row => row.test_key), ['test-a', 'test-a-extra']);
@@ -135,6 +167,8 @@ test('actual passing Playwright process without required browser step evidence r
   for (let attempt = 0; report.status === 'RUNNING' && attempt < 100; attempt++) {await new Promise(resolveWait => setTimeout(resolveWait, 100)); report = await runs.report(result.runId);}
   assert.equal(report.status, 'INCOMPLETE');
   assert.equal(report.environment.execution.exitCode, 0);
+  assert.equal(report.environment.sourceSnapshot.resolvedCommit, env.sourceRef);
+  assert.equal(report.environment.sourceSnapshot.repositoryRef, env.dir);
   assert.deepEqual(report.executedTestKeys.sort(), ['test-a', 'test-a-extra']);
   assert.deepEqual(report.unexecutedTestKeys, ['test-b']);
   assert.equal(report.coverageComplete, false);
@@ -151,20 +185,25 @@ for (const mismatch of [false, true]) test(`application event validation with ex
   const closed: string[] = [];
   const browserDouble: BrowserRuntimePort = {...noBrowser, async create() {const id = randomUUID(); return {id, sessionId: id, contextRef: 'context-' + id, pageId: 'page-' + id, playwrightEndpoint: 'unit://not-a-real-browser'};}, async closeSession(id) {closed.push(id);}};
   await env.core.store.run('INSERT INTO target_connections(id,project_id,sqlite_file_ref,environment_label,app_base_url) VALUES(?,?,?,?,?)', ['unit-connection', ready.projectId, join(env.dir, 'unused-target.sqlite'), 'unit-double', 'http://127.0.0.1:1']);
-  const emitted: any[] = [], runs = createRuns({store: env.core.store, browser: browserDouble, runner: runnerDouble, root, artifactRoot: env.dir, baseUrl: 'http://127.0.0.1:1', emit(event) {emitted.push(event);}});
+  const emitted: any[] = [], runs = createRuns({store: env.core.store, browser: browserDouble, runner: runnerDouble, root, artifactRoot: env.dir, baseUrl: 'http://127.0.0.1:1', resolveSource: env.resolveSource, emit(event) {emitted.push(event);}});
   t.after(() => runs.close());
   const source = (await env.core.store.all("SELECT id FROM source_cases WHERE gherkin_version_id=? AND case_key='a'", [env.g.versionId!]))[0];
-  const selected = await runs.verify(env.req.id, {testBaselineId: ready.baseline!.id, sourceRef: 'unit-source-revision', selection: {mode: 'SELECTED_CASES', sourceCaseIds: [source.id]}});
+  const selected = await runs.verify(env.req.id, {testBaselineId: ready.baseline!.id, sourceRef: env.sourceRef, selection: {mode: 'SELECTED_CASES', sourceCaseIds: [source.id]}});
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZQAAAABJRU5ErkJggg==', 'base64');
+  let lastBindingSeq = 0;
   for (const testKey of selected.expectedTestKeys) {
     const context = await runs.executionContext(selected.runId, testKey);
     const send = (type: string, payload: any = {}, extra: any = {}) => runs.ingest(selected.runId, {eventId: randomUUID(), type, runId: selected.runId, testKey, testDefinitionId: context.testDefinitionId, sourceCaseId: context.sourceCaseId, ...context.app, ...extra, payload});
     await send('run.testStarted');
+    assert.equal((await runs.binding(selected.runId)).bound, false, 'a new test must not expose the previous test page binding');
     const bound = await send('run.browserBound');
+    assert.ok(bound.bindingSeq! > lastBindingSeq, 'binding sequence stays monotonic across test boundaries');
+    lastBindingSeq = bound.bindingSeq!;
     await assert.rejects(send('run.stepFinished', {sourceStepId: 'foreign-step', actionIndex: 1, status: 'PASSED', assertion: false}, {bindingSeq: bound.bindingSeq}), (error: any) => error.code === 'SOURCE_STEP_INVALID');
     const steps = Object.values(context.sourceSteps);
     for (const [index, sourceStepId] of steps.entries()) {
       const current = index ? await send('run.browserBound') : bound;
+      lastBindingSeq = current.bindingSeq!;
       const failed = mismatch && testKey === 'test-a' && index === steps.length - 1;
       const assertion = index === steps.length - 1;
       await send('run.stepFinished', {sourceStepId, actionIndex: index + 1, status: failed ? 'FAILED' : 'PASSED', assertion, assertionPassed: assertion ? !failed : null,

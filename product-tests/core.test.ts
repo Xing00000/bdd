@@ -69,6 +69,7 @@ test('raw UTF-8 bytes and immutable historical projections survive new heads', a
   const a = await core.structure(req.documents.gherkin.id, first.versionId!);
   const b = await core.structure(req.documents.gherkin.id, second.versionId!);
   assert.equal(a.sourceCases.length, 2); assert.equal(a.exampleCells.length, 6); assert.equal(a.stepGroups.length, 2);
+  assert.deepEqual(a.steps.map(step => step.keyword).sort(), ['Given', 'Given', 'Then', 'When']);
   assert.equal(a.scenarios[0].id, b.scenarios[0].id); // Stable Scenario entity, separate source-version cases.
   assert.notEqual(a.sourceCases[0].id, b.sourceCases[0].id);
 });
@@ -126,6 +127,113 @@ test('completion cannot delete/remap source tests or pass unresolved slots', asy
   assert.equal(r.stage, 'IMPLEMENTATION'); assert.ok(r.baseline); assert.equal(r.baseline.manifest.tests.length, 3);
   assert.equal((await core.scenarioTests(req.id)).cases[0].executionStatus, 'NOT_RUN');
   await assert.rejects(core.saveVersion(req.documents.spec.id, completion(sources)), errorCode('ARTIFACT_LOCKED_IN_STAGE', 409));
+});
+test('all six invalid mapping categories identify the actual error before skeleton preservation checks', async t => {
+  const { core, req } = await setup(t), sources = await skeleton(core, req);
+  const baseMappings = [mappings[0], mappings[2]], raw = spec(false, ['test-a', 'test-b']);
+  const cases = [
+    { problem: '有測試未提供明確的情境與案例對應', raw, mappings: [baseMappings[1]] },
+    { problem: '來源Gherkin有應生成的案例未對應任何測試', raw: spec(false, ['test-a']), mappings: [baseMappings[0]] },
+    { problem: '不同測試定義使用相同test ID', raw: spec(false, ['test-a', 'test-a']), mappings: baseMappings },
+    { problem: '完全相同test ID與來源案例的映射資料重複', raw, mappings: [...baseMappings, baseMappings[0]] },
+    { problem: '引用指定來源版本中不存在的Scenario ID', raw, mappings: [{ ...baseMappings[0], scenarioId: 'AC-MISSING-999' }, baseMappings[1]] },
+    { problem: '引用指定來源情境中不存在的Examples case_id', raw, mappings: [{ ...baseMappings[0], caseId: 'missing' }, baseMappings[1]] },
+  ];
+  const before = JSON.stringify(await core.structure(req.documents.spec.id, sources.sk.versionId!));
+  const beforeHead = (await core.getRequirement(req.id)).documents.spec.versionId;
+  const beforeCount = await core.store.all('SELECT count(*) n FROM document_versions');
+  for (const candidate of cases) {
+    await assert.rejects(core.saveVersion(req.documents.spec.id, completion(sources, candidate.raw, { mappings: candidate.mappings })), (error: any) => {
+      assert.equal(error.statusCode, 422); assert.equal(error.code, 'MAPPING_INVALID');
+      const diagnostic = error.diagnostics.find((item: any) => item.reason.includes(candidate.problem));
+      assert.ok(diagnostic, `${candidate.problem}: ${JSON.stringify(error.diagnostics)}`);
+      assert.ok(diagnostic.testKey || diagnostic.sourceCaseKey);
+      assert.ok(diagnostic.line > 0 && diagnostic.column > 0); assert.ok(diagnostic.file.endsWith('.spec.ts'));
+      return true;
+    });
+    assert.equal((await core.getRequirement(req.id)).documents.spec.versionId, beforeHead);
+    assert.equal(JSON.stringify(await core.structure(req.documents.spec.id, sources.sk.versionId!)), before);
+    assert.deepEqual(await core.store.all('SELECT count(*) n FROM document_versions'), beforeCount);
+  }
+  // AC021's two otherwise valid tests still cannot delete test-a-extra.
+  await assert.rejects(core.saveVersion(req.documents.spec.id, completion(sources, raw, { mappings: baseMappings })), (error: any) =>
+    error.code === 'MAPPING_INVALID' && error.diagnostics.some((item: any) => item.testKey === 'test-a-extra' && /cannot delete/.test(item.reason)));
+});
+test('a valid sourceCaseId cannot conceal contradictory Scenario or Examples IDs', async t => {
+  const { core, req } = await setup(t), sources = await skeleton(core, req);
+  const sourceCases = (await core.structure(req.documents.gherkin.id, sources.g.versionId!)).sourceCases;
+  const explicit = mappings.map(mapping => ({ ...mapping, sourceCaseId: sourceCases.find(row => row.caseKey === mapping.caseId)!.id }));
+  const before = (await core.getRequirement(req.id)).documents.spec.versionId;
+  for (const conflict of [{ ...explicit[0], scenarioId: 'AC-CONFLICTING-001' }, { ...explicit[0], caseId: 'b' }]) {
+    await assert.rejects(core.saveVersion(req.documents.spec.id, completion(sources, spec(), { mappings: [conflict, ...explicit.slice(1)] })), (error: any) => {
+      assert.equal(error.code, 'MAPPING_INVALID'); assert.equal(error.statusCode, 422);
+      const diagnostic = error.diagnostics.find((d: any) => d.reason.includes('sourceCaseId') && d.reason.includes('不一致'));
+      assert.equal(diagnostic.testKey, 'test-a'); assert.ok(diagnostic.sourceCaseKey); assert.ok(diagnostic.file && diagnostic.line > 0 && diagnostic.column > 0); return true;
+    });
+    assert.equal((await core.getRequirement(req.id)).documents.spec.versionId, before);
+  }
+  const saved = await core.saveVersion(req.documents.spec.id, completion(sources, spec(), { mappings: explicit }));
+  assert.equal((await core.structure(req.documents.spec.id, saved.versionId!)).mappings.length, 3);
+});
+test('the human-facing 測試基線 alias returns to TESTS and invalidates downstream state', async t => {
+  const { core, req } = await setup(t), sources = await skeleton(core, req);
+  await core.saveVersion(req.documents.spec.id, completion(sources)); const started = await core.startDevelopment(req.id);
+  assert.ok(started.baseline);
+  const returned = await core.returnTo(req.id, '測試基線');
+  assert.equal(returned.stage, 'TESTS'); assert.ok(returned.confirmations.gherkin); assert.ok(returned.confirmations.sd);
+  assert.equal(returned.baseline, null);
+  assert.equal((await core.store.all('SELECT valid FROM baselines WHERE id=?', [started.baseline.id]))[0].valid, 0);
+});
+test('expected head and source confirmation assertions reject stale long-running proposals without saving', async t => {
+  const { core, req } = await setup(t), documentId = req.documents.gherkin.id;
+  const first = await core.saveVersion(documentId, { rawText: feature, expectedCurrentVersionId: null });
+  const second = await core.saveVersion(documentId, { rawText: feature + '\n', baseVersionId: first.versionId });
+  await assert.rejects(core.saveVersion(documentId, { rawText: feature, expectedCurrentVersionId: first.versionId }), errorCode('VERSION_CONFLICT', 409));
+  await assert.rejects(core.saveVersion(documentId, { rawText: feature, expectedCurrentVersionId: null }), errorCode('VERSION_CONFLICT', 409));
+  assert.equal((await core.getRequirement(req.id)).documents.gherkin.versionId, second.versionId);
+  await core.confirm(req.id, 'gherkin', { versionId: second.versionId!, rawSha256: second.rawSha256! });
+  const before = await core.store.all('SELECT count(*) n FROM document_versions');
+  await assert.rejects(core.saveVersion(req.documents.sd.id, { rawText: '# SD', sourceGherkinVersionId: second.versionId, expectedConfirmedGherkinVersionId: first.versionId! }), errorCode('SOURCE_VERSION_MISMATCH', 409));
+  assert.deepEqual(await core.store.all('SELECT count(*) n FROM document_versions'), before);
+  assert.equal((await core.getRequirement(req.id)).documents.sd.versionId, null);
+  const sd = await core.saveVersion(req.documents.sd.id, { rawText: '# SD', sourceGherkinVersionId: second.versionId, expectedCurrentVersionId: null, expectedConfirmedGherkinVersionId: second.versionId! });
+  assert.ok(sd.versionId);
+});
+test('schemaVersion 2 snapshots require exact confirmed Gherkin and SD versions/hashes', async t => {
+  const { core, req } = await setup(t), { g, sd } = await confirmed(core, req), rawText = spec(true);
+  const manifest = { schemaVersion: 2, sourceGherkinVersionId: g.versionId, gherkinSha256: g.rawSha256, sdVersionId: sd.versionId, sdSha256: sd.rawSha256, specSha256: sha256(rawText), mappings };
+  for (const field of ['sourceGherkinVersionId', 'gherkinSha256', 'sdVersionId', 'sdSha256']) {
+    const missing: Record<string, any> = { ...manifest }; delete missing[field];
+    await assert.rejects(core.saveVersion(req.documents.spec.id, { rawText, sourceGherkinVersionId: g.versionId, testStage: 'SKELETON', manifest: missing }), errorCode('MAPPING_INVALID', 422));
+    assert.equal((await core.getRequirement(req.id)).documents.spec.versionId, null);
+  }
+  await assert.rejects(core.saveVersion(req.documents.spec.id, { rawText, sourceGherkinVersionId: g.versionId, testStage: 'SKELETON', manifest, expectedConfirmedSdVersionId: 'stale-confirmation' }), errorCode('SOURCE_VERSION_MISMATCH', 409));
+  const sk = await core.saveVersion(req.documents.spec.id, { rawText, sourceGherkinVersionId: g.versionId, testStage: 'SKELETON', manifest, expectedCurrentVersionId: null, expectedConfirmedGherkinVersionId: g.versionId!, expectedConfirmedSdVersionId: sd.versionId! });
+  assert.equal(sk.manifest.sdVersionId, sd.versionId);
+  await core.saveVersion(req.documents.spec.id, { ...completion({ g, sd, sk }), manifest: { ...completion({ g, sd, sk }).manifest, ...manifest, specSha256: sha256(spec()) }, expectedCurrentVersionId: sk.versionId });
+});
+test('identical SD text reapproved as a new version cannot reuse a legacy skeleton or completed baseline', async t => {
+  const { core, req } = await setup(t), original = await skeleton(core, req);
+  await core.saveVersion(req.documents.spec.id, completion(original));
+  await core.returnTo(req.id, 'sd');
+  const sd = await core.saveVersion(req.documents.sd.id, { rawText: original.sd.rawText!, sourceGherkinVersionId: original.g.versionId });
+  assert.equal(sd.rawSha256, original.sd.rawSha256); assert.notEqual(sd.versionId, original.sd.versionId);
+  await core.confirm(req.id, 'sd', { versionId: sd.versionId!, rawSha256: sd.rawSha256! });
+  await assert.rejects(core.saveVersion(req.documents.spec.id, completion(original)), errorCode('REGENERATE_SKELETON_REQUIRED', 409));
+  await assert.rejects(core.startDevelopment(req.id), errorCode('REGENERATE_SKELETON_REQUIRED', 409));
+  const rawText = spec(true), manifest = { schemaVersion: 2, sourceGherkinVersionId: original.g.versionId, gherkinSha256: original.g.rawSha256, sdVersionId: sd.versionId, sdSha256: sd.rawSha256, specSha256: sha256(rawText), mappings };
+  const sk = await core.saveVersion(req.documents.spec.id, { rawText, sourceGherkinVersionId: original.g.versionId, testStage: 'SKELETON', manifest });
+  await core.saveVersion(req.documents.spec.id, completion({ g: original.g, sd, sk }, spec(), { ...manifest, specSha256: sha256(spec()) }));
+  assert.equal((await core.startDevelopment(req.id)).stage, 'IMPLEMENTATION');
+});
+test('start-development expectations bind the validated test and confirmed document versions/hashes', async t => {
+  const { core, req } = await setup(t), sources = await skeleton(core, req), completed = await core.saveVersion(req.documents.spec.id, completion(sources));
+  const expected = { expectedSpecVersionId: completed.versionId!, expectedSpecSha256: completed.rawSha256!, expectedConfirmedGherkinVersionId: sources.g.versionId!, expectedConfirmedGherkinSha256: sources.g.rawSha256!, expectedConfirmedSdVersionId: sources.sd.versionId!, expectedConfirmedSdSha256: sources.sd.rawSha256! };
+  for (const [key, error] of [['expectedSpecVersionId', 'VERSION_CONFLICT'], ['expectedSpecSha256', 'VERSION_CONFLICT'], ['expectedConfirmedGherkinVersionId', 'SOURCE_VERSION_MISMATCH'], ['expectedConfirmedGherkinSha256', 'SOURCE_VERSION_MISMATCH'], ['expectedConfirmedSdVersionId', 'SOURCE_VERSION_MISMATCH'], ['expectedConfirmedSdSha256', 'SOURCE_VERSION_MISMATCH']]) {
+    await assert.rejects(core.startDevelopment(req.id, { ...expected, [key]: 'stale' }), errorCode(error, 409));
+    assert.equal((await core.getRequirement(req.id)).stage, 'TESTS'); assert.deepEqual(await core.store.all('SELECT id FROM baselines'), []);
+  }
+  const started = await core.startDevelopment(req.id, expected); assert.equal(started.stage, 'IMPLEMENTATION'); assert.ok(started.baseline);
 });
 test('return invalidates confirmations/baselines/results atomically but keeps historical evidence', async t => {
   const { core, req, project } = await setup(t), sources = await skeleton(core, req);

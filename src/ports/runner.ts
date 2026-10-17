@@ -3,6 +3,6 @@ export interface DiscoveredTest { testKey: string; project: string; file: string
 export interface PreparedRun { directory: string; config: string; configSha256: string; selection: string; selectionSha256: string; tests: DiscoveredTest[]; selected: DiscoveredTest[]; materializations: {versionId: string; rawSha256: string; materializedSha256: string; file: string; transformation: string | null}[] }
 export interface TestRunnerPort {
   prepare(runId: string, versions: RunnerVersion[], expectedKeys?: string[], independent?: boolean): Promise<PreparedRun>;
-  execute(runId: string, prepared: PreparedRun, token: string): Promise<{code: number; stdout: string; stderr: string}>;
+  execute(runId: string, prepared: PreparedRun, token: string, recordingSecrets?: Record<string,string>): Promise<{code: number; stdout: string; stderr: string}>;
   close(): Promise<void>;
 }

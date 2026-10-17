@@ -113,7 +113,7 @@ export function createGitAdapter({ workspaceRoot }: { workspaceRoot: string }) {
         return { repo, branch, commit, commitSha: commit, files: input.files.map(file => ({ ...file, rawSha256: hash(file.rawText) })) };
       });
     },
-    async runCi(input: { repo: string; commit: string; command?: CiCommand; env?: Record<string, string> }) {
+    async runCi(input: { repo: string; commit: string; command?: CiCommand; env?: Record<string, string>; prepareCheckout?: (directory: string) => Promise<{env:Record<string,string>}> }) {
       const repo = await repository(input.repo), candidateCommit = await commitOf(repo, input.commit);
       const root = await rootPromise, directory = path.join(root, '.workbench', 'ci', randomUUID());
       await mkdir(path.dirname(directory), { recursive: true });
@@ -121,6 +121,9 @@ export function createGitAdapter({ workspaceRoot }: { workspaceRoot: string }) {
       const startedAt = new Date().toISOString();
       try {
         const testedCommit = await commitOf(directory, 'HEAD');
+        // This trusted composition callback verifies committed files and creates
+        // a runner config pointing at this worktree before project CI starts.
+        const checkout = input.prepareCheckout ? await input.prepareCheckout(directory) : undefined;
         let command = input.command;
         if (!command) {
           const manifest = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
@@ -130,9 +133,10 @@ export function createGitAdapter({ workspaceRoot }: { workspaceRoot: string }) {
         if (!Array.isArray(command) || !command.length || command.some(value => typeof value !== 'string' || value.includes('\0')))
           throw new GitAdapterError('CI_COMMAND_INVALID', 'CI command 必須是 executable/arguments 字串陣列');
         let result: ProcessResult;
-        try { result = await execute(command[0], command.slice(1), directory, 180_000, input.env); }
+        try { result = await execute(command[0], command.slice(1), directory, 180_000, {...input.env,...checkout?.env}); }
         catch (error) { result = { exitCode: null, signal: null, stdout: '', stderr: String(error), timedOut: false }; }
-        return { repo, candidateCommit, testedCommit, command, status: result.exitCode === 0 && !result.timedOut ? 'PASSED' as const : 'FAILED' as const, ...result, startedAt, finishedAt: new Date().toISOString() };
+        const verification=checkout?Object.fromEntries(Object.entries(checkout).filter(([key])=>key!=='env')):undefined;
+        return { repo, candidateCommit, testedCommit, command, checkout:verification, status: result.exitCode === 0 && !result.timedOut ? 'PASSED' as const : 'FAILED' as const, ...result, startedAt, finishedAt: new Date().toISOString() };
       } finally {
         await git(repo, ['worktree', 'remove', '--force', directory]);
       }

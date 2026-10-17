@@ -87,6 +87,7 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
     const previousId = session.pageIds.get(page);
     if (previousId) return session.pages.get(previousId)!;
     const id = randomUUID();
+    const recorderAtCreation = session.recorder;
     const managed: ManagedPage = { id, page, ready: Promise.resolve() };
     session.pageIds.set(page, id); session.pages.set(id, managed);
     if (!session.activePageId) session.activePageId = id;
@@ -100,7 +101,9 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
       await page.addInitScript(marker, binding);
       await page.evaluate(marker, binding);
       const opener = await page.opener();
-      if (session.recorder) session.recorder.append(opener ? { kind: 'popup', pageId: id, openerPageId: session.pageIds.get(opener) } : { kind: 'newPage', pageId: id });
+      // Associate a page with the recording active when it was observed, not
+      // whichever recording happens to be active when asynchronous setup ends.
+      if (recorderAtCreation) recorderAtCreation.append(opener ? { kind: 'popup', pageId: id, openerPageId: session.pageIds.get(opener) } : { kind: 'newPage', pageId: id });
       page.on('framenavigated', (frame) => { if (frame === page.mainFrame()) this.emit(session, 'browser.pageChanged', { url: page.url() }, id); });
       page.on('close', () => {
         session.pages.delete(id);
@@ -224,9 +227,17 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
     return this.enqueue(session, async () => {
       const recorder = session.recorder;
       if (!recorder) throw new RuntimeAdapterError('RECORDING_NOT_STARTED', 'No recording is active', 409);
+      const pagesAtStop = [...session.pages.values()];
+      // A popup is added to pages synchronously, but its marker/screencast setup
+      // and popup action are asynchronous. Drain pages accepted at the stop
+      // boundary before freezing the draft, including truthful setup failures.
+      await Promise.all(pagesAtStop.map(async (managed) => {
+        try { await managed.ready; }
+        catch { recorder.append({ kind: 'unsupported', pageId: managed.id, reason: 'Managed page setup failed before the recording stop boundary' }); }
+      }));
     // Flush all binding promises accepted before the stop boundary. New viewer
     // operations are serialized by inputTail, not silently added after stop.
-    for (const managed of session.pages.values()) for (const frame of managed.page.frames()) {
+    for (const managed of pagesAtStop) for (const frame of managed.page.frames()) {
       await frame.evaluate(async () => { const flush = (globalThis as typeof globalThis & { __workbenchRecorderFlush?: () => Promise<unknown> }).__workbenchRecorderFlush; if (flush) await flush(); }).catch(() => { recorder.append({ kind: 'unsupported', pageId: managed.id, reason: 'Recording flush was interrupted by frame navigation or closure' }); });
     }
     await session.recordTail;
