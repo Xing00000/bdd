@@ -1,0 +1,55 @@
+
+> bdd-workbench-product@0.1.0 test
+> node tools/test.mjs
+
+✔ migration exactly uses SD0.4 schema; worker uses real SQLite/WAL/FK and persists after close (110.555244ms)
+✔ batch rollback retains all prior state if a later SQL constraint fails (45.767566ms)
+✔ raw UTF-8 bytes and immutable historical projections survive new heads (55.177079ms)
+✔ official parsers reject real errors with positions and preserve effective head (59.702067ms)
+✔ confirmation requires exact current version/hash and gates phase writes (52.1555ms)
+✔ multi-test source mappings persist and skeleton is explicitly pending/unexecuted (68.846791ms)
+✔ mapping failures leave no partial version, head, definitions or mappings (72.686453ms)
+✔ completion cannot delete/remap source tests or pass unresolved slots (71.829883ms)
+✔ return invalidates confirmations/baselines/results atomically but keeps historical evidence (60.188534ms)
+✔ independent scripts save raw/actions without fabricated requirement or CI linkage (52.644891ms)
+✔ normal Scenario has one explicit default source case; background arguments retain location (5.12041ms)
+✔ real bddgen creates discoverable pending TS with exact case mappings without executing uploaded code (4093.545494ms)
+✔ undefined and ambiguous definitions block generation with actual bddgen diagnostics (1619.849722ms)
+✔ source projection mismatch and computed step patterns are rejected before code execution (3.03534ms)
+✔ completion structural validation runs true typecheck and exact Playwright discovery without claiming runtime success (2277.178205ms)
+✔ missing LLM configuration is explicit and never returns fabricated content (2.501905ms)
+✔ LLM HTTP protocol preserves provider questions and rejects removed acceptance IDs (33.872868ms)
+✔ Git snapshot pins commit and preserves exact Unicode/CRLF bytes while branch advances (96.551099ms)
+✔ Explicit Git save excludes unrelated staged files and rejects path/symlink escapes (70.401141ms)
+✔ CI executes the pinned commit, keeps HEAD unchanged and preserves real failure exit code/output (278.941876ms)
+✔ Target website enforces real A/B sessions, persistent edits and management denial (262.914495ms)
+✔ Fixture setup preserves existing data, writes a private environment file and CI rejects empty specifications (411.789462ms)
+✔ real HTTP adapters persist documents, enforce version-bound workflow, execute SQLite and preserve independent scripts (346.860812ms)
+✔ runner selection resolves full nested titles and rejects duplicate stable IDs (2.076483ms)
+✔ real Playwright discovery keeps bundle imports and selects both a tests without b (1302.452299ms)
+✔ application rejects skeleton verification before creating any run (87.533965ms)
+✔ independent replay discovers managed fixture from an immutable saved raw script (1531.125532ms)
+✔ real independent runner reporter publishes the same unannotated stable title discovered by the CLI (2480.795352ms)
+✔ independent replay refuses an unmanaged browser fixture before launching Chromium (2352.073374ms)
+✔ actual passing Playwright process without required browser step evidence remains INCOMPLETE (2409.110402ms)
+✔ application event validation with explicit adapter doubles preserves selected PASSED without full coverage (1300.655081ms)
+✔ application event validation with explicit adapter doubles preserves FAILED assertion (1309.634233ms)
+✔ target SQLite executes actual DDL, bound DML, schema introspection and transactions in a worker (65.026382ms)
+✔ target SQLite long native query does not block the API event loop (275.98782ms)
+✔ target/PTY paths must resolve inside their supplied existing workspace (2.297049ms)
+✔ node-pty creates a real TTY and returns decoded process output rather than command echo (53.611118ms)
+✔ semantic recorder merges fill events, preserves boundaries and never saves sensitive literal values (1.761129ms)
+✔ recording emitter uses structured data for frame locators and declares unresolved actions as errors (3.192758ms)
+✔ official sandboxed browser either supplies a real managed JPEG session or explicitly reports unavailable (373.98389ms)
+ℹ BROWSER_UNAVAILABLE: real browser/frame/recording integration was NOT_RUN; no fallback or fake frame
+✔ viewer rejects frames from another run, test, result, session, context, page or binding generation (1.041222ms)
+✔ pointer coordinates remove CSS scale and letterboxing, and reject clicks outside the viewport (0.875621ms)
+ℹ tests 41
+ℹ suites 0
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14503.286696
+npm warn Unknown project config "devdir". This will stop working in the next major version of npm.
