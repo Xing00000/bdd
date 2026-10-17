@@ -1,10 +1,26 @@
 # SD：BDD 軟體開發工作台
 
-版本：0.1；日期：2026-10-17；狀態：**待使用者確認，尚未核准**。本文件只有設計，所有DDL／DML片段均未執行；沒有產生測試、安裝依賴或實作產品。
+版本：0.2（需求目錄整理）；日期：2026-10-17；狀態：**待使用者確認，尚未核准**。本文件只有設計，所有DDL／DML片段均未執行；沒有產生測試、安裝依賴或實作產品。
 
-需求基準：[ef497e6 的 Gherkin](https://github.com/Xing00000/bdd/blob/ef497e666f27515716c2f33b812da7e71f846dc5/specs/workbench.feature)，20個Scenario／28個展開案例；SHA-256：`595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181`。本次不改feature，包括其中當時的待確認註解；目前階段以此次人類確認紀錄為準。
+需求基準：[同次需求的 workbench.feature](workbench.feature)；原核准來源：[ef497e6 的 Gherkin](https://github.com/Xing00000/bdd/blob/ef497e666f27515716c2f33b812da7e71f846dc5/specs/workbench.feature)，20個Scenario／28個展開案例；SHA-256：`595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181`。本次不改feature，包括其中當時的待確認註解；目前階段以此次人類確認紀錄為準。
 
 進入SD的依據：使用者於 **2026-10-17 03:53:13 UTC**，來源 `Sentinel_a38fb29dae588191ade4081426cdf3cc`，對上述交付表示：**「同意 產sd文ㄓㄧㄢ」**。這是Gherkin確認與產生SD的授權，**不是本SD核准**。本專案自身的feature、SD、確認紀錄及後續測試都保存在`Xing00000/bdd` Git；先前隔離的未核准稿不作本設計依據。
+
+### 當次需求的文件歸屬
+
+本次需求ID為`REQ-WB-001`。既有Scenario ID為`AC-WB-001`～`AC-WB-020`，全部保留，不重編、不改feature。跨檔追溯使用`需求ID / Scenario ID / case_id`，例如`REQ-WB-001 / AC-WB-009 / agent`；沒有Outline時case為default。`spec/`底下每個目錄代表一次需求，該需求的Gherkin與SD必須同目錄：`spec/REQ-WB-001/workbench.feature`、`spec/REQ-WB-001/SD.md`；`review.json`只記錄此需求的確認狀態與hash。其他需求使用各自目錄，不共用或覆寫這份SD。`doc/`只放ADR，不放各次需求的SD；目前沒有需要新增的ADR，因此不建立佔位文件。
+
+本次文件遷移以`a16f142fc4d069c61fc33916468103ecbf8b02e1`為來源，路徑對照如下；文件提交／推送授權不代表SD內容已核准：
+
+| 原Git路徑 | 目前本地路徑 |
+|---|---|
+| `specs/workbench.feature` | `spec/REQ-WB-001/workbench.feature` |
+| `docs/SD.md` | `spec/REQ-WB-001/SD.md` |
+| `specs/reviews/gherkin-review.json` | `spec/REQ-WB-001/review.json` |
+
+原核准commit與feature hash繼續指向同一組位元組；目錄搬移不改驗收內容，也不代表SD已核准。SD綁定同目錄Gherkin的內容hash，不能變成獨立全專案設計文件。這個目錄規則也決定需求文件落Git時的位置，不建立第二份可編輯來源。
+
+需求ID與發佈ID分開：一次release可包含多個需求，一個需求也可能分次release，因此不是一對一關係。本次只定義需求／情境到release的追溯語意，未配置release ID、未新增release管理功能，也未執行發佈。
 
 ## 1. 範圍與技術決策
 
@@ -87,7 +103,7 @@ stateDiagram-v2
 | 使用者自建整合測試 `user_db` | test definition／必要step或fixture內容存工作台SQLite。執行匯出指定hash的bundle到runner；匯出是副本，不偷偷同步target Git。定義與run有關聯。 |
 | 本工作台自身測試 `workbench_git` | 本repo的feature、SD、確認metadata、後續steps／spec及程式全部跟`Xing00000/bdd` Git。自身開發流程不依賴尚未建成的產品DB。 |
 
-產品的Gherkin／SD集中在工作台專案供多人讀寫；為CI輸出的已確認文件快照是引用，不是第二個需求編輯入口。target CI結果同時記候選commit與實際tested commit，因PR CI可能測試merge commit；不能把舊commit的結果移用到新版本。[S6]
+產品的每次需求各有一個workflow，Gherkin／SD以同一需求識別集中在專案供多人讀寫；落Git時位於同一個`spec/<需求識別>/`目錄，SD跟隨該次Gherkin而不是獨立放到`doc/`。為CI輸出的已確認文件快照是引用，不是第二個需求編輯入口。target CI結果同時記候選commit與實際tested commit，因PR CI可能測試merge commit；不能把舊commit的結果移用到新版本。[S6]
 
 ## 5. SQLite資料模型與DDL／DML
 
@@ -106,9 +122,11 @@ CREATE TABLE projects (
 CREATE TABLE workflows (
   id TEXT PRIMARY KEY NOT NULL,
   project_id TEXT NOT NULL REFERENCES projects(id),
+  requirement_key TEXT NOT NULL,
   stage TEXT NOT NULL CHECK(stage IN ('GHERKIN','SD','TESTS','IMPLEMENTATION','VERIFICATION','VERIFIED')),
   current_test_baseline_id TEXT REFERENCES baselines(id),
-  current_source_ref TEXT
+  current_source_ref TEXT,
+  UNIQUE(project_id, requirement_key)
 );
 CREATE TABLE documents (
   id TEXT PRIMARY KEY NOT NULL,
@@ -194,7 +212,7 @@ CREATE TABLE screenshots (
 );
 ```
 
-關聯：Project有多個workflow、DB connection及測試引用；workflow有兩份集中文件與基線；run固定測試基線和定義快照；case→step/action→screenshots。`owner_ref`只識別自建測試作者，不代表新增工作台角色／ACL功能。`definition_json`包含自建整合測試的spec、必要step／fixture檔案、案例映射及初始資料計畫；Git測試的內容不放在此表。
+關聯：Project有多個workflow（每個代表一次需求）、DB connection及測試引用；`requirement_key`在同專案唯一，Git目錄為`spec/<requirement_key>/`。workflow有同次需求的Gherkin／SD兩份文件與基線，`documents.workflow_id`與`UNIQUE(workflow_id, kind)`維持這個綁定；run固定測試基線和定義快照；case→step/action→screenshots。`owner_ref`只識別自建測試作者，不代表新增工作台角色／ACL功能。`definition_json`包含自建整合測試的spec、必要step／fixture檔案、案例映射及初始資料計畫；Git測試的內容不放在此表。
 
 `current_test_baseline_id`由application檢查屬於同workflow且kind為tests；其他跨表project／origin一致性也在use case檢查。初版不做通用文件歷史管理；baseline快照只是鎖定／失效所需的流程資料。圖片bytes保存在artifact目錄，DB只存引用與hash。
 

@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "phase": "sd_review",
+  "status": "gherkin_confirmed_sd_pending",
+  "featurePath": "spec/REQ-WB-001/workbench.feature",
+  "featureSha256": "595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181",
+  "scenarioCount": 20,
+  "expandedCaseCount": 28,
+  "baseCommit": "a1dffc11c9e29664a15287574a59c83d272864cc",
+  "previousSubmissionCommit": "0661dd7307cc1164966175f6f05d88381a920309",
+  "reviewBranch": "spec/workbench-gherkin-review",
+  "approval": {
+    "subject": "gherkin",
+    "commit": "ef497e666f27515716c2f33b812da7e71f846dc5",
+    "featureSha256": "595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181",
+    "source": "Sentinel_a38fb29dae588191ade4081426cdf3cc",
+    "quote": "同意 產sd文ㄓㄧㄢ",
+    "at": "2026-10-17T03:53:13Z",
+    "featurePathAtApproval": "specs/workbench.feature"
+  },
+  "approver": "user",
+  "approvedAt": "2026-10-17T03:53:13Z",
+  "scope": "single_gherkin_source_with_core_features_and_product_stage_controls",
+  "syntaxCheck": {
+    "method": "existing_read_only_gherkin_parser",
+    "parserVersion": "39.1.0",
+    "parseErrors": 0,
+    "scenarioCount": 20,
+    "expandedCaseCount": 28
+  },
+  "stepMappingStatus": "not_created_in_current_phase",
+  "generationStatus": "NOT_RUN_FOR_CURRENT_REVISION",
+  "productE2EStatus": "NOT_RUN",
+  "sdStatus": "pending",
+  "earlierOutOfPhaseArtifactsPreservedOutsideRepository": true,
+  "note": "需求REQ-WB-001的Gherkin、SD及metadata同目錄；原AC-WB-001～020與批准feature bytes不變。doc只放ADR。文件組織調整已獲commit/push授權，SD內容仍pending，沒有生成測試／程式或執行SQL/build/E2E。",
+  "latestRequest": {
+    "source": "Sentinel_a38fb29dae588191ade4081426cdf3cc",
+    "scope": "sd_only",
+    "quote": "同意 產sd文ㄓㄧㄢ",
+    "at": "2026-10-17T03:53:13Z"
+  },
+  "approvedFeatureCommit": "ef497e666f27515716c2f33b812da7e71f846dc5",
+  "sdPath": "spec/REQ-WB-001/SD.md",
+  "sdSha256": "32271dd4b5f8e50ab60839716daf823e40fd1ef51bfaaf1611c6ca710dbc754d",
+  "sdApproval": null,
+  "requirementId": "REQ-WB-001",
+  "requirementDirectory": "spec/REQ-WB-001",
+  "pathMigration": {
+    "sourceCommit": "a16f142fc4d069c61fc33916468103ecbf8b02e1",
+    "publicationStatus": "authorized_for_feature_branch",
+    "paths": [
+      {
+        "from": "specs/workbench.feature",
+        "to": "spec/REQ-WB-001/workbench.feature"
+      },
+      {
+        "from": "docs/SD.md",
+        "to": "spec/REQ-WB-001/SD.md"
+      },
+      {
+        "from": "specs/reviews/gherkin-review.json",
+        "to": "spec/REQ-WB-001/review.json"
+      }
+    ]
+  },
+  "documentBinding": {
+    "requirementId": "REQ-WB-001",
+    "featurePath": "spec/REQ-WB-001/workbench.feature",
+    "featureSha256": "595d069841d51063fb155d09871d18d50b2da97700939deeb775f5fd931a5181",
+    "sdPath": "spec/REQ-WB-001/SD.md",
+    "adrDirectory": "doc"
+  },
+  "scenarioIds": [
+    "AC-WB-001",
+    "AC-WB-002",
+    "AC-WB-003",
+    "AC-WB-004",
+    "AC-WB-005",
+    "AC-WB-006",
+    "AC-WB-007",
+    "AC-WB-008",
+    "AC-WB-009",
+    "AC-WB-010",
+    "AC-WB-011",
+    "AC-WB-012",
+    "AC-WB-013",
+    "AC-WB-014",
+    "AC-WB-015",
+    "AC-WB-016",
+    "AC-WB-017",
+    "AC-WB-018",
+    "AC-WB-019",
+    "AC-WB-020"
+  ],
+  "traceabilityKey": "requirementId/scenarioId/case_id",
+  "releaseRelation": {
+    "requirementToRelease": "many_to_many",
+    "releaseId": null,
+    "scope": "traceability_description_only"
+  },
+  "publicationAuthorization": {
+    "source": "Sentinel_d3c89b4e1b4881918283358e359fc964",
+    "quote": "正確 改玩後push",
+    "at": "2026-10-17T04:11:45Z",
+    "repository": "Xing00000/bdd",
+    "branch": "spec/workbench-gherkin-review",
+    "scope": "document_organization_commit_and_push_only",
+    "sdContentApproval": false
+  }
+}

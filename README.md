@@ -1,7 +1,9 @@
 # BDD 軟體開發工作台
 
-目前是 **SD確認階段，SD狀態 `pending`**。請審閱 [docs/SD.md](docs/SD.md)。
+目前是 **SD確認階段，SD狀態 `pending`**。請審閱 [spec/REQ-WB-001/SD.md](spec/REQ-WB-001/SD.md)。
 
-使用者已確認 [ef497e6 的 Gherkin](https://github.com/Xing00000/bdd/blob/ef497e666f27515716c2f33b812da7e71f846dc5/specs/workbench.feature)（20個Scenario、28個展開案例），本次保持feature不變。
+`spec/`按每次需求分目錄，同次需求的 [Gherkin](spec/REQ-WB-001/workbench.feature) 與SD放在一起；`doc/`只放ADR。需求ID為`REQ-WB-001`，既有情境ID `AC-WB-001`～`AC-WB-020`保持不變；沒有新增ADR或重複需求索引。需求ID與release ID分開，兩者可多對多對應，不新增release管理功能。
 
-產品及本專案流程都是：**Gherkin確認 → SD確認 → 測試生成／補齊 → 開發 → 驗證／報告**。這次只交單一SD；尚未產生spec、step、工具鏈或產品程式，未執行SQL、build或E2E。SD確認後才進下一階段。
+本次只整理文件路徑及需求綁定，保留已批准`ef497e6` feature的原始bytes；提交／推送不代表SD內容已核准。SD內記錄`a16f142`舊路徑到新路徑的對應。
+
+流程維持：**Gherkin確認 → SD確認 → 測試生成／補齊 → 開發 → 驗證／報告**。沒有產生測試或程式，未執行SQL／build／E2E；SD確認後才進下一階段。
