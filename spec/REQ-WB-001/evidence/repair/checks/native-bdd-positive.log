@@ -123,7 +123,7 @@ actualExit=0
                           "workerIndex": 0,
                           "parallelIndex": 0,
                           "status": "passed",
-                          "duration": 19,
+                          "duration": 22,
                           "errors": [],
                           "stdout": [],
                           "stderr": [],
@@ -135,10 +135,10 @@ actualExit=0
                             },
                             {
                               "title": "Then its actual hash equals \"88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66\"",
-                              "duration": 4
+                              "duration": 5
                             }
                           ],
-                          "startTime": "2026-10-17T08:22:40.276Z",
+                          "startTime": "2026-10-17T12:15:52.348Z",
                           "annotations": [],
                           "attachments": []
                         }
@@ -160,8 +160,8 @@ actualExit=0
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-17T08:22:39.739Z",
-    "duration": 614.4219999999999,
+    "startTime": "2026-10-17T12:15:51.819Z",
+    "duration": 613.5339999999999,
     "expected": 1,
     "skipped": 0,
     "unexpected": 0,

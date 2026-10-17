@@ -33,7 +33,7 @@ export class Workbench {
   llmMissing?:{db:FixtureDatabase;source:string;result:Record<string,unknown>};
   currentSourceLine=0;
   private constructor(readonly page:Page,readonly context:BrowserContext,readonly info:TestInfo,db:FixtureDatabase,targetUrl:string){
-    this.db=db; this.targetUrl=targetUrl;this.tracker=new StepEvidence(page,info);this.page=this.tracker.wrapPage(page);this.check=this.tracker.wrapExpect(rawExpect);this.vars={...db.vars,targetUrl,feature:sourceFeature,sd:sourceSd,spec:specText(targetUrl),recording:specText(targetUrl),targetDb:process.env.WB_TARGET_DB,sourceRef:process.env.WB_SOURCE_REF};
+    this.db=db; this.targetUrl=targetUrl;this.tracker=new StepEvidence(page,info);this.page=this.tracker.wrapPage(page);this.check=this.tracker.wrapExpect(rawExpect);this.vars={...db.vars,targetUrl,feature:sourceFeature,gherkin:sourceFeature,sd:sourceSd,spec:specText(targetUrl),recording:specText(targetUrl),targetDb:process.env.WB_TARGET_DB,sourceRef:process.env.WB_SOURCE_REF};
   }
   static async open(page:Page,context:BrowserContext,info:TestInfo){
     for(const key of ['WB_BASE_URL','WB_TARGET_BASE_URL','WB_METADATA_DB','WB_TARGET_DB'])if(!process.env[key])throw new Error(`E2E prerequisite missing: ${key}; no product result is simulated.`);
@@ -127,7 +127,7 @@ export class Workbench {
     },p.invalid||p.problem?422:[200,201]);
     if(!(p.invalid||p.problem)){
       this.check(typeof result.versionId).toBe('string');this.vars[kind+'SavedVersion']=result.versionId;
-      if(kind==='gherkin')this.vars.feature=raw;
+      if(kind==='gherkin'){this.vars.feature=raw;this.vars.gherkin=raw;}
     }
   }
   async discoverProductBundle(raw:string){

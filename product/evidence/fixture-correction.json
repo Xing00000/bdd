@@ -1,0 +1,121 @@
+{
+  "at": "2026-10-17T12:16:19.511Z",
+  "scope": "AUTHORIZED_FIXTURE_CORRECTION",
+  "baseCommit": "d6acfe90e574a557b64d4a0180b94b029c730a29",
+  "authorization": "Explicit approval to repair AC021 extra:true and initialize/synchronize vars.gherkin; acceptance criteria and assertions preserved",
+  "implementationChanges": [
+    {
+      "file": "tests/completion/steps/workbench.steps.ts",
+      "beforeSha256": "f7af6c864fbc0de95b509eeb71a952e0de193d70cfd5b777a07778bf17c4439a",
+      "afterSha256": "bb79e4fb00a3758a6d2dbf45263666d949a0c4ab17e88ccf3079089baa59fc5d"
+    },
+    {
+      "file": "tests/completion/support/workbench.ts",
+      "beforeSha256": "9057e3b977becb4b27249455032d2c56e4fbf55c229c2227d2fdaa945ccfe2ec",
+      "afterSha256": "4a3a9150f95bb1fdb4a555a4738f1b11c872321a6a3fb5006d0f646c834f5cc1"
+    }
+  ],
+  "onlyAuthorizedFixtureEdits": true,
+  "acceptanceAssertionsUnchanged": true,
+  "featureSha256": "88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66",
+  "sdSha256": "a0bd73923884da67c0c71be2aaf945319fcb1a5bb380b7c704460989d3b565b4",
+  "sourceSkeletonUnchanged": true,
+  "generatedSpecUnchanged": true,
+  "sourceCasesUnchanged": true,
+  "manifestPath": "spec/REQ-WB-001/evidence/repair/generation-manifest.json",
+  "manifestSha256": "5bae4e74bc8cef86d40bd3647d3690dd65839dcb1c8e2cd8544ccf953dc9fe11",
+  "scenarioCount": 28,
+  "caseCount": 44,
+  "productE2E": "NOT_RUN",
+  "pushed": false,
+  "deployed": false,
+  "completedAt": "2026-10-17T12:17:37.549Z",
+  "targetedRegressions": {
+    "tests": 3,
+    "pass": 3,
+    "includedInProductTotal": true,
+    "transport": "Explicit page/evidence doubles; real Workbench helper, approved callback, Fastify routes and SQLite",
+    "checks": [
+      "Three test IDs and explicit mappings retained",
+      "Deleted tests, all six invalid mapping inputs, malformed spec/Gherkin rejected without head/projection changes",
+      "Gherkin alias initialized and updated on successful save, retained on invalid save"
+    ]
+  },
+  "productRegression": {
+    "tests": 93,
+    "pass": 93,
+    "fail": 0,
+    "skipped": 0,
+    "status": "PASSED",
+    "verification": "product/evidence/verification.json",
+    "verificationSha256": "583ac4ce03065a21eda71250c4bed6a304b6d926698917129177c115eb811bc3"
+  },
+  "toolingUnit": {
+    "tests": 10,
+    "pass": 10,
+    "fail": 0,
+    "skipped": 0
+  },
+  "testImplementationChecks": {
+    "status": "CHECKED",
+    "allToolChecksPassed": true,
+    "receipt": "spec/REQ-WB-001/evidence/repair/check-results.json",
+    "receiptSha256": "4f580f7a93c726705c1369327ac2bda0286626a1871f5f845cc20446198e3475",
+    "checkCommands": [
+      {
+        "name": "generate",
+        "command": "node tools/completion/generate.mjs",
+        "exitCode": 0,
+        "log": "spec/REQ-WB-001/evidence/repair/checks/generate.log",
+        "logSha256": "0fc4a82356dcbc829f998898956fcd69ccbad595a14633b4d3fec60044f529aa"
+      },
+      {
+        "name": "mapping-review",
+        "command": "node tools/completion/verify.mjs",
+        "exitCode": 0,
+        "log": "spec/REQ-WB-001/evidence/repair/checks/mapping-review.log",
+        "logSha256": "63ca8e42aca7911bf268de21ad6e61d642b129038a692920d76bd307bbfcff9e"
+      },
+      {
+        "name": "default-list",
+        "command": "node node_modules/@playwright/test/cli.js test --list --reporter=list",
+        "exitCode": 0,
+        "log": "spec/REQ-WB-001/evidence/repair/checks/default-list.log",
+        "logSha256": "aeb98293a6a9f116e81aa0d079916a4e6574f1994c04021d32132a10c2b1d0db"
+      },
+      {
+        "name": "typecheck",
+        "command": "node node_modules/typescript/bin/tsc --noEmit -p completion.tsconfig.json",
+        "exitCode": 0,
+        "log": "spec/REQ-WB-001/evidence/repair/checks/typecheck.log",
+        "logSha256": "a9fbcb01bafe0a4aedf8a5845121af4267322e45b8e9423b03565d763dcebcdb"
+      },
+      {
+        "name": "tooling",
+        "command": "node --import ./tools/completion/register-ts.mjs --test tools/completion/tooling.test.mjs",
+        "exitCode": 0,
+        "log": "spec/REQ-WB-001/evidence/repair/checks/tooling.log",
+        "logSha256": "b0af792a3f9a35f981251733a12f2740e21edb3965b99d71561184918b824c06"
+      },
+      {
+        "name": "runtime-probes",
+        "command": "node tools/completion/probes.mjs",
+        "exitCode": 0,
+        "log": "spec/REQ-WB-001/evidence/repair/checks/runtime-probes.log",
+        "logSha256": "9551a69c2391e311f32335e290d1e9dcabd00b1fd5e333503a6cf7ba622af494"
+      }
+    ]
+  },
+  "e2e": {
+    "status": "NOT_RUN",
+    "executionAttempted": false,
+    "exitCode": 2,
+    "receipt": "product/evidence/e2e-prerequisites.json",
+    "limitations": [
+      "Official Chromium binary unavailable; prior official download403 not bypassed",
+      "LLM key/model not configured; no real provider completion validated",
+      "44 approved product E2E cases remain NOT_RUN"
+    ]
+  },
+  "sourceHashMismatches": []
+}

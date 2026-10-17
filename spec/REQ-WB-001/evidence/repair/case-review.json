@@ -1,9 +1,9 @@
 {
   "scope": "STATIC_IMPLEMENTATION_REVIEW_NOT_PRODUCT_E2E",
   "manifestPath": "spec/REQ-WB-001/evidence/repair/generation-manifest.json",
-  "manifestSha256": "2e589c6d013f7060b25a881e7087965289fa91d7e45489501d18615c6e98b1ad",
-  "sourceSha256": "f7af6c864fbc0de95b509eeb71a952e0de193d70cfd5b777a07778bf17c4439a",
-  "helperSha256": "9057e3b977becb4b27249455032d2c56e4fbf55c229c2227d2fdaa945ccfe2ec",
+  "manifestSha256": "5bae4e74bc8cef86d40bd3647d3690dd65839dcb1c8e2cd8544ccf953dc9fe11",
+  "sourceSha256": "bb79e4fb00a3758a6d2dbf45263666d949a0c4ab17e88ccf3079089baa59fc5d",
+  "helperSha256": "4a3a9150f95bb1fdb4a555a4738f1b11c872321a6a3fb5006d0f646c834f5cc1",
   "scenarios": 28,
   "cases": 44,
   "registeredDirectSteps": 174,
@@ -6154,8 +6154,8 @@
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1537,
           "bodyStart": 66694,
-          "bodyEnd": 67017,
-          "bodySha256": "3cba3639486debff4e94436d9ca7adf7ec1ba9170eab776b66b6e248ce7b3c7d",
+          "bodyEnd": 67032,
+          "bodySha256": "5b4d6901a55b46fac8271ce686c82033ed7a6d32549b277b45ad9555d2654687",
           "assertions": [
             {
               "file": "tests/completion/support/workbench.ts",
@@ -6181,8 +6181,8 @@
           "sourceLine": 204,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1550,
-          "bodyStart": 67187,
-          "bodyEnd": 67335,
+          "bodyStart": 67202,
+          "bodyEnd": 67350,
           "bodySha256": "76abb3553568fdb525e67bf5d79cc90d807df5357b37522e7ec029666ae4d4f0",
           "assertions": [],
           "helperCalls": [],
@@ -6196,8 +6196,8 @@
           "sourceLine": 205,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1558,
-          "bodyStart": 67509,
-          "bodyEnd": 68438,
+          "bodyStart": 67524,
+          "bodyEnd": 68453,
           "bodySha256": "b37ad3d0083a5c2d3f91d990dd7a333e6405e9d90cb485740a3cec8b34c61aad",
           "assertions": [
             {
@@ -6227,8 +6227,8 @@
           "sourceLine": 206,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1571,
-          "bodyStart": 68609,
-          "bodyEnd": 70282,
+          "bodyStart": 68624,
+          "bodyEnd": 70297,
           "bodySha256": "95da8db2dc90dfc7431bb88d5029b210738cdfd5197e6c23f238884f6191a670",
           "assertions": [
             {
@@ -6280,8 +6280,8 @@
           "sourceLine": 207,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1598,
-          "bodyStart": 70467,
-          "bodyEnd": 71099,
+          "bodyStart": 70482,
+          "bodyEnd": 71114,
           "bodySha256": "f300da9ce7b902e6e30e6fc81abf220454540bc7cbef96b999423713980c1187",
           "assertions": [
             {
@@ -6356,8 +6356,8 @@
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1537,
           "bodyStart": 66694,
-          "bodyEnd": 67017,
-          "bodySha256": "3cba3639486debff4e94436d9ca7adf7ec1ba9170eab776b66b6e248ce7b3c7d",
+          "bodyEnd": 67032,
+          "bodySha256": "5b4d6901a55b46fac8271ce686c82033ed7a6d32549b277b45ad9555d2654687",
           "assertions": [
             {
               "file": "tests/completion/support/workbench.ts",
@@ -6383,8 +6383,8 @@
           "sourceLine": 204,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1550,
-          "bodyStart": 67187,
-          "bodyEnd": 67335,
+          "bodyStart": 67202,
+          "bodyEnd": 67350,
           "bodySha256": "76abb3553568fdb525e67bf5d79cc90d807df5357b37522e7ec029666ae4d4f0",
           "assertions": [],
           "helperCalls": [],
@@ -6398,8 +6398,8 @@
           "sourceLine": 205,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1558,
-          "bodyStart": 67509,
-          "bodyEnd": 68438,
+          "bodyStart": 67524,
+          "bodyEnd": 68453,
           "bodySha256": "b37ad3d0083a5c2d3f91d990dd7a333e6405e9d90cb485740a3cec8b34c61aad",
           "assertions": [
             {
@@ -6429,8 +6429,8 @@
           "sourceLine": 206,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1571,
-          "bodyStart": 68609,
-          "bodyEnd": 70282,
+          "bodyStart": 68624,
+          "bodyEnd": 70297,
           "bodySha256": "95da8db2dc90dfc7431bb88d5029b210738cdfd5197e6c23f238884f6191a670",
           "assertions": [
             {
@@ -6482,8 +6482,8 @@
           "sourceLine": 207,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1598,
-          "bodyStart": 70467,
-          "bodyEnd": 71099,
+          "bodyStart": 70482,
+          "bodyEnd": 71114,
           "bodySha256": "f300da9ce7b902e6e30e6fc81abf220454540bc7cbef96b999423713980c1187",
           "assertions": [
             {
@@ -6558,8 +6558,8 @@
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1537,
           "bodyStart": 66694,
-          "bodyEnd": 67017,
-          "bodySha256": "3cba3639486debff4e94436d9ca7adf7ec1ba9170eab776b66b6e248ce7b3c7d",
+          "bodyEnd": 67032,
+          "bodySha256": "5b4d6901a55b46fac8271ce686c82033ed7a6d32549b277b45ad9555d2654687",
           "assertions": [
             {
               "file": "tests/completion/support/workbench.ts",
@@ -6585,8 +6585,8 @@
           "sourceLine": 204,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1550,
-          "bodyStart": 67187,
-          "bodyEnd": 67335,
+          "bodyStart": 67202,
+          "bodyEnd": 67350,
           "bodySha256": "76abb3553568fdb525e67bf5d79cc90d807df5357b37522e7ec029666ae4d4f0",
           "assertions": [],
           "helperCalls": [],
@@ -6600,8 +6600,8 @@
           "sourceLine": 205,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1558,
-          "bodyStart": 67509,
-          "bodyEnd": 68438,
+          "bodyStart": 67524,
+          "bodyEnd": 68453,
           "bodySha256": "b37ad3d0083a5c2d3f91d990dd7a333e6405e9d90cb485740a3cec8b34c61aad",
           "assertions": [
             {
@@ -6631,8 +6631,8 @@
           "sourceLine": 206,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1571,
-          "bodyStart": 68609,
-          "bodyEnd": 70282,
+          "bodyStart": 68624,
+          "bodyEnd": 70297,
           "bodySha256": "95da8db2dc90dfc7431bb88d5029b210738cdfd5197e6c23f238884f6191a670",
           "assertions": [
             {
@@ -6684,8 +6684,8 @@
           "sourceLine": 207,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1598,
-          "bodyStart": 70467,
-          "bodyEnd": 71099,
+          "bodyStart": 70482,
+          "bodyEnd": 71114,
           "bodySha256": "f300da9ce7b902e6e30e6fc81abf220454540bc7cbef96b999423713980c1187",
           "assertions": [
             {
@@ -6745,8 +6745,8 @@
           "sourceLine": 216,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1610,
-          "bodyStart": 71274,
-          "bodyEnd": 72415,
+          "bodyStart": 71289,
+          "bodyEnd": 72430,
           "bodySha256": "9df147caa7a58a85f8f7ac9ea55c04734151ea19b616a02b49e6bdcae1686c89",
           "assertions": [
             {
@@ -6855,8 +6855,8 @@
           "sourceLine": 217,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1643,
-          "bodyStart": 72594,
-          "bodyEnd": 72641,
+          "bodyStart": 72609,
+          "bodyEnd": 72656,
           "bodySha256": "cd8f3f577d0a31c276446f5eebb57867bf2994c48e43da02a7d83fd09296fdef",
           "assertions": [
             {
@@ -6893,8 +6893,8 @@
           "sourceLine": 218,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1650,
-          "bodyStart": 72810,
-          "bodyEnd": 73551,
+          "bodyStart": 72825,
+          "bodyEnd": 73566,
           "bodySha256": "c512055d9561dec8caea1f295fefcf1441d61ced8effea567124714740b05ee3",
           "assertions": [
             {
@@ -6926,8 +6926,8 @@
           "sourceLine": 219,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1664,
-          "bodyStart": 73722,
-          "bodyEnd": 74768,
+          "bodyStart": 73737,
+          "bodyEnd": 74783,
           "bodySha256": "2bf76eb30aa0de18ff381ee85aa5f3b8e0a0fdc46f1e8d70522673c4fdc5a20e",
           "assertions": [
             {
@@ -6967,8 +6967,8 @@
           "sourceLine": 220,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1693,
-          "bodyStart": 74944,
-          "bodyEnd": 77131,
+          "bodyStart": 74959,
+          "bodyEnd": 77146,
           "bodySha256": "4ba8a882136e2d59414e16d3efd4e0e83eb6e46cea6642b63ea0c5b4ff7f346e",
           "assertions": [
             {
@@ -7053,8 +7053,8 @@
           "sourceLine": 221,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1751,
-          "bodyStart": 77314,
-          "bodyEnd": 78536,
+          "bodyStart": 77329,
+          "bodyEnd": 78551,
           "bodySha256": "ffb886e68d28c388c8d117080e888f13d1dc21ae2e1f5ac55808e6703a7d29dd",
           "assertions": [
             {
@@ -7099,8 +7099,8 @@
           "sourceLine": 222,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1772,
-          "bodyStart": 78720,
-          "bodyEnd": 78817,
+          "bodyStart": 78735,
+          "bodyEnd": 78832,
           "bodySha256": "5c84b53c0eff75498ef2f71cb5766a565547eac05a1c194d97b107e948ef07c2",
           "assertions": [
             {
@@ -7156,8 +7156,8 @@
           "sourceLine": 226,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1779,
-          "bodyStart": 79015,
-          "bodyEnd": 79386,
+          "bodyStart": 79030,
+          "bodyEnd": 79401,
           "bodySha256": "010c9e0c959f11ce4a380320672b49a168de2b3fac35c38bc0169292ddc86db7",
           "assertions": [],
           "helperCalls": [],
@@ -7171,8 +7171,8 @@
           "sourceLine": 227,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1795,
-          "bodyStart": 79558,
-          "bodyEnd": 79601,
+          "bodyStart": 79573,
+          "bodyEnd": 79616,
           "bodySha256": "44163fb489ae71428496790264312a654a480fc7e7ca33856b023fe00ed25df3",
           "assertions": [],
           "helperCalls": [],
@@ -7186,8 +7186,8 @@
           "sourceLine": 228,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1802,
-          "bodyStart": 79793,
-          "bodyEnd": 79859,
+          "bodyStart": 79808,
+          "bodyEnd": 79874,
           "bodySha256": "d351961d7deaddfbbb062b5940c0fa7e2c41cf42e5c924c0f7f80c42d5b1cee2",
           "assertions": [
             {
@@ -7214,8 +7214,8 @@
           "sourceLine": 229,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1809,
-          "bodyStart": 80057,
-          "bodyEnd": 80113,
+          "bodyStart": 80072,
+          "bodyEnd": 80128,
           "bodySha256": "0d1b42e27fce6db66034c51b68397c63dda4cb9c523a7e313030e5423f621a2e",
           "assertions": [
             {
@@ -7262,8 +7262,8 @@
           "sourceLine": 230,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1816,
-          "bodyStart": 80282,
-          "bodyEnd": 80338,
+          "bodyStart": 80297,
+          "bodyEnd": 80353,
           "bodySha256": "0d1b42e27fce6db66034c51b68397c63dda4cb9c523a7e313030e5423f621a2e",
           "assertions": [
             {
@@ -7310,8 +7310,8 @@
           "sourceLine": 231,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1823,
-          "bodyStart": 80513,
-          "bodyEnd": 80615,
+          "bodyStart": 80528,
+          "bodyEnd": 80630,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -7365,8 +7365,8 @@
           "sourceLine": 226,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1779,
-          "bodyStart": 79015,
-          "bodyEnd": 79386,
+          "bodyStart": 79030,
+          "bodyEnd": 79401,
           "bodySha256": "010c9e0c959f11ce4a380320672b49a168de2b3fac35c38bc0169292ddc86db7",
           "assertions": [],
           "helperCalls": [],
@@ -7380,8 +7380,8 @@
           "sourceLine": 227,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1795,
-          "bodyStart": 79558,
-          "bodyEnd": 79601,
+          "bodyStart": 79573,
+          "bodyEnd": 79616,
           "bodySha256": "44163fb489ae71428496790264312a654a480fc7e7ca33856b023fe00ed25df3",
           "assertions": [],
           "helperCalls": [],
@@ -7395,8 +7395,8 @@
           "sourceLine": 228,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1802,
-          "bodyStart": 79793,
-          "bodyEnd": 79859,
+          "bodyStart": 79808,
+          "bodyEnd": 79874,
           "bodySha256": "d351961d7deaddfbbb062b5940c0fa7e2c41cf42e5c924c0f7f80c42d5b1cee2",
           "assertions": [
             {
@@ -7423,8 +7423,8 @@
           "sourceLine": 229,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1809,
-          "bodyStart": 80057,
-          "bodyEnd": 80113,
+          "bodyStart": 80072,
+          "bodyEnd": 80128,
           "bodySha256": "0d1b42e27fce6db66034c51b68397c63dda4cb9c523a7e313030e5423f621a2e",
           "assertions": [
             {
@@ -7471,8 +7471,8 @@
           "sourceLine": 230,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1816,
-          "bodyStart": 80282,
-          "bodyEnd": 80338,
+          "bodyStart": 80297,
+          "bodyEnd": 80353,
           "bodySha256": "0d1b42e27fce6db66034c51b68397c63dda4cb9c523a7e313030e5423f621a2e",
           "assertions": [
             {
@@ -7519,8 +7519,8 @@
           "sourceLine": 231,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1823,
-          "bodyStart": 80513,
-          "bodyEnd": 80615,
+          "bodyStart": 80528,
+          "bodyEnd": 80630,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -7575,8 +7575,8 @@
           "sourceLine": 239,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1830,
-          "bodyStart": 80800,
-          "bodyEnd": 81416,
+          "bodyStart": 80815,
+          "bodyEnd": 81431,
           "bodySha256": "e9868df6fa67126059991f07ce5a4a09bf89ada085e8645a67edb358c5066691",
           "assertions": [
             {
@@ -7601,8 +7601,8 @@
           "sourceLine": 240,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1847,
-          "bodyStart": 81634,
-          "bodyEnd": 81986,
+          "bodyStart": 81649,
+          "bodyEnd": 82001,
           "bodySha256": "7dfdc7c8bfafe0b3aed36b78be0d2d9d4364cf090e39b46bf2190532f494403d",
           "assertions": [
             {
@@ -7622,8 +7622,8 @@
           "sourceLine": 241,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1856,
-          "bodyStart": 82158,
-          "bodyEnd": 82212,
+          "bodyStart": 82173,
+          "bodyEnd": 82227,
           "bodySha256": "7b7354dca0defbfb86dd8ca484f029d3c3c81846bd180f1f97aebc9e73263e92",
           "assertions": [
             {
@@ -7650,8 +7650,8 @@
           "sourceLine": 242,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1863,
-          "bodyStart": 82379,
-          "bodyEnd": 82861,
+          "bodyStart": 82394,
+          "bodyEnd": 82876,
           "bodySha256": "c6c4f0d8b1d2e3883f49fee2e44fde51cfbcc446d9efc2bc49783dd81bbca4fa",
           "assertions": [
             {
@@ -7676,8 +7676,8 @@
           "sourceLine": 243,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1874,
-          "bodyStart": 83050,
-          "bodyEnd": 83819,
+          "bodyStart": 83065,
+          "bodyEnd": 83834,
           "bodySha256": "1f18d290ecd1785dc7e8924d3813674058b272cafa7915229b9a9f16eb339b97",
           "assertions": [
             {
@@ -7709,8 +7709,8 @@
           "sourceLine": 244,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1885,
-          "bodyStart": 84005,
-          "bodyEnd": 84668,
+          "bodyStart": 84020,
+          "bodyEnd": 84683,
           "bodySha256": "4e40ad1e7d25a0ab03768cb5568004dbfbe2723c6696f1f1524ccf2ada9b1f84",
           "assertions": [
             {
@@ -7737,8 +7737,8 @@
           "sourceLine": 245,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1894,
-          "bodyStart": 84845,
-          "bodyEnd": 84957,
+          "bodyStart": 84860,
+          "bodyEnd": 84972,
           "bodySha256": "38f3423191060a6bb6a62d18755a089ea309312b2990c9f4c1331debf02c9247",
           "assertions": [
             {
@@ -7803,8 +7803,8 @@
           "sourceLine": 249,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1902,
-          "bodyStart": 85161,
-          "bodyEnd": 85948,
+          "bodyStart": 85176,
+          "bodyEnd": 85963,
           "bodySha256": "e7f182d0d7fbd849c6494cd61fd1ea96572b1639d579606fb8fa59ccc4703edd",
           "assertions": [
             {
@@ -7831,8 +7831,8 @@
           "sourceLine": 250,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1917,
-          "bodyStart": 86157,
-          "bodyEnd": 86205,
+          "bodyStart": 86172,
+          "bodyEnd": 86220,
           "bodySha256": "7d5ca868fa2af949a602df00ecb100bf1118df3466e9783bbd34d94c0704dd87",
           "assertions": [],
           "helperCalls": [],
@@ -7846,8 +7846,8 @@
           "sourceLine": 251,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1924,
-          "bodyStart": 86400,
-          "bodyEnd": 86447,
+          "bodyStart": 86415,
+          "bodyEnd": 86462,
           "bodySha256": "80a812b4ef8a81b4c4512c663b9df899f992aa0cb7544c409779a91326c30e41",
           "assertions": [],
           "helperCalls": [],
@@ -7861,8 +7861,8 @@
           "sourceLine": 252,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1931,
-          "bodyStart": 86627,
-          "bodyEnd": 86693,
+          "bodyStart": 86642,
+          "bodyEnd": 86708,
           "bodySha256": "30cafb3b587807feb3b4d7c86a75a8a44be1f45332e2f4edd214dc20193ab598",
           "assertions": [
             {
@@ -7889,8 +7889,8 @@
           "sourceLine": 253,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1938,
-          "bodyStart": 86868,
-          "bodyEnd": 87349,
+          "bodyStart": 86883,
+          "bodyEnd": 87364,
           "bodySha256": "ac968e57b9e4b1d9c924db7b67f176c6149ce0ae8f2b595fc5adfcb194f81822",
           "assertions": [
             {
@@ -7915,8 +7915,8 @@
           "sourceLine": 254,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1949,
-          "bodyStart": 87550,
-          "bodyEnd": 88589,
+          "bodyStart": 87565,
+          "bodyEnd": 88604,
           "bodySha256": "3e9383d27061f4eeff58a824498e8aa2dd429c42c4bd6400eef6e8c4405d5e96",
           "assertions": [
             {
@@ -7936,8 +7936,8 @@
           "sourceLine": 255,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1958,
-          "bodyStart": 88783,
-          "bodyEnd": 89196,
+          "bodyStart": 88798,
+          "bodyEnd": 89211,
           "bodySha256": "4e31e785b7490caf984949c7e49fef2660a617acbd3eaa4229172fb0105e3f80",
           "assertions": [
             {
@@ -7974,8 +7974,8 @@
           "sourceLine": 256,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1971,
-          "bodyStart": 89383,
-          "bodyEnd": 90329,
+          "bodyStart": 89398,
+          "bodyEnd": 90344,
           "bodySha256": "002c7a193039186a79f12b75723258171e82526dd957c6c09b5e0d95050c927c",
           "assertions": [
             {
@@ -7995,8 +7995,8 @@
           "sourceLine": 257,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1980,
-          "bodyStart": 90544,
-          "bodyEnd": 91277,
+          "bodyStart": 90559,
+          "bodyEnd": 91292,
           "bodySha256": "62d43f6db74f5891c4decd5737a7bae79d001db04f5c4d16a1a953aa4d8b6dbf",
           "assertions": [
             {
@@ -8016,8 +8016,8 @@
           "sourceLine": 258,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 1989,
-          "bodyStart": 91460,
-          "bodyEnd": 91942,
+          "bodyStart": 91475,
+          "bodyEnd": 91957,
           "bodySha256": "67fc6404caee6787963921f080ccde4f21a61fefbfc1d85f66ccec032ee22f6c",
           "assertions": [
             {
@@ -8105,8 +8105,8 @@
           "sourceLine": 262,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2000,
-          "bodyStart": 92129,
-          "bodyEnd": 92292,
+          "bodyStart": 92144,
+          "bodyEnd": 92307,
           "bodySha256": "55ea4be732ebba24b721500f93a791ae8420947870c07cab0891ed6b9a9d8cc8",
           "assertions": [],
           "helperCalls": [],
@@ -8120,8 +8120,8 @@
           "sourceLine": 263,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2013,
-          "bodyStart": 92507,
-          "bodyEnd": 92552,
+          "bodyStart": 92522,
+          "bodyEnd": 92567,
           "bodySha256": "28e92e9302b67c34c440ab328e9325a1c03f42b1d7d95fd3c056c767bf68c3ef",
           "assertions": [],
           "helperCalls": [],
@@ -8135,8 +8135,8 @@
           "sourceLine": 264,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2020,
-          "bodyStart": 92720,
-          "bodyEnd": 92800,
+          "bodyStart": 92735,
+          "bodyEnd": 92815,
           "bodySha256": "bc12158213818c1abb1551f328e22c0c4b101e2f6d472ccb415b1abfdae6e148",
           "assertions": [
             {
@@ -8163,8 +8163,8 @@
           "sourceLine": 265,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2027,
-          "bodyStart": 92987,
-          "bodyEnd": 93251,
+          "bodyStart": 93002,
+          "bodyEnd": 93266,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -8221,8 +8221,8 @@
           "sourceLine": 266,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2037,
-          "bodyStart": 93444,
-          "bodyEnd": 93708,
+          "bodyStart": 93459,
+          "bodyEnd": 93723,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -8279,8 +8279,8 @@
           "sourceLine": 267,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2047,
-          "bodyStart": 93876,
-          "bodyEnd": 93978,
+          "bodyStart": 93891,
+          "bodyEnd": 93993,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -8300,8 +8300,8 @@
           "sourceLine": 268,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2054,
-          "bodyStart": 94153,
-          "bodyEnd": 94255,
+          "bodyStart": 94168,
+          "bodyEnd": 94270,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -8356,8 +8356,8 @@
           "sourceLine": 262,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2000,
-          "bodyStart": 92129,
-          "bodyEnd": 92292,
+          "bodyStart": 92144,
+          "bodyEnd": 92307,
           "bodySha256": "55ea4be732ebba24b721500f93a791ae8420947870c07cab0891ed6b9a9d8cc8",
           "assertions": [],
           "helperCalls": [],
@@ -8371,8 +8371,8 @@
           "sourceLine": 263,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2013,
-          "bodyStart": 92507,
-          "bodyEnd": 92552,
+          "bodyStart": 92522,
+          "bodyEnd": 92567,
           "bodySha256": "28e92e9302b67c34c440ab328e9325a1c03f42b1d7d95fd3c056c767bf68c3ef",
           "assertions": [],
           "helperCalls": [],
@@ -8386,8 +8386,8 @@
           "sourceLine": 264,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2020,
-          "bodyStart": 92720,
-          "bodyEnd": 92800,
+          "bodyStart": 92735,
+          "bodyEnd": 92815,
           "bodySha256": "bc12158213818c1abb1551f328e22c0c4b101e2f6d472ccb415b1abfdae6e148",
           "assertions": [
             {
@@ -8414,8 +8414,8 @@
           "sourceLine": 265,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2027,
-          "bodyStart": 92987,
-          "bodyEnd": 93251,
+          "bodyStart": 93002,
+          "bodyEnd": 93266,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -8472,8 +8472,8 @@
           "sourceLine": 266,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2037,
-          "bodyStart": 93444,
-          "bodyEnd": 93708,
+          "bodyStart": 93459,
+          "bodyEnd": 93723,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -8530,8 +8530,8 @@
           "sourceLine": 267,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2047,
-          "bodyStart": 93876,
-          "bodyEnd": 93978,
+          "bodyStart": 93891,
+          "bodyEnd": 93993,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -8551,8 +8551,8 @@
           "sourceLine": 268,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2054,
-          "bodyStart": 94153,
-          "bodyEnd": 94255,
+          "bodyStart": 94168,
+          "bodyEnd": 94270,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -8607,8 +8607,8 @@
           "sourceLine": 262,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2000,
-          "bodyStart": 92129,
-          "bodyEnd": 92292,
+          "bodyStart": 92144,
+          "bodyEnd": 92307,
           "bodySha256": "55ea4be732ebba24b721500f93a791ae8420947870c07cab0891ed6b9a9d8cc8",
           "assertions": [],
           "helperCalls": [],
@@ -8622,8 +8622,8 @@
           "sourceLine": 263,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2013,
-          "bodyStart": 92507,
-          "bodyEnd": 92552,
+          "bodyStart": 92522,
+          "bodyEnd": 92567,
           "bodySha256": "28e92e9302b67c34c440ab328e9325a1c03f42b1d7d95fd3c056c767bf68c3ef",
           "assertions": [],
           "helperCalls": [],
@@ -8637,8 +8637,8 @@
           "sourceLine": 264,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2020,
-          "bodyStart": 92720,
-          "bodyEnd": 92800,
+          "bodyStart": 92735,
+          "bodyEnd": 92815,
           "bodySha256": "bc12158213818c1abb1551f328e22c0c4b101e2f6d472ccb415b1abfdae6e148",
           "assertions": [
             {
@@ -8665,8 +8665,8 @@
           "sourceLine": 265,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2027,
-          "bodyStart": 92987,
-          "bodyEnd": 93251,
+          "bodyStart": 93002,
+          "bodyEnd": 93266,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -8723,8 +8723,8 @@
           "sourceLine": 266,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2037,
-          "bodyStart": 93444,
-          "bodyEnd": 93708,
+          "bodyStart": 93459,
+          "bodyEnd": 93723,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -8781,8 +8781,8 @@
           "sourceLine": 267,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2047,
-          "bodyStart": 93876,
-          "bodyEnd": 93978,
+          "bodyStart": 93891,
+          "bodyEnd": 93993,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -8802,8 +8802,8 @@
           "sourceLine": 268,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2054,
-          "bodyStart": 94153,
-          "bodyEnd": 94255,
+          "bodyStart": 94168,
+          "bodyEnd": 94270,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -8858,8 +8858,8 @@
           "sourceLine": 262,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2000,
-          "bodyStart": 92129,
-          "bodyEnd": 92292,
+          "bodyStart": 92144,
+          "bodyEnd": 92307,
           "bodySha256": "55ea4be732ebba24b721500f93a791ae8420947870c07cab0891ed6b9a9d8cc8",
           "assertions": [],
           "helperCalls": [],
@@ -8873,8 +8873,8 @@
           "sourceLine": 263,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2013,
-          "bodyStart": 92507,
-          "bodyEnd": 92552,
+          "bodyStart": 92522,
+          "bodyEnd": 92567,
           "bodySha256": "28e92e9302b67c34c440ab328e9325a1c03f42b1d7d95fd3c056c767bf68c3ef",
           "assertions": [],
           "helperCalls": [],
@@ -8888,8 +8888,8 @@
           "sourceLine": 264,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2020,
-          "bodyStart": 92720,
-          "bodyEnd": 92800,
+          "bodyStart": 92735,
+          "bodyEnd": 92815,
           "bodySha256": "bc12158213818c1abb1551f328e22c0c4b101e2f6d472ccb415b1abfdae6e148",
           "assertions": [
             {
@@ -8916,8 +8916,8 @@
           "sourceLine": 265,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2027,
-          "bodyStart": 92987,
-          "bodyEnd": 93251,
+          "bodyStart": 93002,
+          "bodyEnd": 93266,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -8974,8 +8974,8 @@
           "sourceLine": 266,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2037,
-          "bodyStart": 93444,
-          "bodyEnd": 93708,
+          "bodyStart": 93459,
+          "bodyEnd": 93723,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -9032,8 +9032,8 @@
           "sourceLine": 267,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2047,
-          "bodyStart": 93876,
-          "bodyEnd": 93978,
+          "bodyStart": 93891,
+          "bodyEnd": 93993,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -9053,8 +9053,8 @@
           "sourceLine": 268,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2054,
-          "bodyStart": 94153,
-          "bodyEnd": 94255,
+          "bodyStart": 94168,
+          "bodyEnd": 94270,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -9109,8 +9109,8 @@
           "sourceLine": 262,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2000,
-          "bodyStart": 92129,
-          "bodyEnd": 92292,
+          "bodyStart": 92144,
+          "bodyEnd": 92307,
           "bodySha256": "55ea4be732ebba24b721500f93a791ae8420947870c07cab0891ed6b9a9d8cc8",
           "assertions": [],
           "helperCalls": [],
@@ -9124,8 +9124,8 @@
           "sourceLine": 263,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2013,
-          "bodyStart": 92507,
-          "bodyEnd": 92552,
+          "bodyStart": 92522,
+          "bodyEnd": 92567,
           "bodySha256": "28e92e9302b67c34c440ab328e9325a1c03f42b1d7d95fd3c056c767bf68c3ef",
           "assertions": [],
           "helperCalls": [],
@@ -9139,8 +9139,8 @@
           "sourceLine": 264,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2020,
-          "bodyStart": 92720,
-          "bodyEnd": 92800,
+          "bodyStart": 92735,
+          "bodyEnd": 92815,
           "bodySha256": "bc12158213818c1abb1551f328e22c0c4b101e2f6d472ccb415b1abfdae6e148",
           "assertions": [
             {
@@ -9167,8 +9167,8 @@
           "sourceLine": 265,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2027,
-          "bodyStart": 92987,
-          "bodyEnd": 93251,
+          "bodyStart": 93002,
+          "bodyEnd": 93266,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -9225,8 +9225,8 @@
           "sourceLine": 266,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2037,
-          "bodyStart": 93444,
-          "bodyEnd": 93708,
+          "bodyStart": 93459,
+          "bodyEnd": 93723,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -9283,8 +9283,8 @@
           "sourceLine": 267,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2047,
-          "bodyStart": 93876,
-          "bodyEnd": 93978,
+          "bodyStart": 93891,
+          "bodyEnd": 93993,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -9304,8 +9304,8 @@
           "sourceLine": 268,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2054,
-          "bodyStart": 94153,
-          "bodyEnd": 94255,
+          "bodyStart": 94168,
+          "bodyEnd": 94270,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -9360,8 +9360,8 @@
           "sourceLine": 262,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2000,
-          "bodyStart": 92129,
-          "bodyEnd": 92292,
+          "bodyStart": 92144,
+          "bodyEnd": 92307,
           "bodySha256": "55ea4be732ebba24b721500f93a791ae8420947870c07cab0891ed6b9a9d8cc8",
           "assertions": [],
           "helperCalls": [],
@@ -9375,8 +9375,8 @@
           "sourceLine": 263,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2013,
-          "bodyStart": 92507,
-          "bodyEnd": 92552,
+          "bodyStart": 92522,
+          "bodyEnd": 92567,
           "bodySha256": "28e92e9302b67c34c440ab328e9325a1c03f42b1d7d95fd3c056c767bf68c3ef",
           "assertions": [],
           "helperCalls": [],
@@ -9390,8 +9390,8 @@
           "sourceLine": 264,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2020,
-          "bodyStart": 92720,
-          "bodyEnd": 92800,
+          "bodyStart": 92735,
+          "bodyEnd": 92815,
           "bodySha256": "bc12158213818c1abb1551f328e22c0c4b101e2f6d472ccb415b1abfdae6e148",
           "assertions": [
             {
@@ -9418,8 +9418,8 @@
           "sourceLine": 265,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2027,
-          "bodyStart": 92987,
-          "bodyEnd": 93251,
+          "bodyStart": 93002,
+          "bodyEnd": 93266,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -9476,8 +9476,8 @@
           "sourceLine": 266,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2037,
-          "bodyStart": 93444,
-          "bodyEnd": 93708,
+          "bodyStart": 93459,
+          "bodyEnd": 93723,
           "bodySha256": "a9ecb3c129941532eafb7847acb9c79baa96c508819c0e122ac7b96c68f58bf3",
           "assertions": [
             {
@@ -9534,8 +9534,8 @@
           "sourceLine": 267,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2047,
-          "bodyStart": 93876,
-          "bodyEnd": 93978,
+          "bodyStart": 93891,
+          "bodyEnd": 93993,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -9555,8 +9555,8 @@
           "sourceLine": 268,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2054,
-          "bodyStart": 94153,
-          "bodyEnd": 94255,
+          "bodyStart": 94168,
+          "bodyEnd": 94270,
           "bodySha256": "f9999f696698c1986dc37a7412a479065bf7ce4de8b0000dff02ee39d9d3325d",
           "assertions": [
             {
@@ -9610,8 +9610,8 @@
           "sourceLine": 280,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2061,
-          "bodyStart": 94453,
-          "bodyEnd": 94599,
+          "bodyStart": 94468,
+          "bodyEnd": 94614,
           "bodySha256": "53540a8b6f88d9b6599016b9ff7dfa1da39d4353aa30b81ee8d8fcd50ebf936a",
           "assertions": [],
           "helperCalls": [
@@ -9627,8 +9627,8 @@
           "sourceLine": 281,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2073,
-          "bodyStart": 94776,
-          "bodyEnd": 94822,
+          "bodyStart": 94791,
+          "bodyEnd": 94837,
           "bodySha256": "fe24fe758b85d55756e7acd6aa0996ea5efd5ac5396835125f1b7966ec1beccc",
           "assertions": [
             {
@@ -9665,8 +9665,8 @@
           "sourceLine": 282,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2080,
-          "bodyStart": 94995,
-          "bodyEnd": 95876,
+          "bodyStart": 95010,
+          "bodyEnd": 95891,
           "bodySha256": "305f94b16a79b5486b50c3acfe5f3a301622eb83917af9d218ebe0879881d315",
           "assertions": [
             {
@@ -9696,8 +9696,8 @@
           "sourceLine": 283,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2098,
-          "bodyStart": 96060,
-          "bodyEnd": 96624,
+          "bodyStart": 96075,
+          "bodyEnd": 96639,
           "bodySha256": "9f93606159dcfce9eea9b77b94159caa3661f0c15d2c34c739ea6ba68153c006",
           "assertions": [
             {
@@ -9717,8 +9717,8 @@
           "sourceLine": 284,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2107,
-          "bodyStart": 96789,
-          "bodyEnd": 98621,
+          "bodyStart": 96804,
+          "bodyEnd": 98636,
           "bodySha256": "86fe7436aac7c7281b44a22e49c7473ac6bc71d5ba2d393ea03282bf7a21f3a2",
           "assertions": [
             {
@@ -9775,8 +9775,8 @@
           "sourceLine": 285,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2146,
-          "bodyStart": 98810,
-          "bodyEnd": 98907,
+          "bodyStart": 98825,
+          "bodyEnd": 98922,
           "bodySha256": "5c84b53c0eff75498ef2f71cb5766a565547eac05a1c194d97b107e948ef07c2",
           "assertions": [
             {
@@ -9839,8 +9839,8 @@
           "sourceLine": 289,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2153,
-          "bodyStart": 99122,
-          "bodyEnd": 99313,
+          "bodyStart": 99137,
+          "bodyEnd": 99328,
           "bodySha256": "f37e5130c5af5635f5151131bec188a4264e941ba251a374b9d8c6190a281b87",
           "assertions": [],
           "helperCalls": [],
@@ -9854,8 +9854,8 @@
           "sourceLine": 290,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2163,
-          "bodyStart": 99516,
-          "bodyEnd": 99953,
+          "bodyStart": 99531,
+          "bodyEnd": 99968,
           "bodySha256": "8012581fa3d7fd9cc81b89d474fa7610ae9db581f2fd90d899df9d818175ef7c",
           "assertions": [
             {
@@ -9875,8 +9875,8 @@
           "sourceLine": 291,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2171,
-          "bodyStart": 100131,
-          "bodyEnd": 100200,
+          "bodyStart": 100146,
+          "bodyEnd": 100215,
           "bodySha256": "36f98bdc53d38496fb4a9117ee383c3227cf7a46173a87d214e7353c6deb817b",
           "assertions": [
             {
@@ -9903,8 +9903,8 @@
           "sourceLine": 292,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2178,
-          "bodyStart": 100371,
-          "bodyEnd": 100559,
+          "bodyStart": 100386,
+          "bodyEnd": 100574,
           "bodySha256": "87cb53a6b78983dd745e69c244cd2ffa4917914c0994865800c55fc66cc021b5",
           "assertions": [
             {
@@ -9924,8 +9924,8 @@
           "sourceLine": 293,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2186,
-          "bodyStart": 100740,
-          "bodyEnd": 101103,
+          "bodyStart": 100755,
+          "bodyEnd": 101118,
           "bodySha256": "88693c6875500a0625be36f5635fa565995ebd9ac4b90a0864f0cbe4f6cf74ad",
           "assertions": [
             {
@@ -9950,8 +9950,8 @@
           "sourceLine": 294,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2198,
-          "bodyStart": 101280,
-          "bodyEnd": 102146,
+          "bodyStart": 101295,
+          "bodyEnd": 102161,
           "bodySha256": "73f863e7c1da1ece011e4a71be3bc03f911a00b2d4abda73946fb24a2c3663f9",
           "assertions": [
             {
@@ -9996,8 +9996,8 @@
           "sourceLine": 295,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2214,
-          "bodyStart": 102336,
-          "bodyEnd": 104837,
+          "bodyStart": 102351,
+          "bodyEnd": 104852,
           "bodySha256": "4a6f2f6286434973e34b76b6447b6c129036d966fbf55af13d912de43688d5fe",
           "assertions": [
             {
@@ -10067,8 +10067,8 @@
           "sourceLine": 296,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2249,
-          "bodyStart": 105044,
-          "bodyEnd": 105938,
+          "bodyStart": 105059,
+          "bodyEnd": 105953,
           "bodySha256": "bcbd9983bd881093cb76a69892e63f2a61221039a2ef15746dfd8e27261c3553",
           "assertions": [
             {
@@ -10108,8 +10108,8 @@
           "sourceLine": 297,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2261,
-          "bodyStart": 106112,
-          "bodyEnd": 106714,
+          "bodyStart": 106127,
+          "bodyEnd": 106729,
           "bodySha256": "2158df0ef21730e0561566ecb4c7233c117113a37a1ae4c461f243f14373803f",
           "assertions": [
             {
@@ -10144,8 +10144,8 @@
           "sourceLine": 298,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2273,
-          "bodyStart": 106907,
-          "bodyEnd": 107462,
+          "bodyStart": 106922,
+          "bodyEnd": 107477,
           "bodySha256": "2753d09e7c77da5c1a0976d1c4893930646b27982a2999132dd58510892b55a3",
           "assertions": [
             {
@@ -10175,8 +10175,8 @@
           "sourceLine": 299,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2284,
-          "bodyStart": 107650,
-          "bodyEnd": 109577,
+          "bodyStart": 107665,
+          "bodyEnd": 109592,
           "bodySha256": "ca3ad405090c975c2a5c04123063119187c05fed7cf854e2a76f216a38ae4e2b",
           "assertions": [
             {
@@ -10321,8 +10321,8 @@
           "sourceLine": 300,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2327,
-          "bodyStart": 109757,
-          "bodyEnd": 110161,
+          "bodyStart": 109772,
+          "bodyEnd": 110176,
           "bodySha256": "195fa5d1c5fd145f04a1d731fd087304414204abf7c933a39ee919fba2825b82",
           "assertions": [
             {
@@ -10357,8 +10357,8 @@
           "sourceLine": 301,
           "implementationFile": "tests/completion/steps/workbench.steps.ts",
           "implementationLine": 2340,
-          "bodyStart": 110333,
-          "bodyEnd": 110752,
+          "bodyStart": 110348,
+          "bodyEnd": 110767,
           "bodySha256": "b0988af67a22b67269ba38592e6864dcfc7c95000902851db622cc17f454d24e",
           "assertions": [
             {

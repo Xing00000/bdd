@@ -11,5 +11,5 @@ product/public/index.html                   0.51 kB │ gzip:   0.39 kB
 product/public/assets/index-Bxj36eY8.css   33.50 kB │ gzip:   7.98 kB
 product/public/assets/index-BkKuVfyI.js   469.20 kB │ gzip: 131.43 kB
 
-✓ built in 334ms
+✓ built in 338ms
 npm warn Unknown project config "devdir". This will stop working in the next major version of npm.

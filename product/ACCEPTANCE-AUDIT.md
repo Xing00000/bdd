@@ -2,6 +2,8 @@
 
 日期：2026-10-17。這是依已核准 Gherkin、SD 0.4 及既有補齊測試核對目前實作的稽核紀錄，不是新 SD、驗收條件變更或新的測試基線。28 個 `AC-WB` ID 共展開 44 個既有產品案例。
 
+後續狀態：使用者已批准限定修正下列 AC021／AC024 fixture；本輪只增加有效保存的 `extra:true`，以及初始化／同步 `vars.gherkin`，保留 Gherkin、SD 與所有斷言。原稽核描述及歷史收據保留於先前 commit；最新修正範圍、manifest 與驗證結果見 [fixture-correction.json](evidence/fixture-correction.json)。這不代表 44 案 E2E 已執行。
+
 **目前尚未執行這 44 個產品 E2E，也沒有真實 LLM 產生／補齊成功證據。** Chromium 正式下載先前遭 CDN 403，環境沒有相容執行檔；目前也沒有可用的 LLM provider 設定。瀏覽器不可用的拒絕測試、TypeScript 檢查、CLI discovery 或 HTTP provider 替身測試成功，都不能解讀成產品 E2E 通過。
 
 ## 來源與 Git 邊界
@@ -18,7 +20,7 @@
 
 本次已授權的 push 是既有修復版 `4e3ad3ed5048bc62e20e1be9a1ebb61d3d997375`。稽核時重新唯讀查詢遠端，`refs/heads/spec/workbench-gherkin-review` 仍為該 SHA；遠端 `main` 仍為 `a1dffc11c9e29664a15287574a59c83d272864cc`。新增產品 commits 沒有 push，沒有部署，也沒有操作使用者電腦。
 
-本次未修改核准 feature、SD、`tests/completion` 的既有 fixture／assertions 或凍結測試 implementation。核准原文 SHA-256 維持：
+初輪未修改核准 feature、SD、`tests/completion` 的 fixture／assertions；後續僅依明確批准修正上述 fixture，另生成 implementation manifest。核准條件與所有斷言保持不變，核准原文 SHA-256 維持：
 
 - `spec/REQ-WB-001/workbench.feature`：`88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66`。
 - `spec/REQ-WB-001/SD.md`：`a0bd73923884da67c0c71be2aaf945319fcb1a5bb380b7c704460989d3b565b4`。
@@ -108,7 +110,7 @@ WB_LLM_BASE_URL（可選）
 6. target Git CI 應讀實際 checkout 的 spec 及 helper bytes，核對 hash 後 discovery／執行，不把 SQLite 副本覆蓋 checkout 再聲稱是原 commit 的測試。candidate／tested commit 分別保存；獨立 DB 腳本與一般 DB 保存不會自動改 CI。
 7. **Git commit 存在、source bytes 與 commit 相符，不代表既有 `targetUrl` 正在服務該 revision。** 目前沒有把固定來源自動建置／部署到 target URL，也沒有目標服務 revision attestation。報告應保留 source snapshot 與實際 target URL，不能把未證實的對應當成已驗證版本保證。
 
-## 已辨識的原測試 fixture 問題（未套用修正）
+## 已辨識的原測試 fixture 問題（後續已依批准修正）
 
 ### AC021 有效輸入遺漏原骨架 test
 
@@ -116,7 +118,7 @@ WB_LLM_BASE_URL（可選）
 
 `tests/completion/steps/workbench.steps.ts:1545` 的 AC021 保存只呼叫 `sut.save({kind:sut.vars.artifact})`，沒有 `extra:true`。因此 `spec.ts` 分支提出只有兩個 tests 的完成版，卻仍引用原三個 tests 的骨架並要求成功。這會違反已核准 SD 的「不得刪原 test IDs／映射」。產品應維持 `MAPPING_INVALID`，不能為這個輸入放寬驗收。
 
-最小修正提案：只調整 AC021 有效 spec 保存輸入，帶 `extra:true` 並保留三筆既有 mapping；錯誤映射 fixture 仍保留原用途。**本輪沒有套用。** 若獲准修正測試，須重建／檢查其 implementation manifest 與收據，不能沿用舊 hash。
+後續已按批准只調整 AC021 有效保存輸入，帶 `extra:true` 並保留三筆既有 mapping；錯誤映射 fixture 保留原用途，重新生成／檢查 implementation manifest 與收據。
 
 ### `vars.gherkin` 未初始化的純 fixture 缺陷
 
@@ -124,13 +126,13 @@ WB_LLM_BASE_URL（可選）
 
 `tests/completion/steps/workbench.steps.ts:1841` 的 AC024 Given 在第一次 save 前已拿真 DB 的 `raw_text` 比 `sut.vars.gherkin`；此時後者為 `undefined`。AC021 Gherkin 分支的 `:1564` 及 AC024 Then 的 `:1869` 同樣引用此欄位；先 save 也不會補上它，因此這些斷言仍有相同 fixture 命名缺陷。
 
-最小修正提案：在 constructor 及 save helper 同步初始化／更新 `vars.gherkin`，或將這些原文斷言統一對照已存在且會更新的 `vars.feature`；需檢查各呼叫時序，選擇一致的 fixture 命名。這不是產品保存原文的失敗，也不是允許移除斷言。**本輪沒有修改既有 fixture／assertion。**
+後續已按批准在 constructor 同時初始化 `gherkin:sourceFeature`，並在成功保存後同步 `vars.gherkin=raw`；上述斷言完全保留。這是 fixture 別名修正，不是允許移除斷言或更改驗收條件。
 
 ## 尚餘實作邊界與待驗證事項
 
 - 解除正式 Chromium 下載限制後，須以相容版本與 `chromiumSandbox:true` 驗證實際 Screencast、WS／canvas 呈現、同 session 輸入、DOM 錄製邊界、跨頁／frame 行為、真重播、逐步與失敗截圖，再執行既有 44 案；不能以改 skip／替代瀏覽器／降低 sandbox 取代。
 - 設定真 provider 並補足專案資訊後，須驗證 SD、缺資訊問題、完整 completion、來源 CAS、型別／discovery 與真 E2E；靜態語意檢查不是任意程式的完整業務證明。
-- 原測試兩項 fixture 修正需另外確認，且更新測試 manifest；它們在瀏覽器環境恢復後仍是獨立於環境的阻礙。
+- 原測試兩項 fixture 已取得限定批准並修正，重新產生 manifest 與回歸收據；其完整 UI 情境仍須 Chromium 恢復後執行。
 - PTY 的階段目錄與最少環境不等於 OS 層隔離；目前只適用既有私有雲端工作區，同 UID 可跨目錄存取。不可直接把 shell／API 公開到公網，也不能宣稱 UI 階段鎖具有完整檔案安全隔離。
 - 目前沒有證明任意既有 target URL 與 source commit 相同。若要提供該保證，仍需可檢查的目標服務 revision／啟動紀錄或另行授權的隔離建置與執行接線；本輪未自動部署。
 - 受管初始 page 之外的 popup／新 context、原生視窗、複雜網站與 secret binding／遮罩流程仍需實際相容性驗證；不支援時應保留明確失敗或待補狀態。

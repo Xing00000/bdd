@@ -123,7 +123,7 @@ actualExit=1
                           "workerIndex": 0,
                           "parallelIndex": 0,
                           "status": "failed",
-                          "duration": 23,
+                          "duration": 28,
                           "error": {
                             "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m\"deliberately_wrong_hash\"\u001b[39m\nReceived: \u001b[31m\"88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66\"\u001b[39m",
                             "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m\"deliberately_wrong_hash\"\u001b[39m\nReceived: \u001b[31m\"88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66\"\u001b[39m\n    at Object.<anonymous> (/workspace/bdd/.test-fixtures/native-bdd-proof/proof.steps.ts:1:590)\n    at /workspace/bdd/.test-fixtures/native-bdd-proof/generated/proof.feature.spec.js:15:7",
@@ -154,7 +154,7 @@ actualExit=1
                             },
                             {
                               "title": "Then its actual hash equals \"deliberately_wrong_hash\"",
-                              "duration": 8,
+                              "duration": 10,
                               "error": {
                                 "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m\"deliberately_wrong_hash\"\u001b[39m\nReceived: \u001b[31m\"88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66\"\u001b[39m",
                                 "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m\"deliberately_wrong_hash\"\u001b[39m\nReceived: \u001b[31m\"88a51d341375ca58750df37cae184a81662469d9047354fd23b75a3006bbad66\"\u001b[39m\n    at Object.<anonymous> (/workspace/bdd/.test-fixtures/native-bdd-proof/proof.steps.ts:1:590)\n    at /workspace/bdd/.test-fixtures/native-bdd-proof/generated/proof.feature.spec.js:15:7",
@@ -167,7 +167,7 @@ actualExit=1
                               }
                             }
                           ],
-                          "startTime": "2026-10-17T08:22:41.487Z",
+                          "startTime": "2026-10-17T12:15:53.595Z",
                           "annotations": [],
                           "attachments": [
                             {
@@ -200,8 +200,8 @@ actualExit=1
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-17T08:22:40.953Z",
-    "duration": 626.358,
+    "startTime": "2026-10-17T12:15:53.065Z",
+    "duration": 633.922,
     "expected": 0,
     "skipped": 0,
     "unexpected": 1,

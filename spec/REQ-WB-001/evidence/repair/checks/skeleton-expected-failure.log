@@ -154,7 +154,7 @@ actualExit=1
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-17T08:22:45.539Z",
+                      "startTime": "2026-10-17T12:15:57.704Z",
                       "annotations": [
                         {
                           "type": "workbenchTestId",
@@ -195,8 +195,8 @@ actualExit=1
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-17T08:22:44.985Z",
-    "duration": 668.9780000000001,
+    "startTime": "2026-10-17T12:15:57.097Z",
+    "duration": 737.272,
     "expected": 0,
     "skipped": 0,
     "unexpected": 1,

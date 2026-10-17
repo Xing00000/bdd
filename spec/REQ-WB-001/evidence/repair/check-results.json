@@ -2,9 +2,9 @@
   "scope": "TEST_IMPLEMENTATION_CHECKS",
   "repairBaseCommit": "f8678bdc59dbcd582bb9cdb3cc8be4060a9e6efe",
   "manifestPath": "spec/REQ-WB-001/evidence/repair/generation-manifest.json",
-  "manifestSha256": "2e589c6d013f7060b25a881e7087965289fa91d7e45489501d18615c6e98b1ad",
+  "manifestSha256": "5bae4e74bc8cef86d40bd3647d3690dd65839dcb1c8e2cd8544ccf953dc9fe11",
   "reviewPath": "spec/REQ-WB-001/evidence/repair/case-review.json",
-  "reviewSha256": "a75f7914dc86c8b5be051325c67d2473afab95a4aaf65d23a89b5bc7ed65cf15",
+  "reviewSha256": "fb531f61a9f27bf444972f30b2eb3880f38b7b76149b21d825ecf18aadc6698b",
   "implementationStatus": "CHECKED",
   "artifactStage": "COMPLETED",
   "readinessDerivedFrom": "Generation, exact mapping, 44 source-case code reviews, traced outcome assertions, TypeScript, default discovery, unit rejection checks and actual native BDD positive/negative runtime probes",
@@ -43,7 +43,7 @@
       "command": "node --import ./tools/completion/register-ts.mjs --test tools/completion/tooling.test.mjs",
       "exitCode": 0,
       "log": "spec/REQ-WB-001/evidence/repair/checks/tooling.log",
-      "logSha256": "a48872e420df956daea7636616120e997995da3d14757d29953286278083c853"
+      "logSha256": "b0af792a3f9a35f981251733a12f2740e21edb3965b99d71561184918b824c06"
     },
     {
       "name": "runtime-probes",
@@ -53,20 +53,5 @@
       "logSha256": "9551a69c2391e311f32335e290d1e9dcabd00b1fd5e333503a6cf7ba622af494"
     }
   ],
-  "allToolChecksPassed": true,
-  "productPrerequisites": {
-    "actualExit": 2,
-    "expectedExit": 2,
-    "classification": "ENVIRONMENT_BLOCKED",
-    "productE2E": "NOT_RUN",
-    "executionAttempted": false,
-    "log": "spec/REQ-WB-001/evidence/repair/checks/product-prerequisites.log",
-    "logSha256": "c7c7054b1e97467499e0b6888e1fd85ae7266d93987b17af54a1fa4296dfbb67"
-  },
-  "browserInstallation": {
-    "receipt": "spec/REQ-WB-001/evidence/repair/browser-install.json",
-    "classification": "BLOCKED",
-    "httpStatus": 403,
-    "sandboxDisabled": false
-  }
+  "allToolChecksPassed": true
 }

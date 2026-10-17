@@ -1562,8 +1562,8 @@ actualExit=0
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-17T08:22:46.292Z",
-    "duration": 288.058,
+    "startTime": "2026-10-17T12:15:58.446Z",
+    "duration": 281.4630000000001,
     "expected": 0,
     "skipped": 44,
     "unexpected": 0,

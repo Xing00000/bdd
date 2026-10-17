@@ -6,6 +6,6 @@
     "BROWSER_UNAVAILABLE: browserType.launch: Executable doesn't exist at /home/agent/.cache/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-linux64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or updated.       ║\n║ Please run the following command to download new browsers: ║\n║                                                            ║\n║     npx playwright install                                 ║\n║                                                            ║\n║ <3 Playwright Team                                         ║\n╚════════════════════════════════════════════════════════════╝",
     "LLM_UNCONFIGURED: API key and model are required by the completion scenarios"
   ],
-  "at": "2026-10-17T11:28:18.198Z",
+  "at": "2026-10-17T12:16:38.391Z",
   "exitCode": 2
 }

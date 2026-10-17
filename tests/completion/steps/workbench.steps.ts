@@ -1542,7 +1542,7 @@ When(/^使用者在"([^"]*)"階段將該產物保存到工作台SQLite$/, async 
             await sut.page.reload();
         }
         {
-            await sut.save({ "kind": sut.vars.artifact });
+            await sut.save({ "kind": sut.vars.artifact, "extra": true });
         }
     });
 });

@@ -42,7 +42,7 @@
     "tests/completion/fixtures/content.ts": "d3548c633cab407fb6b93bc020dac0691f262bfc718880f26b52950b4b3e0090",
     "tests/completion/fixtures/managed-runner.ts": "137a045ccd5d83084f8e7fa410db8ad854ac9d4259376843165f9322b8f7ca13",
     "tests/completion/fixtures/target.steps.ts": "74148f8c28e69b548b470d76c1b72ebe3afa71c99da98b1247dcb3fdbc50e021",
-    "tests/completion/steps/workbench.steps.ts": "f7af6c864fbc0de95b509eeb71a952e0de193d70cfd5b777a07778bf17c4439a",
+    "tests/completion/steps/workbench.steps.ts": "bb79e4fb00a3758a6d2dbf45263666d949a0c4ab17e88ccf3079089baa59fc5d",
     "tests/completion/support/database.ts": "0241af524eb19eaaabafd603263a3873a9817b4a431d8e48463649666f48df46",
     "tests/completion/support/evidence.ts": "39dcd8d80a1465d4bd402728686fa17a589b729d744ab30fb23f5552df930e3b",
     "tests/completion/support/fixtures.ts": "6f5375a96ade4d963960eaf607869d8c768d5495e9062de5da4dcdf740a2e107",
@@ -50,7 +50,7 @@
     "tests/completion/support/prerequisites.ts": "dc07100470795a72ee376807fbde4c10fe993c3f528027664783a0f1f0ea7b57",
     "tests/completion/support/reporter.ts": "cd182024c61f0af1fb6a321c84174fce69ed1880ef13a5f9e2128e24351d76ca",
     "tests/completion/support/selection.ts": "401cba16d42ed747101d80f58699af5e2249a758bbaeb7f45f1fc81409050141",
-    "tests/completion/support/workbench.ts": "9057e3b977becb4b27249455032d2c56e4fbf55c229c2227d2fdaa945ccfe2ec",
+    "tests/completion/support/workbench.ts": "4a3a9150f95bb1fdb4a555a4738f1b11c872321a6a3fb5006d0f646c834f5cc1",
     "tools/completion/analyze.mjs": "bf56d932e0e73aad1c73486314282b2266206a700078bbce667bf1d6e56080d5",
     "tools/completion/checks.mjs": "b793fc13512dc943bd6c27801b033bf40d8561e35ce060f0486e74163c32f425",
     "tools/completion/generate.mjs": "60381d58cdb5abebbfaafcdb6678aaf5c6604f1ac61f2b75d7e2fb4cff80c484",
@@ -3236,5 +3236,5 @@
       ]
     }
   ],
-  "completionBundleSha256": "672ac2ed61497a70b40848b967dd2c27c56bfde6afce88c447bbf6a7a22a10ee"
+  "completionBundleSha256": "6fe0fba4ac0c5df76f8e2194d5c1007bfdc1ab17a9764903342f933b78b49aca"
 }

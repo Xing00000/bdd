@@ -1,27 +1,27 @@
 {
-  "at": "2026-10-17T11:29:56.746Z",
+  "at": "2026-10-17T12:16:59.556Z",
   "scope": "PRODUCT_COMPONENT_AND_HTTP_API_TESTS",
   "checks": [
     {
       "name": "check",
       "exitCode": 0,
-      "durationMs": 5907,
+      "durationMs": 5819,
       "log": "/workspace/bdd/.workbench/receipts/check.log",
       "outputSha256": "25c8b138b2318a2848ea53fb0359abf02fea5147d3fe8060e7f10c2c46e78934"
     },
     {
       "name": "build",
       "exitCode": 0,
-      "durationMs": 4075,
+      "durationMs": 4473,
       "log": "/workspace/bdd/.workbench/receipts/build.log",
-      "outputSha256": "9e667f291f5c530aabfe154b2e3f36064e7bd950e528810a0aa43f4fca7734b9"
+      "outputSha256": "c956d5b1228dcc1b4ec298f8d34c35d2a40434656dc7bd530c7c77d2ad0cd499"
     },
     {
       "name": "test",
       "exitCode": 0,
-      "durationMs": 29388,
+      "durationMs": 29430,
       "log": "/workspace/bdd/.workbench/receipts/test.log",
-      "outputSha256": "a1ce8339783755f70ade2d4ccb618ecadc2d16589ae21bcdcd7478cdaa01fea4"
+      "outputSha256": "f59a1eeed5d29ffeaaf6d79e9afd634d5281f2c596201b4628a660e5674f0965"
     }
   ],
   "status": "PASSED",
@@ -42,6 +42,7 @@
   "sourceHashes": {
     "product-tests/core.test.ts": "f9b680b8985a9502446bd1370c34c2836e11ee366434317213737fed736bc3ab",
     "product-tests/extensions.test.ts": "1c7785af5b9d953a9a0ee1a3b4c973a55aa275a202ca00388710c53026c73b72",
+    "product-tests/fixture-corrections.test.ts": "b1d8625d2637adeb8229a33fb7597c0473a91f73f03acf994f7a3667e824476b",
     "product-tests/generation-semantics.test.ts": "eb2fac80d9510724af65ae2c92f0200799b8deac4d1e6d6720e0194e7f378ef1",
     "product-tests/generation.test.ts": "9daa8fb805cf2bc37cdba0633fcd976136a552473412dde420980f620bd4fb0b",
     "product-tests/git-adapter.test.ts": "531d488b6749002c0465d8f3146666c303c4ef1d9d926f3c8541586eb5cee4cd",
@@ -58,8 +59,8 @@
     "product-tests/ui-transport.test.ts": "130cc693306856d322474cb8c611dc5d25b2dc86bc02da28c8e0c625f867969a",
     "product-tests/workspace.test.ts": "af14c78be19219d8121afc53b36713efdd8aaa04450c5db4c9524c96c16f5823",
     "product/.npmrc": "88789fcaf64fb2442c842150a09ce43db31052ea7d345495f5788e62dd599a08",
-    "product/ACCEPTANCE-AUDIT.md": "5b84992f95db91b88ce0bdcb0ddc4b5a7e9cd9af2c786582ac8ea8c55d30b561",
-    "product/KNOWN-BLOCKERS.md": "3ff96a1d96e748fc7b619c7f69f117e219e2fafbd7577c7fc82cbad59df46a05",
+    "product/ACCEPTANCE-AUDIT.md": "51eeaf52e2e69e2a79d0dfc0656c08145dbcf6519bf332789afd08ed0e5c807d",
+    "product/KNOWN-BLOCKERS.md": "cbe1c695f688c010f06df05b84233056ae9863d11905f24eb63cde81d54a187e",
     "product/README.md": "cc29dd8e6372ed4fae436d52f41ff2311de1a91f0f777724be3f194cb670a39a",
     "product/package-lock.json": "f6b575e94c81b823e2ee19faef8bc1dcf0a3b58e0963459b63387a490428d38d",
     "product/package.json": "6c58c29b257774feaad43e5868ec4bfc05f78cb5eea013060f1ab78be0faaced",

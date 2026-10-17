@@ -12,7 +12,9 @@
 
 需在 server 設定憑證與模型，並提供實際專案缺少的 locator／fixture／業務資訊後才能跑相關驗收；若驗收條件不完整應回 NEEDS_INPUT，不擅自補造。
 
-## AC021 輸入 fixture 會刪除骨架測試
+## AC021 輸入 fixture（已依批准修正）
+
+使用者於 2026-10-17 明確批准限定修正，現已在有效保存呼叫加入 `extra:true`，保留三個測試與 mapping。以下保留原問題說明；原最小提案已套用，重新生成／檢查 implementation manifest，最新驗證以 [fixture 修正收據](evidence/fixture-correction.json) 為準。錯誤映射 fixture 與所有斷言不變。
 
 位置：
 
@@ -22,15 +24,17 @@
 
 feature `workbench.feature:201–206` 要求合法產物保存、完整原文讀回與映射保留，沒有要求刪除第三個測試。fixture 輸入卻仍帶原骨架 ID/hash，卻減少其必要集合；這與 SD 0.4 `SD.md:650` §11.2「不得改寫……原 testKey／來源案例，或以刪測試補齊」衝突。產品保留 `MAPPING_INVALID` 拒絕，不放寬基線規則，不偷偷修改既有 fixture／assertion。
 
-最小建議：只修正 AC021 的**有效 spec 保存輸入**，明確帶 `extra:true` 並保留其三筆 mapping；其他驗證錯誤 fixture 維持原設計。這是待確認的測試修正提案，**尚未套用**。修改後也必須重新生成／檢查測試 implementation manifest，不能只改測試再沿用舊收據。
+已套用的最小修正只針對 AC021 的有效保存輸入；不沿用舊收據宣稱修正版通過。
 
 此項是 fixture 修正，不需更改 Gherkin／SD 的驗收條件。若改成允許刪除原測試，才是驗收語意變更，需要上游文件失效重審；本次未採用。
 
-## AC021／AC024 的 Gherkin 原文變數別名
+## AC021／AC024 的 Gherkin 原文變數別名（已依批准修正）
+
+本輪按批准於 constructor 初始化 `vars.gherkin=sourceFeature`，成功保存 Gherkin 後同步 `vars.gherkin=raw`，保留三處讀取斷言。以下為修正前問題說明。
 
 `tests/completion/support/workbench.ts:36` 初始化 `vars.feature`，`:130` 保存後也只更新 `vars.feature`。批准 steps `workbench.steps.ts:1564` 的 Gherkin 分支及 `:1841`、`:1869` 卻取從未初始化的 `vars.gherkin`。正確的字串讀回也會與 undefined 比較失敗。
 
-最小建議：統一上述三處使用 `vars.feature`，或在 constructor／成功保存時維護 `vars.gherkin` 別名。這是 fixture 變數錯誤，**尚未修改**；不應要求產品改存 undefined 或略過原文斷言。
+本輪回歸使用實際 helper 與產品 HTTP／SQLite，網頁與 evidence transport 為明確 doubles，不當成 Chromium E2E 證據。
 
 ## 本輪修復與驗證界線
 
