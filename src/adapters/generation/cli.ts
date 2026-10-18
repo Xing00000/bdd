@@ -31,6 +31,12 @@ export async function cliProposal(options:GenerationOptions,instructions:string,
     await writeFile(skillFile,item.rawText,{mode:0o600,flag:'wx'});
   }
   await writeFile(join(directory,'request.json'),JSON.stringify(data,null,2),{mode:0o600});
+  const stage=skill?'TESTS':'SD';
+  const mcpSession=options.onMcpSession?.({directory,terminalContext:(data as LlmInput)?.terminalContext,stage,agent});
+  if(options.mcpUrl||mcpSession){
+    const stdioScript=join(options.root,'dist/src/adapters/mcp/stdio.js');
+    await writeFile(join(directory,'.mcp.json'),JSON.stringify({mcpServers:{'bdd-workbench':{command:process.execPath,args:[stdioScript],env:{...(options.mcpUrl?{WB_MCP_URL:options.mcpUrl}:{}),...(mcpSession?{WB_MCP_SESSION:mcpSession.sessionId}:{})},url:options.mcpUrl??null,sessionId:mcpSession?.sessionId??null}}},null,2),{mode:0o600});
+  }
   const publication='Write proposal.json as valid UTF-8 JSON and close it before publishing. The proposal may contain Traditional Chinese; use a UTF-8-safe file operation. If writing it with Python source from a shell heredoc, declare UTF-8 on the first source line; never embed raw non-ASCII text in an undeclared Python script. Verify the saved file parses as JSON. If writing the proposal or validating its JSON fails, stop without creating proposal.ready. Do not add speculative checks or unstated layout constraints to supplied source files; if an optional inspection command conflicts with the actual source, inspect the source and correct the check. Only after all proposal bytes are saved and verified, create the empty file proposal.ready. This is the required final operation: do not end the CLI turn until proposal.ready exists beside proposal.json, then verify both files exist and proposal.json still parses. The server ignores incomplete proposal.json until proposal.ready exists. Never create proposal.ready after a failed write or before saving the complete JSON.';
   const skillPaths=[
     ...(agentSkill?[`Read ${agentSkill.path} as configured Skill guidance.`]:[]),
@@ -88,5 +94,5 @@ export async function cliProposal(options:GenerationOptions,instructions:string,
     if(agent&&ready&&!codexInitialPrompt){void result.catch(()=>{});await ready;terminal.input(session.id,launchPrompt);await new Promise<void>(resolve=>setImmediate(resolve));terminal.input(session.id,'\r');}
     return {proposal:await result,...(context?{terminal:{...context,terminalId:session.id}}:{})};
   }catch(error){if(sessionId)terminal.closeTerminal(sessionId);throw error;}
-  finally{unsubscribe?.();controller.abort();}
+  finally{unsubscribe?.();controller.abort();mcpSession?.close();}
 }

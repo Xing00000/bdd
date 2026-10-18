@@ -472,7 +472,8 @@ export function inspectAcceptance(program: ts.Program, spec: ts.SourceFile, requ
       const binding=symbolAt(node.expression)?.valueDeclaration;
       if(binding&&ts.isBindingElement(binding)&&ts.isParameter(binding.parent.parent)&&binding.parent.parent.parent===currentCallback
         &&invokerNames.has((binding.propertyName??binding.name).getText())&&bddFile(checker.getResolvedSignature(node)?.getDeclaration())){
-        if(registryUnresolved||!trustedTest(currentTest)||!consumed(node)||args.length!==1||args[0].kind!=='constant'||typeof args[0].value!=='string')return {...evaluated,last:'unproven'};
+        const validBddArgs=args.length===1||(args.length===3&&args[1].kind==='constant'&&args[1].value===null&&ts.isObjectLiteralExpression(unwrap(node.arguments[2])));
+        if(registryUnresolved||!trustedTest(currentTest)||!consumed(node)||!validBddArgs||args[0].kind!=='constant'||typeof args[0].value!=='string')return {...evaluated,last:'unproven'};
         const text=args[0].value;
         const matches=registrations.map(registration=>({registration,arguments:registration.expression.match(text)})).filter(match=>match.arguments!==null);
         if(matches.length!==1||matches[0].registration.test!==currentTest)return {...evaluated,last:'unproven'};

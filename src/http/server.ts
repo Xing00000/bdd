@@ -21,6 +21,7 @@ import { reportHtml } from './report-html.js';
 import {createLlmSettingsService} from '../application/llm-settings.ts';
 import {createWorkflowSettingsService} from '../application/workflow-settings.ts';
 import {interactiveWorkflowStages,isWorkflowAgentStage} from '../domain/workflow-agent-stages.ts';
+import {createMcpServer,type McpServer} from '../adapters/mcp/index.js';
 export interface ServerOptions {root:string;metadataFile:string;dataRoot:string;baseUrl:string;llm?:import('../adapters/generation/types.ts').LlmOptions;resolveRecordingSecret?:RecordingSecretResolver;logger?:boolean;dbgate?:import('../adapters/runtime/dbgate.ts').DbGateOptions;initializeDefaultExample?:boolean}
 export async function createServer(options:ServerOptions) {
   const dbgateFile=options.dbgate?await realpath(options.dbgate.databaseFile):undefined;
@@ -45,7 +46,9 @@ export async function createServer(options:ServerOptions) {
     })().catch(error=>emit({type:'browser.error',projectId,sessionId,payload:{message:String(error.message)}}));
   });}
   const browser:BrowserRuntimePort=new Proxy(runtime.browser,{get(target,key){if(key==='create')return async(input:Parameters<BrowserRuntimePort['create']>[0])=>{const configured=options.dbgate;const credentials=configured&&input.targetUrl&&new URL(input.targetUrl).origin===new URL(configured.url).origin?{username:configured.username,password:configured.password,origin:new URL(configured.url).origin}:undefined;const result=await target.create({...input,...(credentials?{httpCredentials:credentials}:{})});if(input.projectId)wireSession(result.id,input.projectId);return result;};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});
-  const generation=createGenerationAdapters({root,artifactRoot:path.join(dataRoot,'generation'),llm:options.llm,terminal:runtime.terminal,onTerminal:event=>emit({type:'llm.terminalOpened',...event})});
+  let mcp:McpServer|undefined;
+  const mcpUrl=`${options.baseUrl.replace(/\/+$/,'')}/mcp`;
+  const generation=createGenerationAdapters({root,artifactRoot:path.join(dataRoot,'generation'),llm:options.llm,terminal:runtime.terminal,mcpUrl,onMcpSession:({directory,terminalContext,stage,agent})=>mcp&&terminalContext?.requirementId&&terminalContext?.featureId?mcp.createSession({requirementId:terminalContext.requirementId,featureId:terminalContext.featureId,projectId:terminalContext.projectId,stage,agentId:agent?.id,agent,proposalDir:directory}):undefined,onTerminal:event=>emit({type:'llm.terminalOpened',...event})});
   const artifactRoot=path.join(dataRoot,'artifacts');
   const runs=createRuns({store:core.store,browser,runner:createPlaywrightRunner({root,artifactRoot,baseUrl:options.baseUrl}),artifactRoot,root,baseUrl:options.baseUrl,emit,resolveRecordingSecret:options.resolveRecordingSecret,async resolveSource(projectId,sourceRef){const p=(await core.store.all('SELECT * FROM projects WHERE id=?',[projectId]))[0];if(!p)throw Object.assign(new Error('Project not found'),{statusCode:404,code:'NOT_FOUND'});return workspace.resolveSource(sourceRef,p.workspace_ref,projectId);},async executeCi({runId,prepared,env}){
     const rows=await core.store.all('SELECT p.workspace_ref,r.* FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=?',[runId]);const run=rows[0];
@@ -56,9 +59,10 @@ export async function createServer(options:ServerOptions) {
     await core.store.run("UPDATE runs SET candidate_commit=?,tested_commit=?,environment_snapshot_json=json_set(environment_snapshot_json,'$.ci',json(?)) WHERE id=?",[receipt.candidateCommit,receipt.testedCommit,JSON.stringify(receipt),runId]);
     return {code:receipt.exitCode??2,stdout:receipt.stdout,stderr:receipt.stderr};
   }});
-  const ext=createExtensions({core,generation,git,workspace,emit,async executeTargetCi(requirementId,body){const result=await runs.verify(requirementId,body);const report=await runs.wait(result.runId);return {...result,status:report.status,completed:true};}});
+  const ext=createExtensions({core,generation,git,workspace,emit,getQuestions:(requirementId,featureId)=>mcp?.getQuestions(requirementId,featureId)??[],async executeTargetCi(requirementId,body){const result=await runs.verify(requirementId,body);const report=await runs.wait(result.runId);return {...result,status:report.status,completed:true};}});
   const llmSettings=createLlmSettingsService(core.store);
   const workflowSettings=createWorkflowSettingsService(core.store,llmSettings);
+  mcp=createMcpServer({core,ext,workspace,runtime,generation,llmSettings,workflowSettings,metadataFile:options.metadataFile,emit});
   const params=(request:any)=>request.params as Record<string,string>,body=(request:any)=>request.body??{};
   const query=(request:any)=>request.query as Record<string,string>;
   const notFound=()=>Object.assign(new Error('Resource not found'),{statusCode:404,code:'NOT_FOUND'});
@@ -66,6 +70,7 @@ export async function createServer(options:ServerOptions) {
   const targetConnection=async(id:string)=>{const row=await one('SELECT * FROM target_connections WHERE id=?',[id]);if(await realpath(row.sqlite_file_ref)===await realpath(options.metadataFile))throw Object.assign(new Error('Target DB must be separate from metadata'),{statusCode:400,code:'INVALID_TARGET_DB'});return row;};
   app.setErrorHandler((error:any,_request,reply)=>{const status=Number(error.statusCode)||500;reply.code(status>=400&&status<=599?status:500).send({code:error.code??'INTERNAL_ERROR',message:error.message,file:error.file,diagnostics:error.diagnostics});});
   app.get('/health',async()=>({status:'ok',node:process.version,sqlite:core.sqliteVersion,llm:options.llm?'configured':'unconfigured',browser:'NOT_PROBED',dbgateUrl:options.dbgate?.url??null,metadataFile:options.metadataFile}));
+  app.post('/mcp',request=>mcp!.handleJsonRpc(body(request),typeof request.headers['x-workbench-mcp-session']==='string'?request.headers['x-workbench-mcp-session']:undefined));
 
   app.get('/llm-settings',()=>llmSettings.list());
   app.get('/workflow-settings',()=>workflowSettings.list());
@@ -94,14 +99,17 @@ export async function createServer(options:ServerOptions) {
     if(b.stage==='IMPLEMENTATION'&&(!current.confirmations.gherkin||!current.confirmations.sd||current.documents.spec?.testStage!=='COMPLETED'))throw Object.assign(new Error('程式開發 Agent 需要已確認的 Gherkin、SD 與完成的測試步驟。'),{statusCode:409,code:'WORKFLOW_GATE_NOT_MET'});
     if(!isWorkflowAgentStage(b.stage))throw Object.assign(new Error('不支援此流程階段。'),{statusCode:400,code:'AGENT_STAGE_INVALID'});
     const project=ext.selectedProject(current,b.projectId),agent=await workflowSettings.assignedAgent(b.stage,b.agentId);
+    const mcpSession=mcp!.createSession({requirementId:id,featureId:current.featureId,projectId:project.id,stage:b.stage,agentId:agent.id,agent});
     const initialPrompt=[
       '# Agent Prompt',agent.prompt,
       ...(agent.skill?[`# Skill: ${agent.skill.name}`,agent.skill.instructions]:[]),
       '# Current Requirement',JSON.stringify({requirementKey:current.requirementKey,featureKey:current.featureKey,stage:b.stage,gherkin:{versionId:gherkin.versionId,rawSha256:gherkin.rawSha256,rawText:gherkin.rawText},...(b.stage==='IMPLEMENTATION'?{sd:current.documents.sd,spec:current.documents.spec&&{versionId:current.documents.spec.versionId,rawSha256:current.documents.spec.rawSha256,testStage:current.documents.spec.testStage,rawText:current.documents.spec.rawText},project:{id:project.id,name:project.name,workspaceRef:project.workspaceRef}}:{})},null,2),
+      '# MCP Context',JSON.stringify({mcpUrl,mcpSessionId:mcpSession.sessionId,requirementId:id,featureId:current.featureId,projectId:project.id,stage:b.stage,agentId:agent.id},null,2),
       b.stage==='GHERKIN'?'Treat the supplied requirement and Gherkin as input data. Keep recommendations in your response unless the user explicitly asks you to modify project files.':'Implement the confirmed requirement in the current project directory. Treat Gherkin, SD, and completed spec as immutable acceptance inputs; do not edit or weaken them.',
     ].join('\n\n');
     const session=await runtime.terminal.create({workspaceRef:project.workspaceRef,cols:100,rows:24,command:{file:agent.cliCommand.executable,args:[...agent.cliCommand.args,initialPrompt]}});
-    return {id:session.id,projectId:project.id,workspaceRef:project.workspaceRef,stage:b.stage,agentId:agent.id,agentName:agent.name,cliCommandName:agent.cliCommand.name};
+    const unsubscribeMcp=runtime.terminal.subscribe(session.id,event=>{if(event.type==='terminal.exited'){unsubscribeMcp();mcpSession.close();}});
+    return {id:session.id,mcpSessionId:mcpSession.sessionId,projectId:project.id,workspaceRef:project.workspaceRef,stage:b.stage,agentId:agent.id,agentName:agent.name,cliCommandName:agent.cliCommand.name};
   });
   app.post('/requirements',async(request,reply)=>{const b=body(request);if(!Array.isArray(b.projectIds)||b.projectIds.length===0)throw Object.assign(new Error('Select at least one workspace when creating a requirement'),{statusCode:400,code:'INVALID_PROJECTS'});reply.code(201);return core.createRequirement(null,b);});
   app.put('/requirements/:r',request=>core.renameRequirement(params(request).r,body(request).requirementKey,body(request).projectIds));
@@ -177,5 +185,5 @@ export async function createServer(options:ServerOptions) {
     app.setNotFoundHandler((request,reply)=>request.method==='GET'&&request.headers.accept?.includes('text/html')?reply.sendFile('index.html'):reply.code(404).send({code:'NOT_FOUND',message:'Resource not found'}));}
   app.addHook('preClose',async()=>{runtime.terminal.close();});
   app.addHook('onClose',async()=>{clearInterval(frameDrain);channel.clear();for(const peer of peers)peer.socket.close();await runs.close();await browser.close();runtime.terminal.close();await runtime.targetDb.close();await core.close();});
-  return {app,core,runtime,browser,extensions:ext,runs,workflowSettings};
+  return {app,core,runtime,browser,extensions:ext,runs,workflowSettings,mcp:mcp!};
 }
