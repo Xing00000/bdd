@@ -45,7 +45,11 @@ test('migration preserves documented initial schema and applies feature workflow
   const section = sd.split('### 7.1 ')[1].split('### 7.3 ')[0];
   const expected = [...section.matchAll(/~~~sql\n([\s\S]*?)\n~~~/g)].map(m => m[1]).join('\n\n');
   assert.equal(schema, expected);
-  assert.equal((await core.store.all("SELECT count(*) n FROM sqlite_schema WHERE type='table'"))[0].n, 30);
+  assert.deepEqual(
+    (await core.store.all("SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('application_seed_history','llm_agents','llm_cli_commands','llm_skills') ORDER BY name"))
+      .map(row => row.name),
+    ['application_seed_history','llm_agents','llm_cli_commands','llm_skills'],
+  );
   assert.equal((await core.store.all('PRAGMA table_info(requirements)')).some(row=>row.name==='project_id'),false);
   assert.equal((await core.store.all('SELECT project_id FROM requirement_projects'))[0].project_id,project.id);
   assert.equal((await core.store.all('PRAGMA foreign_keys'))[0].foreign_keys, 1);
@@ -249,6 +253,38 @@ test('return invalidates confirmations/baselines/results atomically but keeps hi
   assert.equal((await core.store.all('SELECT status FROM runs'))[0].status, 'INVALID');
   assert.equal((await core.getVersion(req.documents.spec.id, sources.sk.versionId!)).rawText, spec(true));
   await assert.rejects(core.startDevelopment(req.id), errorCode('WORKFLOW_GATE_NOT_MET', 409));
+});
+test('restarting a completed stage clears that stage and downstream status while preserving earlier confirmations and version history', async t => {
+  const { core, req, project } = await setup(t), sources = await skeleton(core, req);
+  const completed = await core.saveVersion(req.documents.spec.id, completion(sources));
+  const started = await core.startDevelopment(req.id);
+  assert.ok(started.baseline);
+  await core.store.run("INSERT INTO baselines(id,requirement_id,kind,manifest_json,sha256,valid,feature_id) VALUES (? ,?,'source','{}',?,1,?)", ['source-baseline', req.id, sha256('{}'), req.featureId]);
+  await core.store.run("INSERT INTO runs(id,project_id,requirement_id,feature_id,origin,execution_scope,baseline_id,definition_snapshot_json,environment_snapshot_json,status) VALUES (?,?,?,?,'target_ci','ALL_REQUIRED',?,'{}','{}','FAILED')", ['restart-run', project.id, req.id, req.featureId, started.baseline!.id]);
+  await core.store.run("UPDATE features SET stage='VERIFIED' WHERE id=?", [req.featureId]);
+
+  const verification = await core.restartStage(req.id, 'VERIFICATION', req.featureId);
+  assert.equal(verification.stage, 'VERIFICATION');
+  assert.ok(verification.confirmations.gherkin); assert.ok(verification.confirmations.sd);
+  assert.equal(verification.baseline?.id, started.baseline!.id);
+  assert.deepEqual((await core.store.all('SELECT kind,valid FROM baselines ORDER BY kind')).map(row => [row.kind, row.valid]), [['source', 1], ['tests', 1]]);
+  assert.equal((await core.store.all('SELECT status FROM runs WHERE id=?', ['restart-run']))[0].status, 'INVALID');
+
+  const implementation = await core.restartStage(req.id, 'IMPLEMENTATION', req.featureId);
+  assert.equal(implementation.stage, 'IMPLEMENTATION'); assert.equal(implementation.baseline?.id, started.baseline!.id);
+  assert.deepEqual((await core.store.all('SELECT kind,valid FROM baselines ORDER BY kind')).map(row => [row.kind, row.valid]), [['source', 0], ['tests', 1]]);
+
+  const tests = await core.restartStage(req.id, 'TESTS', req.featureId);
+  assert.equal(tests.stage, 'TESTS'); assert.ok(tests.confirmations.gherkin); assert.ok(tests.confirmations.sd); assert.equal(tests.baseline, null);
+  assert.deepEqual((await core.store.all('SELECT kind,valid FROM baselines ORDER BY kind')).map(row => [row.kind, row.valid]), [['source', 0], ['tests', 0]]);
+
+  const sd = await core.restartStage(req.id, 'SD', req.featureId);
+  assert.equal(sd.stage, 'SD'); assert.ok(sd.confirmations.gherkin); assert.equal(sd.confirmations.sd, undefined);
+  const gherkin = await core.restartStage(req.id, 'GHERKIN', req.featureId);
+  assert.equal(gherkin.stage, 'GHERKIN'); assert.deepEqual(gherkin.confirmations, {});
+  assert.equal((await core.getVersion(req.documents.spec.id, completed.versionId!)).rawText, spec());
+  await assert.rejects(core.restartStage(req.id, 'SD', req.featureId), errorCode('STAGE_NOT_COMPLETED', 409));
+  await assert.rejects(core.restartStage(req.id, 'VERIFIED', req.featureId), errorCode('INVALID_STAGE', 400));
 });
 test('independent scripts save raw/actions without fabricated requirement or CI linkage', async t => {
   const { core, project, req } = await setup(t), original = await core.getRequirement(req.id);

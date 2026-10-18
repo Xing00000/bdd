@@ -128,6 +128,133 @@ Then(${pattern},async({page},expected:string)=>{${outcome}});`;
  }
 });
 
+test('Playwright-BDD configuration loads registered steps that are not imported by the spec',async()=>{
+ const validate=await validator();
+ const rawText=`import {test} from 'playwright-bdd';
+test('semantic a',{annotation:{type:'workbenchTestId',description:'semantic-a'}},async({Given,When,Then})=>{
+ await Given('the editor is open');await When('the editor is saved');await Then('the result is "saved"');
+});`;
+ const config=`import {defineConfig} from '@playwright/test';
+import {defineBddConfig} from 'playwright-bdd';
+const generated=defineBddConfig({features:'semantic.feature',featuresRoot:'.',steps:['semantic.steps.ts'],outputDir:'.'});
+export default defineConfig({testDir:generated});`;
+ const steps=`import {test,createBdd} from 'playwright-bdd';
+import {expect} from '@playwright/test';
+const {Given,When,Then}=createBdd(test);
+Given('the editor is open',async({page})=>{await page.goto('http://127.0.0.1:9999');});
+When('the editor is saved',async({page})=>{await page.getByTestId('save').click();});
+Then('the result is {string}',async({page},expected:string)=>{await expect(page.getByTestId('result')).toHaveText(expected);});`;
+ const receipt=await validate(rawText,{manifest:{...manifest,configPath:'generated/bdd.config.ts'},files:[
+  {path:'generated/bdd.config.ts',rawText:config},
+  {path:'generated/semantic.steps.ts',rawText:steps},
+ ]});
+ assert.equal(receipt.checks.typecheck,true,JSON.stringify(receipt.diagnostics));
+ assert.equal(receipt.checks.acceptanceImplementation,true,JSON.stringify(receipt.diagnostics));
+ assert.equal(receipt.passed,true,JSON.stringify(receipt.diagnostics));
+ assert.equal(receipt.productE2E,'NOT_RUN');
+});
+
+test('Playwright-BDD registered steps accept statically declared provided options',async()=>{
+ const validate=await validator();
+ const rawText=`import {test} from './semantic.steps.ts';
+test('semantic a',{annotation:{type:'workbenchTestId',description:'semantic-a'}},async({Given,When,Then})=>{
+ await Given('the editor is open');await When('the editor is saved');await Then('the result is "saved"');
+});`;
+ const config=`import {defineConfig} from '@playwright/test';
+import {defineBddConfig} from 'playwright-bdd';
+export default defineConfig({testDir:defineBddConfig({features:'semantic.feature',featuresRoot:'.',steps:['semantic.steps.ts'],outputDir:'.'})});`;
+ const steps=(options:string)=>`import {test,createBdd} from 'playwright-bdd';
+import {expect} from '@playwright/test';
+const {Given,When,Then}=createBdd(test);
+export {test};
+Given('the editor is open',${options},async({page})=>{await page.goto('http://127.0.0.1:9999');});
+When('the editor is saved',${options},async({page})=>{await page.getByTestId('save').click();});
+Then('the result is {string}',${options},async({page},expected:string)=>{await expect(page.getByTestId('result')).toHaveText(expected);});`;
+ const check=(source:string)=>validate(rawText,{manifest:{...manifest,configPath:'generated/bdd.config.ts'},files:[
+  {path:'generated/bdd.config.ts',rawText:config},{path:'generated/semantic.steps.ts',rawText:source},
+ ]});
+ const accepted=await check(steps('{arityCheck:false}'));
+ assert.equal(accepted.checks.typecheck,true,JSON.stringify(accepted.diagnostics));
+ assert.equal(accepted.checks.acceptanceImplementation,true,JSON.stringify(accepted.diagnostics));
+ assert.equal(accepted.passed,true,JSON.stringify(accepted.diagnostics));
+ const dynamic=await check(`const options={arityCheck:false};\n${steps('options')}`);
+ assert.equal(dynamic.checks.typecheck,true,JSON.stringify(dynamic.diagnostics));
+ assert.equal(dynamic.checks.acceptanceImplementation,false,'Dynamic provided options must not prove which step registration runs');
+ assert.equal(dynamic.passed,false);
+ const tagFiltered=await check(steps("{tags:'@never-present'}"));
+ assert.equal(tagFiltered.checks.typecheck,true,JSON.stringify(tagFiltered.diagnostics));
+ assert.equal(tagFiltered.checks.acceptanceImplementation,false,'A tagged definition cannot prove its callback runs without scenario tag evidence');
+ assert.equal(tagFiltered.passed,false);
+});
+
+test('Playwright-BDD step registrations must be reachable from the exported Playwright config',async()=>{
+ const validate=await validator();
+ const rawText=`import {test} from 'playwright-bdd';
+test('semantic a',{annotation:{type:'workbenchTestId',description:'semantic-a'}},async({Given,When,Then})=>{
+ await Given('the editor is open');await When('the editor is saved');await Then('the result is "saved"');
+});`;
+ const config=`import {defineConfig} from '@playwright/test';
+import {defineBddConfig} from 'playwright-bdd';
+const unused=defineBddConfig({features:'semantic.feature',featuresRoot:'.',steps:['semantic.steps.ts'],outputDir:'.'});
+export default defineConfig({testDir:'.'});`;
+ const steps=`import {test,createBdd} from 'playwright-bdd';
+import {expect} from '@playwright/test';
+const {Given,When,Then}=createBdd(test);
+Given('the editor is open',async({page})=>{await page.goto('http://127.0.0.1:9999');});
+When('the editor is saved',async({page})=>{await page.getByTestId('save').click();});
+Then('the result is {string}',async({page},expected:string)=>{await expect(page.getByTestId('result')).toHaveText(expected);});`;
+ const check=(configText:string)=>validate(rawText,{manifest:{...manifest,configPath:'generated/bdd.config.ts'},files:[
+  {path:'generated/bdd.config.ts',rawText:configText},{path:'generated/semantic.steps.ts',rawText:steps},
+ ]});
+ const receipt=await check(config);
+ assert.equal(receipt.checks.typecheck,true,JSON.stringify(receipt.diagnostics));
+ assert.equal(receipt.checks.acceptanceImplementation,false,'An unused defineBddConfig call must not register steps for the exported Playwright config');
+ assert.equal(receipt.passed,false);
+ const overriddenSteps=await check(`import {defineConfig} from '@playwright/test';
+import {defineBddConfig} from 'playwright-bdd';
+const override:object={steps:[] as string[]};
+const generated=defineBddConfig({features:'semantic.feature',featuresRoot:'.',steps:['semantic.steps.ts'],...override,outputDir:'.'});
+export default defineConfig({testDir:generated});`);
+ assert.equal(overriddenSteps.checks.typecheck,true,JSON.stringify(overriddenSteps.diagnostics));
+ assert.equal(overriddenSteps.checks.acceptanceImplementation,false,'A spread cannot override the statically inspected BDD steps list');
+ assert.equal(overriddenSteps.passed,false);
+ const overriddenTestDir=await check(`import {defineConfig} from '@playwright/test';
+import {defineBddConfig} from 'playwright-bdd';
+const override:object={testDir:'.'};
+export default defineConfig({testDir:defineBddConfig({features:'semantic.feature',featuresRoot:'.',steps:['semantic.steps.ts'],outputDir:'.'}),...override});`);
+ assert.equal(overriddenTestDir.checks.typecheck,true,JSON.stringify(overriddenTestDir.diagnostics));
+ assert.equal(overriddenTestDir.checks.acceptanceImplementation,false,'A spread cannot replace the exported config testDir proof');
+ assert.equal(overriddenTestDir.passed,false);
+});
+
+test('Playwright-BDD specs must reuse the test object bound to custom step registrations',async()=>{
+ const validate=await validator();
+ const config=`import {defineConfig} from '@playwright/test';
+import {defineBddConfig} from 'playwright-bdd';
+export default defineConfig({testDir:defineBddConfig({features:'semantic.feature',featuresRoot:'.',steps:['semantic.steps.ts'],outputDir:'.'})});`;
+ const steps=`import {test as base,createBdd} from 'playwright-bdd';
+import {expect} from '@playwright/test';
+export const test=base.extend<{registeredFixture:string}>({registeredFixture:async({},use)=>{await use('registered');}});
+const {Given,When,Then}=createBdd(test);
+Given('the editor is open',async({page})=>{await page.goto('http://127.0.0.1:9999');});
+When('the editor is saved',async({page})=>{await page.getByTestId('save').click();});
+Then('the result is {string}',async({page},expected:string)=>{await expect(page.getByTestId('result')).toHaveText(expected);});`;
+ const specWith=(testImport:string)=>`${testImport}
+test('semantic a',{annotation:{type:'workbenchTestId',description:'semantic-a'}},async({Given,When,Then})=>{
+ await Given('the editor is open');await When('the editor is saved');await Then('the result is "saved"');
+});`;
+ const check=(rawText:string)=>validate(rawText,{manifest:{...manifest,configPath:'generated/bdd.config.ts'},files:[
+  {path:'generated/bdd.config.ts',rawText:config},{path:'generated/semantic.steps.ts',rawText:steps},
+ ]});
+ const shared=await check(specWith("import {test} from './semantic.steps.ts';"));
+ assert.equal(shared.checks.typecheck,true,JSON.stringify(shared.diagnostics));
+ assert.equal(shared.checks.acceptanceImplementation,true,JSON.stringify(shared.diagnostics));
+ const mismatched=await check(specWith("import {test as base} from 'playwright-bdd';const test=base.extend<{specFixture:string}>({specFixture:async({},use)=>{await use('separate');}});"));
+ assert.equal(mismatched.checks.typecheck,true,JSON.stringify(mismatched.diagnostics));
+ assert.equal(mismatched.checks.acceptanceImplementation,false,'Steps bound to a custom test object cannot prove a spec using a separate test object');
+ assert.equal(mismatched.passed,false);
+});
+
 test('resolved local helpers count only executed callbacks and preserve final outcome assertions', async () => {
   const validate = await validator();
   const helper = `import type {Page} from '@playwright/test';

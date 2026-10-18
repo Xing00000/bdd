@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -90,10 +91,13 @@ test('real bddgen creates discoverable pending TS with exact case mappings witho
   assert.match(JSON.stringify(receipt.diagnostics), /Unimplemented|completion slot/);
 });
 
-test('undefined and ambiguous definitions block generation with actual bddgen diagnostics', async () => {
+test('missing definitions produce exact Gherkin-derived pending slots while ambiguous definitions remain blocked', async () => {
   const { generator } = await adapters();
-  await assert.rejects(() => generator.generate({requirementKey:'REQ-GEN',featureKey:'generation',sd:'# Dedicated design', feature, stepDefinitions: [], sourceCases }), (error: any) =>
-    error.statusCode === 422 && /UNDEFINED|INVALID/.test(error.code) && /it is inspected/.test(error.message));
+  const generated = await generator.generate({requirementKey:'REQ-GEN',featureKey:'generation',sd:'# Dedicated design', feature, stepDefinitions: [], sourceCases });
+  assert.equal(generated.manifest.pendingSlots.length, 3);
+  assert.equal(generated.manifest.uploadedDefinitionHashes.length, 0);
+  assert.ok(generated.manifest.pendingSlots.some((slot: any) => slot.pattern.includes('(.+?)')));
+  assert.match(generated.files.find(file => file.path.endsWith('.steps.ts'))!.rawText, /UnimplementedStepError/);
   await assert.rejects(() => generator.generate({requirementKey:'REQ-GEN',featureKey:'generation',sd:'# Dedicated design', feature, stepDefinitions: steps + "\nWhen('it is inspected',async()=>{});", sourceCases }),
     (error: any) => error.statusCode === 422 && /AMBIGUOUS/i.test(error.code + error.message));
 });
@@ -132,15 +136,19 @@ test('missing LLM configuration is explicit and never returns fabricated content
 });
 
 // Controlled terminal port for proposal validation only; not a real CLI/E2E claim.
-function proposalTerminal(proposal:()=>unknown,requests:{task:string}[]):TerminalRuntimePort {
+function proposalTerminal(proposal:()=>unknown,requests:{task:string;skill?:string}[]):TerminalRuntimePort {
+ const sessions=new Set<string>();
  return {async create({workspaceRef}){
-   requests.push({task:await readFile(join(workspaceRef,'task.md'),'utf8')});
+   const skillPath=join(workspaceRef,'.agents/skills/playwright-bdd/SKILL.md');
+   let skill:string|undefined;try{skill=await readFile(skillPath,'utf8');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+   requests.push({task:await readFile(join(workspaceRef,'task.md'),'utf8'),...(skill?{skill}:{})});
    setImmediate(()=>{void(async()=>{await writeFile(join(workspaceRef,'proposal.json'),JSON.stringify(proposal()));await writeFile(join(workspaceRef,'proposal.ready'),'');})();});
+   sessions.add('controlled-terminal-port');
    return {id:'controlled-terminal-port'};
- },input(){},resize(){},subscribe(){return ()=>{};},closeTerminal(){},close(){}};
+ },input(){},resize(){},hasSession(id){return sessions.has(id);},subscribe(){return ()=>{};},closeTerminal(id){sessions.delete(id);},close(){sessions.clear();}};
 }
 test('terminal proposals preserve questions and reject removed acceptance IDs', async () => {
-  const requests:{task:string}[]=[];
+  const requests:{task:string;skill?:string}[]=[];
   let proposal:any={status:'needs_input',questions:['請補充預期結果。']};
   const {llm}=await adapters({executable:'controlled-terminal-port'},proposalTerminal(()=>proposal,requests));
     const skeleton = "test('a',{annotation:{type:'workbenchTestId',description:'test-a'}},async()=>{});";
@@ -148,6 +156,8 @@ test('terminal proposals preserve questions and reject removed acceptance IDs', 
     assert.equal(result.status, 'needs_input'); assert.deepEqual(result.questions, ['請補充預期結果。']);
     assert.equal(result.proposalOnly, true); assert.equal(result.rawText, undefined);
     assert.match(requests[0].task, /Do not remove/);
+    assert.match(requests[0].task,/Official BDD skill/);assert.match(requests[0].skill??'',/name: playwright-bdd/);
+    assert.equal(requests[0].skill,await readFile(join(root,'skills/playwright-bdd/SKILL.md'),'utf8'));
     proposal = { status: 'completed', questions: [], rawText: "test('other',{annotation:{type:'workbenchTestId',description:'other'}},async()=>{});" };
     await assert.rejects(() => llm.complete({ gherkin: feature, sd: 'SD', skeleton }), (error: any) => error.code === 'LLM_ACCEPTANCE_CHANGED');
     const mapping = { testKey: 'test-extra', scenarioId: 'AC-GEN-001', caseId: 'a' };

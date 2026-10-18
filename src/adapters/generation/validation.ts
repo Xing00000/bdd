@@ -108,7 +108,7 @@ export function createCompletionValidator(options: GenerationOptions) {
       }
       if (receipt.diagnostics.length) { await writeFile(join(directory, 'receipt.json'), JSON.stringify(receipt, null, 2)); return receipt; }
       receipt.checks.typecheck = true;
-      const acceptance = inspectAcceptance(program, program.getSourceFile(join(directory, specPath))!, required, directory);
+      const acceptance = inspectAcceptance(program, program.getSourceFile(join(directory, specPath))!, required, directory, input.manifest.configPath);
       receipt.acceptance = acceptance;
       receipt.diagnostics.push(...acceptance.diagnostics);
       receipt.checks.acceptanceImplementation = acceptance.passed;

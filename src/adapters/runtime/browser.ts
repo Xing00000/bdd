@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Browser, BrowserContext, Frame, Locator, Page } from 'playwright';
+import type { Browser, BrowserContext, Frame, FrameLocator, Locator, Page } from 'playwright';
+import { expect } from '@playwright/test';
 import type { BrowserAttachment, BrowserEvent, BrowserInput, BrowserRuntimePort } from '../../ports/runtime.js';
 import { RuntimeAdapterError, invalid, requiredText } from './errors.js';
 import { ActionRecorder, decodeDomAction, installDomRecorder, locatorRecipe, type LocatorRecipe } from './recorder.js';
@@ -37,8 +38,7 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
     return this.launched;
   }
 
-  async create(input: { projectId: string; workspaceRef?: string; targetUrl?: string;httpCredentials?:{username:string;password:string} }): Promise<BrowserAttachment> {
-    requiredText(input.projectId, 'projectId');
+  async create(input: { projectId?: string; workspaceRef?: string; targetUrl?: string;httpCredentials?:{username:string;password:string} }): Promise<BrowserAttachment> {
     if (input.targetUrl) navigationUrl(input.targetUrl);
     const { browser, endpoint } = await this.launch();
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false,
@@ -173,6 +173,7 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
       if (managed.lastFrame) { session.lastFrame = managed.lastFrame; for (const listener of session.listeners) listener(managed.lastFrame); }
       return;
     }
+    if (input.type === 'replay') { await this.replay(session, input.actions); return; }
     if (input.type === 'navigate') { const url = navigationUrl(requiredText(input.url, 'url')); await page.goto(url); session.recorder?.append({ kind: 'navigate', pageId, url }); return; }
     if (input.type === 'pointer' || ['click', 'pointerdown', 'pointerup', 'pointermove'].includes(input.type)) {
       const x = finite(input.x, 'x'), y = finite(input.y, 'y');
@@ -205,6 +206,93 @@ export class PlaywrightBrowserAdapter implements BrowserRuntimePort {
       return;
     }
     invalid('Unsupported browser input type');
+  }
+  private async replay(session: Session, input: unknown): Promise<void> {
+    if (session.recorder) throw new RuntimeAdapterError('RECORDING_ACTIVE', 'Stop the active recording before replaying actions', 409);
+    if (!Array.isArray(input) || input.length === 0) invalid('Replay requires a non-empty actions array');
+    const actions = input as Record<string, unknown>[];
+    const firstPageId = actions[0]?.pageId;
+    if (typeof firstPageId !== 'string' || !firstPageId) invalid('The first recorded action must identify its source page');
+    const pageMap = new Map<string, string>([[firstPageId, session.activePageId]]);
+    const pairedPopups = new Map<number, number>();
+    const skippedPopups = new Set<number>();
+    actions.forEach((action, index) => {
+      if (action?.kind !== 'popup') return;
+      const previous = actions[index - 1];
+      if (previous?.kind !== 'click' || previous.pageId !== action.openerPageId || typeof action.pageId !== 'string' || pairedPopups.has(index - 1))
+        invalid('A popup can only replay when its immediately preceding recorded click identifies the opener page');
+      pairedPopups.set(index - 1, index);
+      skippedPopups.add(index);
+    });
+    for (let index = 0; index < actions.length; index++) {
+      const action = actions[index];
+      if (!action || typeof action !== 'object' || Array.isArray(action) || typeof action.kind !== 'string' || typeof action.pageId !== 'string' || !action.pageId)
+        invalid(`Recorded action ${index + 1} has an invalid shape`);
+      if (skippedPopups.has(index)) continue;
+      if (action.kind === 'newPage') {
+        if (pageMap.has(action.pageId)) invalid(`Recorded page ${action.pageId} was opened more than once`);
+        const page = await session.context.newPage();
+        const managedPage = await this.registerPage(session, page);
+        pageMap.set(action.pageId, managedPage.id);
+        session.activePageId = managedPage.id;
+        continue;
+      }
+      const managedId = pageMap.get(action.pageId);
+      if (!managedId) invalid(`Recorded action ${index + 1} refers to a page that has not been opened`);
+      const managed = session.pages.get(managedId);
+      if (!managed) throw new RuntimeAdapterError('RUNTIME_NOT_FOUND', 'A replay page was closed before its actions completed', 404);
+      await managed.ready;
+      const page = managed.page;
+      session.activePageId = managedId;
+      const scope = recordedScope(page, action.framePath);
+      if (action.kind === 'navigate') {
+        if (typeof action.url !== 'string') invalid(`Recorded navigation ${index + 1} has no URL`);
+        await page.goto(navigationUrl(action.url));
+      } else if (action.kind === 'click' || action.kind === 'fill' || action.kind === 'selectOption' || action.kind === 'press' || action.kind === 'assertion') {
+        const target = resolveLocator(scope, recordedLocator(action.locator, index));
+        if (action.kind === 'click') {
+          const popupIndex = pairedPopups.get(index);
+          if (popupIndex !== undefined) {
+            const popupPromise = page.waitForEvent('popup');
+            await target.click();
+            const popup = await popupPromise;
+            const popupPage = await this.registerPage(session, popup);
+            const popupAction = actions[popupIndex];
+            if (typeof popupAction.pageId !== 'string' || pageMap.has(popupAction.pageId)) invalid(`Recorded popup page ${String(popupAction.pageId)} was opened more than once`);
+            pageMap.set(popupAction.pageId, popupPage.id);
+            session.activePageId = popupPage.id;
+          } else await target.click();
+        } else if (action.kind === 'fill') {
+          const value = action.value;
+          if (!value || typeof value !== 'object' || Array.isArray(value) || (value as Record<string, unknown>).kind !== 'literal' || typeof (value as Record<string, unknown>).value !== 'string')
+            invalid('A recorded secret reference must be completed by a trusted runner before replay');
+          await target.fill((value as {value:string}).value);
+        } else if (action.kind === 'selectOption') {
+          if (!Array.isArray(action.values) || !action.values.every(value => typeof value === 'string')) invalid(`Recorded selection ${index + 1} has invalid values`);
+          await target.selectOption(action.values as string[]);
+        } else if (action.kind === 'press') {
+          if (typeof action.key !== 'string' || !['Enter','Tab','Escape','ArrowUp','ArrowDown'].includes(action.key)) invalid(`Recorded key ${index + 1} is unsupported`);
+          await target.press(action.key);
+        } else {
+          const assertionType = action.assertionType;
+          if (assertionType === 'visible') {
+            await expect(target, `Recorded assertion ${index + 1}`).toBeVisible();
+          } else if (assertionType === 'text') {
+            if (typeof action.expected !== 'string') invalid(`Recorded assertion ${index + 1} has no expected text`);
+            await expect(target, `Recorded assertion ${index + 1}`).toHaveText(action.expected);
+          } else if (assertionType === 'value') {
+            if (typeof action.expected !== 'string') invalid(`Recorded assertion ${index + 1} has no expected value`);
+            await expect(target, `Recorded assertion ${index + 1}`).toHaveValue(action.expected);
+          } else invalid(`Recorded assertion ${index + 1} has an unsupported assertion type`);
+        }
+      } else invalid(`Recorded action ${index + 1} cannot be replayed: ${String(action.reason ?? action.kind)}`);
+    }
+    const active = session.pages.get(session.activePageId);
+    if (active?.lastFrame) {
+      session.lastFrame = active.lastFrame;
+      for (const listener of session.listeners) listener(active.lastFrame);
+    }
+    this.emit(session, 'recording.replayCompleted', { actionCount: actions.length });
   }
   async startRecording(sessionId: string): Promise<{ recordingId: string }> {
     const session = this.session(sessionId);
@@ -290,7 +378,18 @@ function mouseButton(value: unknown): 'left' | 'right' | 'middle' {
   if (value === 2 || value === 'right') return 'right';
   invalid('Invalid mouse button');
 }
-function resolveLocator(page: Page | Frame, recipe: LocatorRecipe): Locator { return recipe.kind === 'testId' ? page.getByTestId(recipe.value) : recipe.kind === 'label' ? page.getByLabel(recipe.value) : page.locator(recipe.value); }
+function recordedScope(page:Page,framePath:unknown):Page|FrameLocator {
+  if(framePath===undefined)return page;
+  if(!Array.isArray(framePath)||!framePath.every(selector=>typeof selector==='string'&&selector.length>0))invalid('Recorded frame path must contain non-empty selectors');
+  return (framePath as string[]).reduce<Page|FrameLocator>((scope,selector)=>scope.frameLocator(selector),page);
+}
+function recordedLocator(value:unknown,index:number):LocatorRecipe {
+  if(!value||typeof value!=='object'||Array.isArray(value))invalid(`Recorded action ${index+1} has no locator`);
+  const locator=value as Record<string,unknown>;
+  if(!['testId','label','css'].includes(String(locator.kind))||typeof locator.value!=='string'||!locator.value)invalid(`Recorded action ${index+1} has an invalid locator`);
+  return {kind:locator.kind as LocatorRecipe['kind'],value:locator.value};
+}
+function resolveLocator(page: Page | Frame | FrameLocator, recipe: LocatorRecipe): Locator { return recipe.kind === 'testId' ? page.getByTestId(recipe.value) : recipe.kind === 'label' ? page.getByLabel(recipe.value) : page.locator(recipe.value); }
 function isSensitiveElement(element: Element): boolean { return element.matches('input[type="password"],[data-wb-secret]') || /password|secret|token|credential|api.?key|one-time-code|cc-/.test([element.getAttribute('name'), element.getAttribute('autocomplete')].join(' ').toLowerCase()); }
 async function framePath(frame: Frame): Promise<string[]> {
   const path: string[] = [];

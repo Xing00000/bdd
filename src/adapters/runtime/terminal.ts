@@ -48,6 +48,7 @@ export class PtyTerminalAdapter implements TerminalRuntimePort {
     if (!state) throw new RuntimeAdapterError('RUNTIME_NOT_FOUND', 'Terminal does not exist', 404);
     return state;
   }
+  hasSession(id: string): boolean { const state=this.sessions.get(id);return Boolean(state&&!state.exited); }
   input(id: string, data: string): void {
     const state = this.state(id);
     if (state.exited) throw new RuntimeAdapterError('TERMINAL_EXITED', 'Terminal process has exited', 409);

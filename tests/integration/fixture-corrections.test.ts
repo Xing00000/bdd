@@ -37,8 +37,9 @@ async function approvedSaveStep(){
   const path='spec/REQ-WB-001/workbench/workbench.steps.ts',text=await readFile(join(root,path),'utf8'),ast=ts.createSourceFile(path,text,ts.ScriptTarget.Latest,true);
   const declaration=ast.statements.find(statement=>{
     if(!ts.isExpressionStatement(statement)||!ts.isCallExpression(statement.expression))return false;
-    const callback=statement.expression.arguments[1];if(!callback||!ts.isArrowFunction(callback))return false;
-    let found=false;const visit=(node:ts.Node)=>{if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.expression.getText(ast)==='sut'&&node.expression.name.text==='step'&&node.arguments[0]?.getText(ast)==='203')found=true;ts.forEachChild(node,visit);};visit(callback);return found;
+    const [registration,callback]=statement.expression.arguments;
+    if(!registration||!ts.isRegularExpressionLiteral(registration)||!registration.text.includes('保存到工作台SQLite')||!callback||!ts.isArrowFunction(callback))return false;
+    let found=false;const visit=(node:ts.Node)=>{if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.expression.getText(ast)==='sut'&&node.expression.name.text==='save')found=true;ts.forEachChild(node,visit);};visit(callback);return found;
   });
   assert.ok(declaration&&ts.isExpressionStatement(declaration)&&ts.isCallExpression(declaration.expression));
   const callback=declaration.expression.arguments[1];assert.ok(ts.isArrowFunction(callback));
@@ -60,6 +61,15 @@ test('approved AC021 save callback preserves the immutable skeleton three-test s
   const mappings=f.db.all('SELECT t.test_key,c.case_key,s.scenario_key FROM test_definitions t JOIN test_case_mappings m ON m.test_definition_id=t.id JOIN source_cases c ON c.id=m.source_case_id JOIN scenarios s ON s.id=c.scenario_id WHERE t.spec_version_id=? ORDER BY t.test_key',[version]).map(row=>({...row}));
   assert.deepEqual(mappings,[{test_key:'test-a',case_key:'a',scenario_key:'AC-DEMO-001'},{test_key:'test-a-extra',case_key:'a',scenario_key:'AC-DEMO-001'},{test_key:'test-b',case_key:'b',scenario_key:'AC-DEMO-001'}]);
   assert.deepEqual(f.db.all('SELECT raw_text,raw_sha256 FROM document_versions WHERE id=?',[f.db.vars.specSkeletonVersion])[0],skeleton);
+});
+
+test('E2E fixture cleanup removes owned project evidence and preserves the product default example',async t=>{
+  const f=await fixture(t),projectId=f.db.vars.project,requirementId=f.db.vars.requirement,defaultExampleCount=f.db.all('SELECT count(*) AS count FROM requirements WHERE is_default_example=1')[0].count;
+  f.db.cleanupOwnedTestData([],[]);
+  assert.equal(f.db.all('SELECT id FROM projects WHERE id=?',[projectId]).length,0);
+  assert.equal(f.db.all('SELECT id FROM requirements WHERE id=?',[requirementId]).length,0);
+  assert.equal(f.db.all('SELECT count(*) AS count FROM requirements WHERE is_default_example=1')[0].count,defaultExampleCount);
+  assert.deepEqual(f.db.all('PRAGMA foreign_key_check'),[]);
 });
 
 test('fixture correction retains rejection of deleted tests, all six invalid mappings and malformed spec without advancing the valid head',async t=>{

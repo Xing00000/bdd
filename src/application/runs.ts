@@ -351,7 +351,7 @@ export function createRuns(options: Options) {
   }
 
   async function replay(documentId: string, versionId: string, body: any = {}) {
-    const version = await one("SELECT v.*,d.project_id,d.requirement_id,d.purpose,d.file_name FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=? AND v.document_id=? AND d.kind='spec'", [versionId, documentId], 'Script version');
+    const version = await one("SELECT v.*,d.project_id,d.requirement_id,d.purpose,d.file_name FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=? AND v.document_id=? AND d.kind='spec' AND d.deleted_at IS NULL", [versionId, documentId], 'Script version');
     if (!['recording', 'integration'].includes(version.purpose)) fail(409, 'SCRIPT_PURPOSE_INVALID', 'Use verify for standard target CI tests');
     if (body.projectId && body.projectId !== version.project_id) fail(422, 'PROJECT_MISMATCH', 'Script belongs to a different project');
     const savedConfig = JSON.parse(version.execution_config_json ?? '{}');

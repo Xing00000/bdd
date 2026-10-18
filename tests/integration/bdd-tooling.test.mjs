@@ -22,17 +22,17 @@ test('approved BDD generation is reproducible',()=>{
 });
 test('direct registered steps trace every source outcome to actual assertions',()=>{
  const analysis=analyze();assert.deepEqual(analysis.problems,[]);assert.equal(analysis.entries.length,sourceSteps().length);assert(analysis.entries.filter(e=>e.keyword==='Then').every(e=>e.assertions.length>0));
- for(const line of [47,49,131,165,173,175,187,295,296,298,299,301])assert(analysis.entries.find(e=>e.sourceLine===line));
+ for(const line of [47,49,130,169,170,171,191,192,193,295,296,298,299,301])assert(analysis.entries.find(e=>e.sourceLine===line));
 });
 test('implementation check rejects missing outcomes, empty steps, opcode dispatch and fake literal assertions',()=>{
- const source=fs.readFileSync('spec/REQ-WB-001/workbench/workbench.steps.ts','utf8'),entry=analyze().entries.find(e=>e.sourceLine===165);
+ const source=fs.readFileSync('spec/REQ-WB-001/workbench/workbench.steps.ts','utf8'),entry=analyze().entries.find(e=>e.sourceLine===169);
  for(const body of ['{await sut.page.reload();}','{}','{await sut.execute({op:"success"});}','{expect(true).toBe(true);}']){
   const changed=source.slice(0,entry.bodyStart)+body+source.slice(entry.bodyEnd);assert(analyze(changed).problems.length>0,body);
  }
 });
 test('managed resolver selects the requested identity across multiple contexts and rejects ambiguity',async()=>{
  const wanted={sessionId:'s',contextRef:'c2',pageId:'p2'},other={sessionId:'s',contextRef:'c1',pageId:'p1'};
- const page=id=>({isClosed:()=>false,evaluate:async()=>id});const match=page(wanted);
+ const page=id=>({isClosed:()=>false,url:()=>`https://fixture.invalid/${id.pageId}`,evaluate:async()=>id});const match=page(wanted);
  const browser={contexts:()=>[{pages:()=>[page(other)]},{pages:()=>[match]}]};assert.equal(await resolveManagedPage(browser,wanted),match);
  await assert.rejects(()=>resolveManagedPage(browser,{...wanted,pageId:'missing'}),/found 0/);
  await assert.rejects(()=>resolveManagedPage({contexts:()=>[{pages:()=>[match,match]}]},wanted),/found 2/);

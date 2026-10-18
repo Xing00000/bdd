@@ -84,6 +84,7 @@ test('node-pty creates a real TTY and returns decoded process output rather than
   });
   terminal.input(id, `node -e "process.stdout.write(process.stdout.isTTY?Buffer.from('${encoded}','base64').toString():'NOT_A_TTY')"\rexit\r`);
   await finished;
+  assert.equal(terminal.hasSession(id), false, 'an exited PTY cannot be reconnected as an active terminal');
 });
 
 test('semantic recorder merges fill events, preserves boundaries and never saves sensitive literal values', () => {

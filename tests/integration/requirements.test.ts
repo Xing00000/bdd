@@ -17,8 +17,6 @@ test('independent requirements link local repositories, route source files and p
  const server=await createServer({root,metadataFile:join(directory,'metadata.sqlite'),dataRoot:join(directory,'data'),baseUrl:'http://127.0.0.1:1'});
  t.after(async()=>{await server.app.close();await rm(directory,{recursive:true,force:true});});
  const request=async(method:'GET'|'POST'|'PUT',url:string,payload?:unknown,status=200)=>{const r=await server.app.inject({method,url,payload:payload as any});assert.equal(r.statusCode,status,r.body);return r.json();};
- const requirement=await request('POST','/requirements',{requirementKey:'REQ-CROSS'},201);
- assert.equal(requirement.projectId,null);assert.deepEqual(requirement.projects,[]);
  const projects:any[]=[];
  for(const name of ['frontend','backend']){
   const workspaceRef=join(directory,name);await mkdir(workspaceRef);await writeFile(join(workspaceRef,'app.ts'),`export const name=${JSON.stringify(name)};\n`);
@@ -26,6 +24,9 @@ test('independent requirements link local repositories, route source files and p
   const project=await request('POST','/projects',{name,workspaceRef},201);projects.push(project);
   await request('POST','/projects',{name,workspaceRef},409);
  }
+ const requirement=await request('POST','/requirements',{requirementKey:'REQ-CROSS',projectIds:[projects[0].id]},201);
+ assert.equal(requirement.projectId,projects[0].id);assert.deepEqual(requirement.projects.map((project:any)=>project.id),[projects[0].id]);
+ assert.equal((await request('GET',`/requirements/${requirement.id}`)).projects.length,1);
  await request('PUT',`/requirements/${requirement.id}/projects`,{projectIds:projects.map(p=>p.id)});
  const current=await request('GET',`/requirements/${requirement.id}`);
  assert.equal(current.projectId,null);assert.equal(current.projects.length,2);
@@ -40,7 +41,7 @@ test('independent requirements link local repositories, route source files and p
  await request('POST',`/requirements/${requirement.id}/pin-source`,{sourceRef:'HEAD'},422);
  const pin=await request('POST',`/requirements/${requirement.id}/pin-source`,{projects:projects.map(p=>({projectId:p.id,sourceRef:'HEAD'}))});
  assert.equal(pin.projects.length,2);for(const p of pin.projects){assert.equal(p.repositoryRef,projects.find(item=>item.id===p.projectId).workspaceRef);assert.match(p.resolvedCommit,/^[a-f0-9]{40,64}$/);}
- const terminal=await request('POST','/terminals',{projectId:projects[0].id,requirementId:requirement.id},201);assert.equal(terminal.workspaceRef,projects[0].workspaceRef);
+ const terminal=await request('POST','/terminals',{projectId:projects[0].id,sessionKey:projects[0].id,requirementId:requirement.id},201);assert.equal(terminal.workspaceRef,projects[0].workspaceRef);
  let output='';server.runtime.terminal.subscribe(terminal.id,event=>{output+=event.data??'';});server.runtime.terminal.input(terminal.id,'pwd\r');
  await expect.poll(()=>output,{timeout:10000}).toContain(projects[0].workspaceRef);
  const source=await request('GET',`/requirements/${requirement.id}/source?projectId=${projects[1].id}&path=app.ts`);assert.match(source.rawText,/backend/);

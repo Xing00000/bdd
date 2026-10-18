@@ -54,11 +54,11 @@ test('real HTTP adapters persist documents, enforce version-bound workflow, exec
     current=await request('POST',`/requirements/${requirementId}/confirm-gherkin`,{versionId:saved.versionId,rawSha256:saved.rawSha256});assert.equal(current.stage,'SD');
     const locked=await request('POST',`/documents/${gherkinId}/versions`,{rawText:feature+'\n'},409);assert.equal(locked.code,'ARTIFACT_LOCKED_IN_STAGE');
     assert.equal((await request('GET',`/requirements/${requirementId}`)).documents.gherkin.versionId,saved.versionId);
-    const llm=await request('POST',`/requirements/${requirementId}/generate-sd`,{},503);assert.equal(llm.code,'LLM_UNCONFIGURED');
+    const llm=await request('POST',`/requirements/${requirementId}/generate-sd`,{},422);assert.equal(llm.code,'WORKFLOW_SETTING_INVALID');
     assert.equal((await request('GET',`/requirements/${requirementId}`)).documents.sd.versionId,null);
     const sdText='# SD\n架構：HTTP / application / SQLite worker。\nDDL: CREATE TABLE notes。\nDML: INSERT / SELECT。\n';
     const sd=await request('POST',`/documents/${sdId}/versions`,{rawText:sdText,sourceGherkinVersionId:saved.versionId},201);
-    current=await request('POST',`/requirements/${requirementId}/confirm-sd`,{versionId:sd.versionId,rawSha256:sd.rawSha256});assert.equal(current.stage,'TESTS');
+    current=await request('POST',`/requirements/${requirementId}/confirm-sd`,{versionId:sd.versionId,rawSha256:sd.rawSha256});assert.equal(current.stage,'TESTS');assert.equal(current.documents.spec.testStage,'SKELETON');assert.match(current.documents.spec.rawText,/workbenchTestId/);assert.ok(current.documents.spec.manifest.pendingSlots.length>0);
     const invalidSpec=await request('POST',`/documents/${specId}/versions`,{rawText:'test(',sourceGherkinVersionId:saved.versionId,testStage:'SKELETON',manifest:{specSha256:sha('test('),mappings:[]}},422);
     assert.equal(invalidSpec.code,'SYNTAX_INVALID');assert.ok(invalidSpec.diagnostics.every((d:any)=>d.line>0&&d.column>0));
     const connection=await request('POST',`/projects/${project.id}/db-connections`,{sqliteFileRef:targetFile,environmentLabel:'isolated-test'},201);

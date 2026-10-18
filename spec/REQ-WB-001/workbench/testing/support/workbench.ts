@@ -33,6 +33,7 @@ export class Workbench {
   actionIndex=0;
   secondary:FixtureDatabase[]=[];
   selection?:SelectionProbe;
+  cleanups:Array<()=>Promise<void>>=[];
   llmFull?:{db:FixtureDatabase;source:string;version:string};
   llmMissing?:{db:FixtureDatabase;source:string;result:Record<string,unknown>};
   currentSourceLine=0;
@@ -76,6 +77,11 @@ export class Workbench {
     const row=this.db.all('SELECT v.* FROM document_heads h JOIN document_versions v ON v.id=h.version_id WHERE h.document_id=?',[String(this.vars[kind+'Doc'])])[0];this.check(row,`head ${kind}`).toBeDefined();return row;
   }
   sourceSnapshot(){return JSON.stringify(['gherkin','sd'].map(k=>this.head(k)));}
+  addCleanup(cleanup:()=>Promise<void>){this.cleanups.push(cleanup);}
+  trackLlmTerminal(sessionId:unknown){
+    if(typeof sessionId!=='string'||!sessionId)return;
+    this.addCleanup(async()=>{const response=await this.page.request.delete(`/terminals/${encodeURIComponent(sessionId)}`);rawExpect(response.ok(),`close completed LLM terminal ${sessionId}`).toBe(true);});
+  }
   checkSyntax(raw:string){
     const name='candidate.spec.ts';const file=ts.createSourceFile(name,raw,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
     const host=ts.createCompilerHost({noEmit:true,noResolve:true});host.getSourceFile=(n)=>n===name?file:undefined;host.fileExists=n=>n===name;host.readFile=n=>n===name?raw:undefined;host.writeFile=()=>{throw Error('No emit permitted');};
@@ -89,24 +95,50 @@ export class Workbench {
   async provideCompletionContext(){
     const field=this.page.getByLabel('設計與測試 context');
     await this.page.locator('details').filter({has:field}).locator('summary').click();
-    await field.fill(JSON.stringify(completionContext()));
+    await field.fill(JSON.stringify(completionContext({given:String(this.db.vars.sourceStepGivenId),when:String(this.db.vars.sourceStepWhenId),then:String(this.db.vars.sourceStepThenId)},String(this.db.vars.missingExpected)==='true')));
   }
   async provideDesignContext(){
     const field=this.page.getByLabel('設計與測試 context');
     await this.page.locator('details').filter({has:field}).locator('summary').click();
     await field.fill(JSON.stringify(designContext()));
   }
-  async advance(){
+  async advance(testAgentId?:string){
     const order=['GHERKIN','SD','TESTS','IMPLEMENTATION','VERIFICATION'];
     for(let i=0;i<4;i++){
       const stage=String(this.db.all('SELECT stage FROM features WHERE id=?',[String(this.vars.featureId)])[0].stage);
       if(stage==='VERIFICATION'||stage==='VERIFIED')return;
       if(stage==='GHERKIN')await this.page.getByTestId('confirm-gherkin').click();
       else if(stage==='SD')await this.page.getByTestId('confirm-sd').click();
-      else if(stage==='TESTS'){await this.page.getByTestId('step-definitions-upload').setInputFiles('spec/REQ-WB-001/workbench/testing/fixtures/target.steps.ts');await this.provideCompletionContext();await this.page.getByTestId('generate-tests').click();await this.page.getByTestId('complete-tests').click();await this.check(this.page.getByTestId('test-readiness')).toHaveText('COMPLETED',{timeout:this.info.timeout});await this.page.getByTestId('start-development').click();}
+      else if(stage==='TESTS'){
+        await this.page.goto(`/requirements/${this.vars.requirement}?featureId=${this.vars.featureId}&workflowStage=TESTS`);
+        await this.check(this.page.getByTestId('workflow-stage-content')).toHaveAttribute('data-stage','TESTS');
+        if(this.head('spec').test_stage==='COMPLETED'){
+          await this.check(this.page.getByTestId('confirm-test-steps')).toBeEnabled();
+          const started=this.page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname===`/requirements/${this.vars.requirement}/start-development`);
+          await this.page.getByTestId('confirm-test-steps').click();
+          rawExpect((await started).ok(),'confirm completed test baseline response').toBe(true);
+        }else{
+          if(!testAgentId)throw Error('Pending TESTS advancement requires the explicitly assigned test Agent');
+          await this.provideCompletionContext();
+          const completed=this.page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname===`/requirements/${this.vars.requirement}/complete-tests`);
+          await this.page.getByTestId(`complete-tests-${testAgentId}`).click();
+          const response=await completed;rawExpect(response.ok(),'complete-tests response').toBe(true);
+          const result=await response.json();rawExpect(result.status).toBe('completed');this.trackLlmTerminal(result.terminal?.terminalId);
+          const requirementKey=String(this.db.all('SELECT requirement_key FROM requirements WHERE id=?',[String(this.vars.requirement)])[0].requirement_key);
+          const requirementTab=this.page.locator('.workspace-tab').filter({hasText:requirementKey}).filter({hasText:'測試情境'}).last();
+          await requirementTab.locator('.workspace-tab-select').click();await this.check(this.page).toHaveURL(/workflowStage=TESTS/);
+          rawExpect(this.head('spec').test_stage).toBe('COMPLETED');
+          await this.check(this.page.getByTestId('confirm-test-steps')).toBeEnabled();
+          const started=this.page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname===`/requirements/${this.vars.requirement}/start-development`);
+          await this.page.getByTestId('confirm-test-steps').click();
+          rawExpect((await started).ok(),'confirm completed test baseline response').toBe(true);
+        }
+      }
       else if(stage==='IMPLEMENTATION')await this.requestVerification();
       else throw Error('Unknown workflow stage '+stage);
-      await this.check.poll(()=>this.db.all('SELECT stage FROM features WHERE id=?',[String(this.vars.featureId)])[0].stage).toBe(order[order.indexOf(stage)+1]);
+      const nextStage=order[order.indexOf(stage)+1];
+      await this.check.poll(()=>this.db.all('SELECT stage FROM features WHERE id=?',[String(this.vars.featureId)])[0].stage).toBe(nextStage);
+      if(stage==='SD')await this.check(this.page.getByTestId('workflow-stage-content')).toHaveAttribute('data-stage',nextStage);
     }
     this.check(this.db.all('SELECT stage FROM features WHERE id=?',[String(this.vars.featureId)])[0].stage).toBe('VERIFICATION');
   }
@@ -246,7 +278,17 @@ export class Workbench {
     try{await this.tracker.flush();}catch(error){if(this.info.status==='passed')throw error;}
     await this.info.attach('step-evidence',{body:JSON.stringify({testId:this.info.testId,annotations:this.info.annotations,records:this.records,actions:this.tracker.actions},null,2),contentType:'application/json'});
     await this.other?.close();await this.remote?.close();await this.dbGateRemote?.close();
-    if(this.dbGateSession){const response=await this.page.request.delete(`/browser-sessions/${this.dbGateSession}`);rawExpect(response.ok(),'close DbGate session').toBe(true);}
+    const cleanupErrors:unknown[]=[];for(const cleanup of this.cleanups.splice(0).reverse())try{await cleanup();}catch(error){cleanupErrors.push(error);}
+    if(this.dbGateSession)try{const response=await this.page.request.delete(`/browser-sessions/${this.dbGateSession}`);rawExpect(response.ok(),'close DbGate session').toBe(true);}catch(error){cleanupErrors.push(error);}
+    const temporaryProjects=['navigationWorkspaces','localProjects'].flatMap(key=>Array.isArray(this.vars[key])?this.vars[key] as Array<{id?:unknown;workspaceRef?:unknown}>:[]);
+    const temporaryRequirement=this.vars.navigationRequirement as {id?:unknown}|undefined;
+    try{this.db.cleanupOwnedTestData(
+      [...this.secondary.map(db=>db.vars.project),...temporaryProjects.flatMap(project=>typeof project.id==='string'?[project.id]:[])],
+      [...this.secondary.map(db=>db.vars.requirement),...(typeof temporaryRequirement?.id==='string'?[temporaryRequirement.id]:[])],
+      typeof this.vars.navigationRequirementKey==='string'?[this.vars.navigationRequirementKey]:[],
+      temporaryProjects.flatMap(project=>typeof project.workspaceRef==='string'?[project.workspaceRef]:[])
+    );}catch(error){cleanupErrors.push(error);}
     for(const db of this.secondary)db.close();this.db.close();
+    if(cleanupErrors.length)throw new AggregateError(cleanupErrors,'BDD scenario cleanup failed');
   }
 }

@@ -12,11 +12,23 @@ export function designContext(){
   databaseLifecycle:'Canonical target initializer is initializeTargetDatabase in target-app.ts. It uses idempotent CREATE TABLE IF NOT EXISTS and seed INSERT ON CONFLICT DO NOTHING. The dedicated target fixture has no versioned migration owner or historical upgrade contract. Document that actual fact; do not invent a legacy production migration requirement. Production metadata migrations/deploy are a separate workbench concern.',
   fixtures:fixtureSql,instructions:'Use actual contracts, selectors and authorization from existingFiles. Distinguish this dedicated test database from production metadata. Proposed development or deployment files must be explicitly marked planned, not existing. Browser recording and PTY are not document-editing product capabilities. Draft a pending-review SD from the known implementation and source acceptance conditions; do not claim approval or execution.'};
 }
-export function completionContext(){
+export function completionContext(sourceStepIds:{given:string;when:string;then:string},missingExpected=false){
  const modules=['spec/REQ-WB-001/workbench/testing/fixtures/managed-runner.ts','spec/REQ-WB-001/workbench/testing/support/managed.ts','spec/REQ-WB-001/workbench/testing/support/dbgate.ts'];
  const files=modules.map(file=>({path:file.slice('spec/REQ-WB-001/workbench/'.length),rawText:readFileSync(file,'utf8')}));
- return {runnerFixtureModule:'./testing/fixtures/managed-runner.ts',files,
-  instructions:'The supplied files are existing project helper modules. Their exact bundle paths are bundleDirectory + each files[].path. Keep each supplied path and source unchanged; import runnerFixture and ManagedRunner from runnerFixtureModule and extend Playwright test with runner:runnerFixture. Use runner.login(target URL, source role), runner.edit(source expected outcome), runner.assertOutcome(source expected outcome). These methods capture real DB UI, application actions and assertions. Preserve every source mapping and test ID. Never request these supplied files or fabricate missing product outcomes.'};
+ const stepDefinitionPath='spec/REQ-WB-001/workbench/testing/fixtures/target.steps.ts';
+ const stepDefinitions=[{path:'testing/fixtures/target.steps.ts',rawText:readFileSync(stepDefinitionPath,'utf8')}];
+ const sourceSteps=[
+  {sourceStepId:sourceStepIds.given,keyword:'Given',text:'the account has role "<role>"',sourceLine:4},
+  {sourceStepId:sourceStepIds.when,keyword:'When',text:'the account edits the document',sourceLine:5},
+  {sourceStepId:sourceStepIds.then,keyword:'Then',text:missingExpected?'the result follows an unspecified product rule':'the result is "<expected>"',sourceLine:6},
+ ];
+ return {runnerFixtureModule:'./testing/fixtures/managed-runner.ts',files,stepDefinitions,sourceSteps,
+  instructions:[
+   'The supplied files are existing project helper modules and registered step definitions. Their exact bundle paths are bundleDirectory + each files[].path; the registered definitions and sourceSteps identify the approved source operations.',
+   'Keep each supplied helper path and source unchanged; import runnerFixture and ManagedRunner from runnerFixtureModule and extend Playwright test with runner:runnerFixture. Use runner.login(target URL, source role), runner.edit(source expected outcome), runner.assertOutcome(source expected outcome). These methods capture real DB UI, application actions and assertions.',
+   'When the supplied registered step definitions call createBdd(test) with a custom test, export that exact test object from the configured step module and make rawText import and reuse it for every test declaration. Do not create a second base.extend test object in rawText: the registered definitions are bound to the test object passed to createBdd, and completion validation rejects a different object.',
+   'Preserve every source mapping, source step ID and test ID. Never request these supplied files or fabricate missing product outcomes.',
+  ].join(' ')};
 }
 export const sourceFeature = `Feature: Document editing
   @AC-DEMO-001

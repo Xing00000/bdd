@@ -1,5 +1,5 @@
 import ts from 'typescript';
-import { relative } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import {ExpressionFactory,ParameterTypeRegistry,type Expression} from '@cucumber/cucumber-expressions';
 import {staticStepPattern,stepDefinitionKeywords} from './definitions.js';
 
@@ -36,7 +36,7 @@ function branch(items: Summary[]): Summary {
 }
 
 /** Conservative source proof, never execution evidence or a general proof of business correctness. */
-export function inspectAcceptance(program: ts.Program, spec: ts.SourceFile, requiredTestKeys: string[], directory: string) {
+export function inspectAcceptance(program: ts.Program, spec: ts.SourceFile, requiredTestKeys: string[], directory: string, configPath?: unknown) {
   const checker = program.getTypeChecker(), diagnostics: Diagnostic[] = [];
   const reports: { testKey: string; operation: boolean; assertion: boolean; outcomeAssertion: boolean }[] = [];
   const active = new Set<ts.Node>(); let visits = 0, unresolvedFlow = false;
@@ -81,6 +81,28 @@ export function inspectAcceptance(program: ts.Program, spec: ts.SourceFile, requ
   const registrations:{expression:Expression;callback:ts.ArrowFunction|ts.FunctionExpression;test?:ts.Symbol}[]=[];
   const expressionFactory=new ExpressionFactory(new ParameterTypeRegistry());
   const protectedFixtures=new Set<string>();
+  const staticStepOptions=(raw:ts.Expression|undefined):boolean=>{
+    if(!raw)return false;
+    const options=unwrap(raw);
+    if(!ts.isObjectLiteralExpression(options))return false;
+    const seen=new Set<string>();
+    for(const property of options.properties){
+      if(!ts.isPropertyAssignment(property)||!(ts.isIdentifier(property.name)||ts.isStringLiteral(property.name)))return false;
+      const name=property.name.text;
+      if(seen.has(name))return false;
+      seen.add(name);
+      const value=unwrap(property.initializer);
+      if(name==='arityCheck'){
+        if(value.kind!==ts.SyntaxKind.TrueKeyword&&value.kind!==ts.SyntaxKind.FalseKeyword)return false;
+      }else if(name==='tags'){
+        // inspectAcceptance has no scenario-tag input. Playwright-BDD filters
+        // tagged registrations against the active pickle tags, so even a
+        // literal expression cannot prove that this callback will run.
+        return false;
+      }else return false;
+    }
+    return true;
+  };
   for(const source of program.getSourceFiles())if(bddFile(source))for(const statement of source.statements)
     if(ts.isTypeAliasDeclaration(statement)&&statement.name.text==='BddTestFixtures')for(const property of checker.getTypeFromTypeNode(statement.type).getProperties())protectedFixtures.add(property.name);
   const trustedTest=(symbol:ts.Symbol|undefined,seen=new Set<ts.Symbol>()):boolean=>{
@@ -158,16 +180,112 @@ export function inspectAcceptance(program: ts.Program, spec: ts.SourceFile, requ
       if(!ts.isVariableDeclaration(variable)||!variable.initializer||!ts.isCallExpression(variable.initializer))continue;
       const factory=variable.initializer,declaration=checker.getResolvedSignature(factory)?.getDeclaration();
       if(!bddFile(declaration)||!declaration?.name||declaration.name.getText()!=='createBdd')continue;
-      const callback=call.arguments.at(-1);
-      // World/tag options and custom parameter transformers require their own
-      // source proof; do not execute them or guess a matching callback.
-      if(!(variable.parent.flags&ts.NodeFlags.Const)||factory.arguments.length!==1||call.arguments.length!==2||!callback||!(ts.isArrowFunction(callback)||ts.isFunctionExpression(callback))){registryUnresolved=true;continue;}
+      const callback=call.arguments.at(-1),hasStaticOptions=call.arguments.length===3&&staticStepOptions(call.arguments[1]);
+      // The official API accepts a static ProvidedStepOptions argument. Dynamic
+      // values and unsupported option keys cannot establish which step runs.
+      if(!(variable.parent.flags&ts.NodeFlags.Const)||factory.arguments.length!==1||![2,3].includes(call.arguments.length)
+        ||call.arguments.length===3&&!hasStaticOptions||!callback||!(ts.isArrowFunction(callback)||ts.isFunctionExpression(callback))){registryUnresolved=true;continue;}
       try{const pattern=staticStepPattern(call.arguments[0]);if(!pattern){registryUnresolved=true;continue;}
         registrations.push({expression:expressionFactory.createExpression(pattern.value),callback,test:symbolAt(factory.arguments[0])});
       }catch{registryUnresolved=true;}
     }
   };
+  const configuredStepSources=(rawPath:unknown):ts.SourceFile[]=>{
+    if(rawPath===undefined)return [];
+    if(typeof rawPath!=='string'||isAbsolute(rawPath)||rawPath.includes('\\')||rawPath.split('/').some(part=>!part||part==='.'||part==='..'||part==='node_modules'||part==='.git')){
+      registryUnresolved=true;return [];
+    }
+    const root=resolve(directory),configFilePath=resolve(root,rawPath),configRelative=relative(root,configFilePath);
+    if(!configRelative||isAbsolute(configRelative)||configRelative==='..'||configRelative.startsWith(`..${sep}`)){
+      registryUnresolved=true;return [];
+    }
+    const config=program.getSourceFile(configFilePath);
+    if(!config||config.isDeclarationFile){registryUnresolved=true;return [];}
+    const calls:ts.CallExpression[]=[];
+    const findConfig=(node:ts.Node)=>{
+      if(ts.isCallExpression(node)){
+        const declaration=checker.getResolvedSignature(node)?.getDeclaration();
+        if(bddFile(declaration)&&declaration?.name?.getText()==='defineBddConfig')calls.push(node);
+      }
+      ts.forEachChild(node,findConfig);
+    };
+    findConfig(config);
+    const defaultExports=config.statements.filter((statement):statement is ts.ExportAssignment=>ts.isExportAssignment(statement)&&!statement.isExportEquals);
+    if(defaultExports.length!==1){registryUnresolved=true;return [];}
+    const exported=unwrap(defaultExports[0].expression);
+    if(!ts.isCallExpression(exported)||!ts.isObjectLiteralExpression(exported.arguments[0])){registryUnresolved=true;return [];}
+    const playwrightConfig=checker.getResolvedSignature(exported)?.getDeclaration();
+    if(!playwrightConfig||!pwFile(playwrightConfig)||playwrightConfig.name?.getText()!=='defineConfig'){
+      registryUnresolved=true;return [];
+    }
+    const configObject=unwrap(exported.arguments[0]);
+    if(!ts.isObjectLiteralExpression(configObject)){registryUnresolved=true;return [];}
+    if(configObject.properties.some(property=>!ts.isPropertyAssignment(property)
+      ||!(ts.isIdentifier(property.name)||ts.isStringLiteral(property.name)))){
+      // Spreads, computed names, accessors, and shorthand can hide an override
+      // of testDir, so only inspect ordinary statically named assignments.
+      registryUnresolved=true;return [];
+    }
+    const testDirProperties=configObject.properties.filter((property):property is ts.PropertyAssignment=>ts.isPropertyAssignment(property)
+      &&(ts.isIdentifier(property.name)||ts.isStringLiteral(property.name))&&property.name.text==='testDir');
+    if(testDirProperties.length!==1||calls.length!==1){registryUnresolved=true;return [];}
+    const testDir=unwrap(testDirProperties[0].initializer);
+    let selectedCall:ts.CallExpression|undefined;
+    if(ts.isCallExpression(testDir))selectedCall=testDir;
+    else if(ts.isIdentifier(testDir)){
+      const declaration=symbolAt(testDir)?.valueDeclaration;
+      if(declaration&&ts.isVariableDeclaration(declaration)&&ts.isVariableDeclarationList(declaration.parent)
+        &&!!(declaration.parent.flags&ts.NodeFlags.Const)&&ts.isVariableStatement(declaration.parent.parent)
+        &&declaration.parent.parent.parent===config&&declaration.initializer){
+        const initializer=unwrap(declaration.initializer);
+        if(ts.isCallExpression(initializer))selectedCall=initializer;
+      }
+    }
+    if(!selectedCall||selectedCall!==calls[0]||selectedCall.arguments.length!==1||!selectedCall.arguments[0]){
+      registryUnresolved=true;return [];
+    }
+    const options=unwrap(selectedCall.arguments[0]);
+    if(!ts.isObjectLiteralExpression(options)){registryUnresolved=true;return [];}
+    if(options.properties.some(property=>!ts.isPropertyAssignment(property)
+      ||!(ts.isIdentifier(property.name)||ts.isStringLiteral(property.name)))){
+      // A spread or computed option can replace the explicit steps list.
+      registryUnresolved=true;return [];
+    }
+    const stepProperties=options.properties.filter((property):property is ts.PropertyAssignment=>ts.isPropertyAssignment(property)
+      &&(ts.isIdentifier(property.name)||ts.isStringLiteral(property.name))&&property.name.text==='steps');
+    if(stepProperties.length!==1){registryUnresolved=true;return [];}
+    const patterns=(raw:ts.Expression):string[]|undefined=>{
+      const value=unwrap(raw);
+      if(ts.isStringLiteral(value)||ts.isNoSubstitutionTemplateLiteral(value))return [value.text];
+      if(ts.isArrayLiteralExpression(value)){
+        const result:string[]=[];
+        for(const element of value.elements){
+          if(!ts.isStringLiteral(element)&&!ts.isNoSubstitutionTemplateLiteral(element))return;
+          result.push(element.text);
+        }
+        return result;
+      }
+      return;
+    };
+    const values=patterns(stepProperties[0].initializer);
+    if(!values){registryUnresolved=true;return [];}
+    const sources:ts.SourceFile[]=[];
+    for(const pattern of values){
+      // This verifier resolves the exact static files emitted by the canonical
+      // generator. Dynamic and glob patterns cannot prove which steps run.
+      if(!pattern||/[*?{}\[\]]/.test(pattern)){registryUnresolved=true;continue;}
+      const filePath=resolve(dirname(configFilePath),pattern),fileRelative=relative(root,filePath);
+      if(!fileRelative||isAbsolute(fileRelative)||fileRelative==='..'||fileRelative.startsWith(`..${sep}`)){
+        registryUnresolved=true;continue;
+      }
+      const source=program.getSourceFile(filePath);
+      if(!source||source.isDeclarationFile){registryUnresolved=true;continue;}
+      sources.push(source);
+    }
+    return sources;
+  };
   collect(spec);
+  for(const source of configuredStepSources(configPath))collect(source);
   let currentCallback:ts.ArrowFunction|ts.FunctionExpression|undefined,currentTest:ts.Symbol|undefined;
   const consumed = (call: ts.CallExpression): boolean => {
     const signature = checker.getResolvedSignature(call);

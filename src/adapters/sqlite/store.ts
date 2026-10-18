@@ -1,15 +1,15 @@
 import { Worker } from 'node:worker_threads';
 import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname,resolve } from 'node:path';
 import { CoreError } from '../../domain/errors.ts';
 import type { Store, SqlCommand, SqlValue, Row, RunResult } from '../../ports/store.ts';
 
-export async function createSqliteStore(file: string): Promise<Store & { sqliteVersion: string }> {
+export async function createSqliteStore(file: string, applicationRoot = process.cwd()): Promise<Store & { sqliteVersion: string }> {
   if (file !== ':memory:') await mkdir(dirname(file), { recursive: true });
   const extension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
   // Let Node inherit worker-compatible runtime options; explicitly copying
   // process.execArgv also copies process-only flags under node --test.
-  const worker = new Worker(new URL(`./worker.${extension}`, import.meta.url), { workerData: { file } });
+  const worker = new Worker(new URL(`./worker.${extension}`, import.meta.url), { workerData: { file, root: resolve(applicationRoot) } });
   let nextId = 0, closing = false;
   const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   let readyResolve: (value: string) => void, readyReject: (error: Error) => void;

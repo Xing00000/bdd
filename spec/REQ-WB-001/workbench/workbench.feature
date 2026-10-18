@@ -1,6 +1,6 @@
 # language: en
 # 需求為主要工作入口，專案綁定本機程式碼目錄。
-# 核心範圍：31個Scenario ID、47個展開案例。Gherkin確認後才SD，SD確認後才產生測試並開發。
+# 核心範圍：34個Scenario ID、54個展開案例。Gherkin確認後才SD，SD確認後自動產生測試骨架。
 Feature: 多人共用的BDD軟體開發工作台
   以需求為工作入口，需求可關聯多個綁定本機目錄的程式碼專案
   依Gherkin確認、SD確認、測試產生、開發、驗證的順序工作
@@ -26,34 +26,36 @@ Feature: 多人共用的BDD軟體開發工作台
   @AC-WB-003
   Scenario: 人類確認Gherkin後才產生SD
     Given 工作台顯示所選Gherkin處於確認階段且已有草稿
-    When 人類按下確認Gherkin並透過網頁terminal的互動CLI要求產生SD
+    When 人類確認Gherkin並選擇已指派的系統設計Agent產生SD
     Then 工作台流程狀態顯示SD確認且開啟SD編輯
+    And 使用設定的互動CLI在網頁terminal提出SD草稿
     And 產生對應Gherkin的SD草稿供人類確認
     And SD包含程式架構以及本次資料庫DDL與DML內容
     And 人類尚未確認SD時不進入產品開發
 
   @AC-WB-004
   Scenario: SD確認後將Gherkin產生成Playwright測試骨架
-    Given 人類已確認專案Gherkin且工作台正顯示SD確認階段
-    And 已備妥Gherkin生成器設定與明確的step definitions
-    When 人類按下確認SD並要求產生測試
-    Then 工作台流程狀態顯示test generation/completion
-    And 產生可由Playwright找到的spec.ts檔案
-    And 每個生成案例可對應來源Scenario及Examples列
+    Given 人類已確認該Gherkin與SD
+    When 人類確認SD
+    Then 工作台進入測試情境階段並自動產生唯讀的spec.ts骨架
+    And spec.ts預設收合且每個案例對應來源Scenario及Examples列
+    And 人類不能直接編輯生成骨架
 
   @AC-WB-005
-  Scenario: LLM補齊測試規格
+  Scenario: 使用已指派Agent補齊測試步驟
     Given 已產生對應確認文件的測試骨架
-    When 使用者透過網頁terminal的互動CLI要求LLM補齊操作步驟與預期結果的測試內容
+    When 使用者選擇已指派的測試Agent並透過互動CLI補齊測試步驟
     Then 補齊的測試仍對應人類已確認的驗收條件
+    And CLI在獨立工作目錄讀取經SHA-256核對的官方Playwright-BDD Skill
     And 缺少預期結果資訊時列出待補內容而不自行改寫驗收條件
 
   @AC-WB-006
   Scenario: 依確認文件與測試進行開發
     Given Gherkin與SD已確認且測試規格已補齊
-    When 使用者在工作台按下開始開發
+    When 人類確認已完成檢核的測試步驟
     Then 工作台流程狀態顯示implementation
-    And 可使用確認文件與測試作為開發依據
+    And 測試基線固定且自動進入程式開發階段
+    And 可使用已確認文件及測試基線作為開發依據
     And 開發完成後可開始驗證該次開發成果
 
   @AC-WB-007
@@ -64,11 +66,14 @@ Feature: 多人共用的BDD軟體開發工作台
     And 重新讀取資料庫時可看到實際變更
 
   @AC-WB-008
-  Scenario: 使用PTY終端進行開發
-    Given 專案工作區已開啟
-    When 使用者在PTY終端輸入命令並啟動專案程式
-    Then 終端顯示該命令或程式的實際輸出
-    And 使用者可繼續透過同一終端輸入
+  Scenario: 從固定工作區選單開啟真實PTY終端
+    Given 至少一個工作區已綁定本機程式碼目錄
+    When 使用者從左側Terminal選擇工作區
+    Then 右側直接開啟該工作區的終端頁籤且內容只有終端
+    When 使用者輸入命令並啟動專案程式
+    Then 同一PTY顯示實際輸出且可繼續輸入
+    When 使用者關閉終端頁籤
+    Then 該PTY程序被中止
 
   @AC-WB-009
   Scenario Outline: 即時觀看Playwright使用中的瀏覽器
@@ -82,15 +87,14 @@ Feature: 多人共用的BDD軟體開發工作台
       | program | 程式       |
 
   @AC-WB-010
-  Scenario: 使用者親自操作內嵌瀏覽器並開始與停止錄製
-    Given 使用者已在工作台開啟可親自操作的內嵌瀏覽器
-    When 使用者按下開始錄製
-    And 使用者親自導覽網頁與點擊及輸入並選擇定位器與預期結果
-    And 使用者按下停止錄製
-    Then 產生包含該次操作與斷言的可檢查Playwright TypeScript腳本草稿
-    And 停止後的新操作不再加入該次錄製
-    And 該草稿屬於使用者自錄腳本而不是自動新增的標準CI測試
-    And 不會自動更改Gherkin驗收條件
+  Scenario: 使用全域瀏覽器錄製並保存重播
+    Given 使用者從固定選單開啟瀏覽器錄製
+    When 使用者輸入網址前往、錄製並操作網頁、停止後命名保存
+    Then 已保存名稱出現在左側瀏覽器錄製下方
+    And 開啟保存內容時上方顯示播放與刪除且下方顯示Playwright腳本
+    When 使用者按播放
+    Then 瀏覽器視窗展開並重播保存的動作
+    And 全域錄製不要求關聯專案或需求且不自動成為CI測試
 
   @AC-WB-011
   Scenario: 被開發專案的CI測試跟著該專案Git
@@ -315,13 +319,18 @@ Feature: 多人共用的BDD軟體開發工作台
 
   @AC-WB-030
   Scenario: 左側固定需求選單展開各份Gherkin並切換專屬流程
-    Given 使用者開啟工作台首頁而未先選擇專案
-    When 使用者從左側固定需求選單新增需求
-    Then 新需求可直接開啟且不必先建立或選擇專案
+    Given 使用者開啟需求首頁且已有可選工作區
+    When 使用者新增需求並在同一表單選擇一個以上工作區
+    Then 新需求建立時即關聯所選工作區
     When 使用者在該需求新增第二份Gherkin
     Then 左側需求節點展開列出兩份Gherkin與各自狀態
+    When 使用者在需求清單展開需求並編輯名稱
+    Then Gherkin在原列下方樹狀展開且名稱旁直接出現輸入框與多選工作區下拉選單
+    And 保存需求名稱時一併保存工作區關聯
+    And 工作區管理位於需求首頁下方而非獨立頁面
     When 使用者從左側點選其中一份Gherkin並捲動右側工作區
-    Then 左側需求選單維持固定且右側顯示所選Gherkin的文件與流程
+    Then 左側需求選單維持固定且右側頁籤顯示所選Gherkin的滿版流程內容
+    And 右側可開啟及切換多個頁籤
     And 重新載入後仍顯示相同需求及所選Gherkin
 
   @AC-WB-031
@@ -331,4 +340,51 @@ Feature: 多人共用的BDD軟體開發工作台
     Then 工作台保留一份需求與其Gherkin及專屬SD和BDD而不按專案複製需求
     When 使用者在需求開發區切換目前操作專案並開啟terminal
     Then 每個terminal的實際工作目錄等於所選專案綁定的本機目錄
-    And 專案管理位於固定選單的設定入口且需求不隸屬單一專案
+    And 工作區管理與需求清單位於同一首頁且需求不隸屬單一工作區
+
+  @AC-WB-032
+  Scenario: 首次啟動建立可編輯且持續保存的CLI、Skill與Agent設定
+    Given 工作台資料庫尚未套用預設設定
+    When 工作台首次啟動
+    Then 資料庫建立Codex與Kiro CLI及從skills/playwright-bdd/SKILL.md載入的Playwright BDD Skill
+    And 資料庫建立需求確認、系統設計、測試情境及程式開發Agent，並綁定Codex CLI與Playwright BDD Skill
+    And 流程設定預設將四個Agent各自指派到對應可編輯階段，驗證報告維持唯讀
+    When 使用者修改流程指派、編輯或刪除預設資料並重新啟動工作台
+    Then 流程指派與編輯內容持續保存且已刪除的預設資料不會重新建立
+
+  @AC-WB-035
+  Scenario: 升級既有資料庫時補齊四階段Agent預設
+    Given 工作台資料庫已有舊版LLM預設設定且缺少系統設計、測試情境及程式開發Agent
+    And 使用者已自訂CLI、Skill、Agent或流程指派
+    When 工作台啟動新版
+    Then 資料庫補齊缺少的Playwright BDD Skill與流程Agent
+    And 四個可編輯階段各指派一個對應Agent且驗證報告維持唯讀
+    And 未修改的舊版Codex預設參數升級為目前預設
+    And 使用者已自訂的設定值保持不變
+    When 工作台再次啟動
+    Then 升級不重複執行且已刪除的預設資料不會重新建立
+
+  @AC-WB-033
+  Scenario: 為可編輯階段多選Agent並限制其操作入口
+    Given CLI、Skill及Agent已保存
+    When 使用者為需求確認、系統設計、測試情境及程式開發各自指派多個Agent
+    Then 設定持續保存且驗證報告維持唯讀
+    When 使用者開啟其中一個目前可編輯的需求階段
+    Then 該階段只顯示已指派Agent的操作按鈕
+    And 啟動Agent會在網頁terminal開啟設定的互動CLI並帶入Prompt、Skill及階段文件
+    And Agent未指派到該階段時伺服器拒絕啟動
+
+  @AC-WB-034
+  Scenario Outline: 重啟已完成階段並使該階段及下游狀態失效
+    Given 該Gherkin已完成需求確認、系統設計、測試基線、程式基線及驗證
+    When 使用者選擇已完成的"<stage>"並按右下角重啟階段
+    Then 該階段成為目前階段且後續階段回到未完成狀態
+    And 確認狀態與基線結果符合"<preserved>"及"<invalidated>"
+    And 執行結果標為失效但歷史版本及報告仍保留
+    Examples:
+      | case_id | stage          | preserved                         | invalidated                 |
+      | gherkin | GHERKIN        | 無確認                            | Gherkin及SD確認與全部基線   |
+      | sd      | SD             | Gherkin確認                       | SD確認及全部基線            |
+      | tests   | TESTS          | Gherkin及SD確認                   | 測試與程式基線              |
+      | source  | IMPLEMENTATION | Gherkin及SD確認與測試基線         | 程式基線                    |
+      | verify  | VERIFICATION   | Gherkin及SD確認與測試及程式基線   | 僅執行結果                  |

@@ -3,6 +3,7 @@ import { createSqliteStore } from '../adapters/sqlite/store.ts';
 import type { Row, SqlCommand, SqlValue } from '../ports/store.ts';
 import { fail, invalid } from '../domain/errors.ts';
 import { parseGherkin, parseTypeScript, type ParsedGherkin, type ParsedTest } from '../domain/parsers.ts';
+import { isWorkflowStage, workflowStageOrder, type WorkflowStage } from '../domain/workflow-agent-stages.ts';
 
 export const sha256 = (raw: string | Uint8Array): string => createHash('sha256').update(raw).digest('hex');
 export type SaveVersionInput = {
@@ -29,8 +30,8 @@ export type StartDevelopmentExpectations = {
   expectedConfirmedSdSha256?: string;
 };
 
-export async function createCore(metadataFile: string) {
-  const store = await createSqliteStore(metadataFile);
+export async function createCore(metadataFile: string, applicationRoot = process.cwd()) {
+  const store = await createSqliteStore(metadataFile, applicationRoot);
   let serial: Promise<unknown> = Promise.resolve();
   const mutation = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = serial.then(operation); serial = result.catch(() => undefined); return result;
@@ -44,7 +45,7 @@ export async function createCore(metadataFile: string) {
     return { sql: `INSERT INTO ${table} (${fields.join(',')}) VALUES (${fields.map(() => '?').join(',')})`, params: Object.values(row), expectChanges: 1 };
   };
   const stageGuard = (id: string, stage: string): SqlCommand => ({ sql: 'SELECT id FROM features WHERE id=? AND stage=?', params: [id, stage], mode: 'all', expectRows: 1 });
-  const document = (id: string) => one('SELECT * FROM documents WHERE id=?', [id], 'Document');
+  const document = (id: string) => one('SELECT * FROM documents WHERE id=? AND deleted_at IS NULL', [id], 'Document');
   const requirement = (id: string) => one('SELECT * FROM requirements WHERE id=? AND deleted_at IS NULL', [id], 'Requirement');
   const feature = (id: string) => one('SELECT * FROM features WHERE id=?', [id], 'Feature');
   async function selectFeature(id:string,featureId?:string) {
@@ -94,6 +95,33 @@ export async function createCore(metadataFile: string) {
     result.push({ sql: "UPDATE runs SET status='INVALID' WHERE feature_id=?", params: [id] });
     return result;
   };
+  async function updateRequirementUnsafe(id:string,input:{requirementKey?:unknown;projectIds?:unknown}){
+    const current=await requirement(id),commands:SqlCommand[]=[];
+    let requirementKey=String(current.requirement_key);
+    if(input.requirementKey!==undefined){
+      const key=typeof input.requirementKey==='string'?input.requirementKey.trim():'';
+      if(!key)fail(400,'INVALID_REQUIREMENT','requirementKey is required');
+      if((await store.all('SELECT id FROM requirements WHERE requirement_key=? AND id<>?',[key,id])).length)fail(409,'REQUIREMENT_EXISTS','requirementKey already exists');
+      requirementKey=key;
+      if(key!==current.requirement_key)commands.push({sql:'UPDATE requirements SET requirement_key=? WHERE id=? AND deleted_at IS NULL',params:[key,id],expectChanges:1});
+    }
+    if(input.projectIds!==undefined){
+      const projectIds=input.projectIds;
+      if(!Array.isArray(projectIds))fail(400,'INVALID_PROJECTS','projectIds must be a unique array');
+      const selectedProjectIds=projectIds as string[];
+      if(selectedProjectIds.some(projectId=>typeof projectId!=='string')||new Set(selectedProjectIds).size!==selectedProjectIds.length)fail(400,'INVALID_PROJECTS','projectIds must be a unique array');
+      for(const projectId of selectedProjectIds)await one('SELECT id FROM projects WHERE id=?',[projectId],'Project');
+      const previous=await linkedProjects(id);
+      if(JSON.stringify(previous.map(project=>project.id).sort())!==JSON.stringify([...selectedProjectIds].sort())){
+        const features=await store.all('SELECT id,stage FROM features WHERE requirement_id=?',[id]);
+        commands.push({sql:'DELETE FROM requirement_projects WHERE requirement_id=?',params:[id]},...selectedProjectIds.map(projectId=>insert('requirement_projects',{requirement_id:id,project_id:projectId})),...features.flatMap(feature=>[
+          ...invalidation(feature.id,'sd'),{sql:"UPDATE features SET stage=CASE WHEN stage='GHERKIN' THEN stage ELSE 'SD' END WHERE id=?",params:[feature.id]},
+        ]));
+      }
+    }
+    if(commands.length)await store.batch(commands);
+    return {id,requirementKey,projects:await linkedProjects(id)};
+  }
   function checkStage(d: Row, r?: Row) {
     if (d.purpose === 'integration' || d.purpose === 'recording') return;
     const expected = { gherkin: 'GHERKIN', sd: 'SD', spec: 'TESTS' }[d.kind as string];
@@ -360,7 +388,23 @@ export async function createCore(metadataFile: string) {
       const id = randomUUID(); await store.batch([insert('projects', { id, name: input.name, workspace_ref: input.workspaceRef })]);
       return { id, name: input.name, workspaceRef: input.workspaceRef };
     }); },
+    updateProject(id:string,input:{name:string;workspaceRef:string}){return mutation(async()=>{
+      const previous=await one('SELECT id,name,workspace_ref FROM projects WHERE id=?',[id],'Project');
+      const name=input.name?.trim(),workspaceRef=input.workspaceRef?.trim();
+      if(!name||!workspaceRef)fail(400,'INVALID_PROJECT','name and workspaceRef are required');
+      if((await store.all('SELECT id FROM projects WHERE workspace_ref=? AND id<>?',[workspaceRef,id])).length)fail(409,'PROJECT_DIRECTORY_EXISTS','Project directory is already registered');
+      const commands:SqlCommand[]=[{sql:'UPDATE projects SET name=?,workspace_ref=? WHERE id=?',params:[name,workspaceRef,id],expectChanges:1}];
+      if(workspaceRef!==previous.workspace_ref){
+        const features=await store.all('SELECT f.id,f.stage FROM features f JOIN requirement_projects rp ON rp.requirement_id=f.requirement_id WHERE rp.project_id=?',[id]);
+        for(const feature of features){
+          commands.push({sql:"UPDATE baselines SET valid=0 WHERE feature_id=? AND kind='source'",params:[feature.id]},{sql:"UPDATE runs SET status='INVALID' WHERE feature_id=?",params:[feature.id]});
+          if(feature.stage==='VERIFICATION'||feature.stage==='VERIFIED')commands.push({sql:"UPDATE features SET stage='IMPLEMENTATION' WHERE id=? AND stage=?",params:[feature.id,feature.stage],expectChanges:1});
+        }
+      }
+      await store.batch(commands);return {id,name,workspaceRef};
+    });},
     async listRequirements(projectId?: string) { if(projectId)await one('SELECT id FROM projects WHERE id=?', [projectId], 'Project'); return Promise.all((await store.all('SELECT r.* FROM requirements r'+(projectId?' JOIN requirement_projects rp ON rp.requirement_id=r.id WHERE rp.project_id=? AND r.deleted_at IS NULL':' WHERE r.deleted_at IS NULL')+' ORDER BY r.rowid',projectId?[projectId]:[])).map(async r => ({id:r.id,requirementKey:r.requirement_key,isExample:Boolean(r.is_default_example),projects:await linkedProjects(r.id),features:(await store.all('SELECT id,feature_key featureKey,stage FROM features WHERE requirement_id=? ORDER BY rowid',[r.id]))}))); },
+    renameRequirement(id:string,requirementKey:unknown,projectIds?:unknown){return mutation(()=>updateRequirementUnsafe(id,{requirementKey,projectIds}));},
     ensureDefaultExample,
     deleteDefaultExample(id:string){return mutation(async()=>{const row=(await store.all('SELECT id FROM requirements WHERE id=? AND is_default_example=1 AND deleted_at IS NULL',[id]))[0];if(!row)fail(404,'NOT_FOUND','Default example not found');await store.run("UPDATE requirements SET deleted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND is_default_example=1 AND deleted_at IS NULL",[id]);return {id,deleted:true};});},
     createRequirement(projectId: string|null, input: { requirementKey: string;projectIds?:string[] }) { return mutation(async () => {
@@ -373,19 +417,7 @@ export async function createCore(metadataFile: string) {
       for (const kind of ['gherkin', 'sd', 'spec']) commands.push(insert('documents', { id: randomUUID(), project_id: null, requirement_id: id, feature_id:featureId, kind, purpose: kind === 'spec' ? 'target_ci' : 'requirement', file_name: kind === 'gherkin' ? `${input.requirementKey}.feature` : kind === 'sd' ? `${input.requirementKey}.sd.md` : `${input.requirementKey}.feature.spec.ts` }));
       await store.batch(commands); return getRequirement(id);
     }); },
-    setRequirementProjects(id:string,projectIds:string[]){return mutation(async()=>{
-      await requirement(id);
-      if(!Array.isArray(projectIds)||projectIds.some(id=>typeof id!=='string')||new Set(projectIds).size!==projectIds.length)fail(400,'INVALID_PROJECTS','projectIds must be a unique array');
-      for(const id of projectIds)await one('SELECT id FROM projects WHERE id=?',[id],'Project');
-      const previous=await linkedProjects(id);
-      if(JSON.stringify(previous.map(p=>p.id).sort())!==JSON.stringify([...projectIds].sort())){
-        const features=await store.all('SELECT * FROM features WHERE requirement_id=?',[id]);
-        await store.batch([{sql:'DELETE FROM requirement_projects WHERE requirement_id=?',params:[id]},...projectIds.map(projectId=>insert('requirement_projects',{requirement_id:id,project_id:projectId})),...features.flatMap(f=>[
-          ...invalidation(f.id,'sd'),{sql:"UPDATE features SET stage=CASE WHEN stage='GHERKIN' THEN stage ELSE 'SD' END WHERE id=?",params:[f.id]},
-        ])]);
-      }
-      return {id,projects:await linkedProjects(id)};
-    });},
+    setRequirementProjects(id:string,projectIds:string[]){return mutation(async()=>({id,projects:(await updateRequirementUnsafe(id,{projectIds})).projects}));},
     getRequirement, selectFeature, getVersion, structure, scenarioTests,
     createFeature(requirementId:string,input:{featureKey:string}) {return mutation(async()=>{
       const r=await requirement(requirementId);
@@ -396,16 +428,41 @@ export async function createCore(metadataFile: string) {
       await store.batch(commands);return getRequirement(requirementId,id);
     });},
     saveVersion(documentId: string, payload: SaveVersionInput) { return mutation(() => saveVersionUnsafe(documentId, payload)); },
-    createScript(input: { projectId: string; requirementId?: string | null; purpose: 'recording' | 'integration'; rawText: string; actions?: Record<string, any>[]; sourceGherkinVersionId?: string | null; mappings?: Record<string, any>[]; executionConfig?: Record<string, unknown>; fileName?: string }) { return mutation(async () => {
-      await one('SELECT id FROM projects WHERE id=?', [input.projectId], 'Project');
+    renameFeature(requirementId:string,featureId:string,featureKey:unknown){return mutation(async()=>{
+      await requirement(requirementId);
+      const feature=await one('SELECT id FROM features WHERE id=? AND requirement_id=?',[featureId,requirementId],'Feature');
+      const key=typeof featureKey==='string'?featureKey.trim():'';
+      if(!key||/[\/\\\0]/.test(key))fail(400,'INVALID_FEATURE','A featureKey without path separators is required');
+      if((await store.all('SELECT id FROM features WHERE requirement_id=? AND feature_key=? AND id<>?',[requirementId,key,featureId])).length)fail(409,'FEATURE_EXISTS','Feature already exists');
+      await store.run('UPDATE features SET feature_key=? WHERE id=? AND requirement_id=?',[key,featureId,requirementId]);
+      return {id:feature.id,requirementId,featureId,featureKey:key};
+    });},
+    createScript(input: { projectId?: string | null; requirementId?: string | null; purpose: 'recording' | 'integration'; rawText: string; actions?: Record<string, any>[]; sourceGherkinVersionId?: string | null; mappings?: Record<string, any>[]; executionConfig?: Record<string, unknown>; fileName?: string }) { return mutation(async () => {
       if (!['recording', 'integration'].includes(input.purpose)) fail(400, 'INVALID_PURPOSE', 'Script purpose must be recording or integration');
-      if (input.requirementId) await one('SELECT requirement_id FROM requirement_projects WHERE requirement_id=? AND project_id=?', [input.requirementId, input.projectId], 'Requirement project');
+      if (input.purpose==='integration'&&!input.projectId) fail(400,'PROJECT_REQUIRED','Integration tests require a project');
+      if (input.projectId) await one('SELECT id FROM projects WHERE id=?', [input.projectId], 'Project');
+      if (input.requirementId) {
+        const projectId=input.projectId;
+        if(!projectId) fail(400,'PROJECT_REQUIRED','Requirement recordings require a project');
+        await one('SELECT requirement_id FROM requirement_projects WHERE requirement_id=? AND project_id=?', [input.requirementId, projectId as string], 'Requirement project');
+      }
       if (!input.requirementId && (input.sourceGherkinVersionId || input.mappings?.length)) invalid(input.fileName ?? 'script.spec.ts', 'MAPPING_INVALID', [{ line: 1, column: 1, reason: 'Source mappings require an actual requirement association' }]);
-      const id = randomUUID(), d = { id, project_id: input.projectId, requirement_id: input.requirementId ?? null, kind: 'spec', purpose: input.purpose, file_name: input.fileName ?? `${input.purpose}.spec.ts` };
+      const fileName=input.fileName??`${input.purpose}.spec.ts`;
+      if(typeof fileName!=='string'||!fileName.trim()||fileName.length>180||/[\\/\0\r\n]/.test(fileName)) fail(400,'INVALID_FILE_NAME','Script fileName must be a non-empty file name without path separators');
+      const id = randomUUID(), d = { id, project_id: input.projectId ?? null, requirement_id: input.requirementId ?? null, kind: 'spec', purpose: input.purpose, file_name: fileName.trim() };
       const result = await saveVersionUnsafe(id, { rawText: input.rawText, sourceGherkinVersionId: input.sourceGherkinVersionId, actions: input.actions, executionConfig: input.executionConfig,
         manifest: input.mappings?.length ? { sourceGherkinVersionId: input.sourceGherkinVersionId, specSha256: sha256(input.rawText), mappings: input.mappings } : null }, d);
       return { ...result, id };
     }); },
+    deleteGlobalBrowserRecording(id:string){return mutation(async()=>{
+      const document=await one("SELECT id FROM documents WHERE id=? AND purpose='recording' AND project_id IS NULL AND deleted_at IS NULL",[id],'Global browser recording');
+      const deletedAt=new Date().toISOString();
+      await store.batch([
+        {sql:"SELECT id FROM documents WHERE id=? AND purpose='recording' AND project_id IS NULL AND deleted_at IS NULL",params:[id],mode:'all',expectRows:1},
+        {sql:'UPDATE documents SET deleted_at=? WHERE id=? AND deleted_at IS NULL',params:[deletedAt,id],expectChanges:1},
+      ]);
+      return {id:document.id,deletedAt};
+    });},
     confirm(requirementId: string, kind: 'gherkin' | 'sd', body: { versionId: string; rawSha256: string; featureId?:string }) { return mutation(() => confirmUnsafe(requirementId, kind, body)); },
     returnTo(requirementId: string, artifactKind: string,featureId?:string) { return mutation(async () => {
       const r = await selectFeature(requirementId,featureId);
@@ -416,6 +473,23 @@ export async function createCore(metadataFile: string) {
       if (order.indexOf(target) > order.indexOf(r.stage)) fail(409, 'INVALID_STAGE_TRANSITION', 'Return cannot skip forward over workflow gates');
       await store.batch([...invalidation(r.id, kind), { sql: 'UPDATE features SET stage=? WHERE id=? AND stage=?', params: [target, r.id, r.stage], expectChanges: 1 }]);
       return getRequirement(requirementId,r.id);
+    }); },
+    restartStage(requirementId: string, requestedStage: unknown, featureId?: string) { return mutation(async () => {
+      if (!isWorkflowStage(requestedStage) || requestedStage === 'VERIFIED') fail(400, 'INVALID_STAGE', 'Choose a visible workflow stage to restart');
+      const r = await selectFeature(requirementId, featureId), target = requestedStage as Exclude<WorkflowStage, 'VERIFIED'>;
+      const currentIndex = workflowStageOrder.indexOf(r.stage as WorkflowStage), targetIndex = workflowStageOrder.indexOf(target);
+      if (currentIndex < 0 || targetIndex >= currentIndex) fail(409, 'STAGE_NOT_COMPLETED', 'Only a completed workflow stage can be restarted');
+      const commands: SqlCommand[] = [];
+      if (target === 'GHERKIN') commands.push({sql:'DELETE FROM confirmations WHERE feature_id=?',params:[r.id]});
+      else if (target === 'SD') commands.push({sql:"DELETE FROM confirmations WHERE feature_id=? AND kind='sd'",params:[r.id]});
+      if (target === 'IMPLEMENTATION') commands.push({sql:"UPDATE baselines SET valid=0 WHERE feature_id=? AND kind='source'",params:[r.id]});
+      else if (target !== 'VERIFICATION') commands.push({sql:'UPDATE baselines SET valid=0 WHERE feature_id=?',params:[r.id]});
+      commands.push(
+        {sql:"UPDATE runs SET status='INVALID' WHERE feature_id=?",params:[r.id]},
+        {sql:'UPDATE features SET stage=? WHERE id=? AND stage=?',params:[target,r.id,r.stage],expectChanges:1},
+      );
+      await store.batch(commands);
+      return getRequirement(requirementId, r.id);
     }); },
     startDevelopment(requirementId: string, expectations: StartDevelopmentExpectations = {}) { return mutation(async () => {
       const r = await getRequirement(requirementId,expectations.featureId);

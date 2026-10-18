@@ -91,3 +91,43 @@ ALTER TABLE requirements ADD COLUMN is_default_example INTEGER NOT NULL DEFAULT 
 ALTER TABLE requirements ADD COLUMN deleted_at TEXT;
 CREATE UNIQUE INDEX one_default_example ON requirements(is_default_example) WHERE is_default_example=1;`}],
 };
+
+export const globalBrowserRecordingMigration:MetadataMigration={
+ id:'0007_global_browser_recordings',fromVersion:6,toVersion:7,rebuildTables:true,
+ dmlReason:'Preserve every existing document identity and project association while allowing user browser recordings to have no project; no rows are added or removed.',
+ steps:[{kind:'ddl',sql:`
+CREATE TABLE documents_new (
+ id TEXT PRIMARY KEY NOT NULL,
+ project_id TEXT REFERENCES projects(id),
+ requirement_id TEXT REFERENCES requirements(id),
+ kind TEXT NOT NULL CHECK(kind IN ('gherkin','sd','spec')),
+ purpose TEXT NOT NULL CHECK(purpose IN ('requirement','target_ci','integration','recording')),
+ file_name TEXT NOT NULL,
+ feature_id TEXT REFERENCES features(id),
+ CHECK((purpose='requirement' AND kind IN ('gherkin','sd') AND requirement_id IS NOT NULL AND project_id IS NULL)
+ OR (purpose='target_ci' AND kind='spec' AND requirement_id IS NOT NULL AND project_id IS NULL)
+ OR (purpose='integration' AND kind='spec' AND project_id IS NOT NULL)
+ OR (purpose='recording' AND kind='spec'))
+);`},{kind:'dml',sql:'INSERT INTO documents_new SELECT id,project_id,requirement_id,kind,purpose,file_name,feature_id FROM documents;'},{kind:'ddl',sql:`
+DROP TABLE documents;
+ALTER TABLE documents_new RENAME TO documents;
+CREATE UNIQUE INDEX one_feature_document ON documents(feature_id,kind) WHERE purpose IN ('requirement','target_ci');
+CREATE TRIGGER documents_feature_insert BEFORE INSERT ON documents
+WHEN NEW.purpose IN ('requirement','target_ci')
+BEGIN
+ SELECT CASE WHEN NEW.feature_id IS NULL OR NOT EXISTS(SELECT 1 FROM features WHERE id=NEW.feature_id AND requirement_id=NEW.requirement_id)
+ THEN RAISE(ABORT,'Feature must belong to requirement') END;
+END;
+CREATE TRIGGER documents_feature_update BEFORE UPDATE ON documents
+WHEN NEW.purpose IN ('requirement','target_ci')
+BEGIN
+ SELECT CASE WHEN NEW.feature_id IS NULL OR NOT EXISTS(SELECT 1 FROM features WHERE id=NEW.feature_id AND requirement_id=NEW.requirement_id)
+ THEN RAISE(ABORT,'Feature must belong to requirement') END;
+END;`}],
+};
+
+export const browserRecordingDeletionMigration:MetadataMigration={
+ id:'0009_browser_recording_tombstones',fromVersion:8,toVersion:9,
+ dmlReason:'Soft deletion hides saved global browser recordings while preserving document versions and run history that may reference them.',
+ steps:[{kind:'ddl',sql:'ALTER TABLE documents ADD COLUMN deleted_at TEXT;'}],
+};
