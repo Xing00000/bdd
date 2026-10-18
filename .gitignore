@@ -1,0 +1,10 @@
+node_modules/
+.bddgen-negative/
+spec/**/*.feature.spec.js
+.test-fixtures/
+test-results/
+playwright-report/
+*.tsbuildinfo
+.workbench/
+.mentor/
+dist/

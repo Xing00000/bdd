@@ -1,0 +1,55 @@
+{
+  "name": "bdd-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "postinstall": "npm_config_build_from_source=true npm rebuild node-pty",
+    "build": "node tools/build.mjs",
+    "deploy": "npm run build && node tools/deploy.mjs",
+    "check": "tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p ui/tsconfig.json",
+    "start": "node dist/src/main.js",
+    "init-fixtures": "node tools/init-fixtures.mjs",
+    "serve-fixtures": "node tools/serve-fixtures.mjs",
+    "verify": "node tools/verify-app.mjs",
+    "test": "node tools/bdd/run-e2e.mjs",
+    "test:app": "node tools/test.mjs",
+    "test:e2e": "node tools/run-e2e.mjs",
+    "spec:generate": "node tools/bdd/generate.mjs",
+    "spec:verify": "node tools/bdd/verify.mjs",
+    "spec:list": "playwright test --list --reporter=list",
+    "spec:typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:tooling": "node --import ./tools/bdd/register-ts.mjs --test tests/integration/bdd-tooling.test.mjs",
+    "test:checks": "node tools/bdd/checks.mjs"
+  },
+  "dependencies": {
+    "@cucumber/cucumber-expressions": "19.0.0",
+    "@cucumber/gherkin": "39.1.0",
+    "@cucumber/messages": "32.3.1",
+    "@fastify/static": "10.1.6",
+    "@fastify/websocket": "11.3.4",
+    "@playwright/test": "1.64.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "fastify": "5.12.7",
+    "markdown-it": "^15.0.3",
+    "mermaid": "^12.2.0",
+    "node-pty": "1.1.0",
+    "playwright-bdd": "9.2.1",
+    "typescript": "5.9.3",
+    "vue": "3.5.44"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "24.10.1",
+    "@vitejs/plugin-vue": "6.0.10",
+    "vite": "8.3.4",
+    "vue-tsc": "3.3.13"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
+  }
+}

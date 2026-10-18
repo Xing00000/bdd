@@ -1,0 +1,11 @@
+PRAGMA foreign_keys=ON;
+BEGIN IMMEDIATE;
+ALTER TABLE requirements ADD COLUMN is_default_example INTEGER NOT NULL DEFAULT 0 CHECK(is_default_example IN (0,1));
+ALTER TABLE requirements ADD COLUMN deleted_at TEXT;
+CREATE UNIQUE INDEX one_default_example ON requirements(is_default_example) WHERE is_default_example=1;
+CREATE TEMP TABLE migration_fk_check(failures INTEGER CHECK(failures=0));
+INSERT INTO migration_fk_check SELECT count(*) FROM pragma_foreign_key_check;
+DROP TABLE migration_fk_check;
+PRAGMA user_version=6;
+COMMIT;
+PRAGMA foreign_keys=ON;

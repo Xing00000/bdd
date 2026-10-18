@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "dialect": "sqlite",
+  "targetVersion": 11,
+  "sources": {
+    "src/adapters/sqlite/schema.ts": "c3cdf504afdab8f3b26bd8c570523f1a4519dd99736dad430e2229b45828e130",
+    "src/adapters/sqlite/migrations.ts": "c22c5cefe0e9c09b5a77c1f2a670d8ebea96a5a0cb7cf14d48973a194fa77396",
+    "src/adapters/sqlite/features.ts": "fa5d06e7b63cd72f9a43aa01c0cd7e07c9af2a123ed7ee52f2c5b994a196f0cb",
+    "src/adapters/sqlite/llm-settings.ts": "0bde9c85c72b4a94c3c0293662efad42201798b58ec524128853daf296a49325",
+    "src/adapters/sqlite/workflow-settings.ts": "e331f1cfad02bd458bcbe1528dd0637456f975390a81df2ead18bf36465253e1",
+    "src/adapters/sqlite/seed.ts": "2bfa7a466fb92dfbdf99ded95708c2db343cdb99df6be03eeffba1072cf5d25d",
+    "src/domain/workflow-agent-stages.ts": "dc514d497fd1ac10099abf802f2fcf1c7c7046320e027a9bdbe2467e59d422fd",
+    "src/adapters/sqlite/seed.sql": "92dd20cbb2eed816336408c890621054542bd724cf975adac8345889aad72d89",
+    "skills/playwright-bdd/SKILL.md": "0e8809a494c450289dab05c410988fe4ad7c036b48338adb6a4c0d583b62d8d5",
+    "tools/deploy.mjs": "662768e6a9a7927c4c94a8b2fcc876220eb01c0417132ffec1cb9503cc60cda4",
+    "tools/migrate.mjs": "647b0ac7147e5c20b6c336785ddfe072c60dc7cab04c0a15f9a1e05ad1fb0bd9",
+    "tools/dbgate.Dockerfile": "d82c4cc39f86523db0591c35de4d21fabbfdff345aa174f17c4c0eb8a15294e9"
+  },
+  "migrations": [
+    {
+      "id": "0001_initial_metadata",
+      "fromVersion": 0,
+      "toVersion": 1,
+      "ddl": {
+        "path": "ddl/0001_initial_metadata.sql",
+        "sha256": "91a8e25ecd5c157694b35310443d3d233ea99988e17903936b9f33054b806f39"
+      },
+      "dml": [],
+      "dmlReason": "Metadata records are created by application use cases; there is no deployment seed data.",
+      "sql": {
+        "path": "migrations/0001_initial_metadata.sql",
+        "sha256": "4f278f4fbfcd37bc3bcecf5e693409674cca8dc538880389db18f78c221eb39a"
+      }
+    },
+    {
+      "id": "0002_feature_workflows",
+      "fromVersion": 1,
+      "toVersion": 2,
+      "ddl": {
+        "path": "ddl/0002_feature_workflows.sql",
+        "sha256": "95c54fcc756f84d7a5812e758b853c70098991ab3b199b48e2f69e45777d21f4"
+      },
+      "dml": [
+        {
+          "path": "dml/0002_feature_workflows.sql",
+          "sha256": "203b3ddad1a9f33ad985fea7fa8e9c9dddc4137a9f38c31603af6d0a48d18d2c"
+        }
+      ],
+      "dmlReason": "Preserve each legacy requirement workflow as its first feature, including confirmations, documents, baselines and runs.",
+      "sql": {
+        "path": "migrations/0002_feature_workflows.sql",
+        "sha256": "c4aea8f0bbf431bd8520edbbda42d462807a0335cf84286135f47d9e08e982da"
+      }
+    },
+    {
+      "id": "0003_dbgate_connection",
+      "fromVersion": 2,
+      "toVersion": 3,
+      "ddl": {
+        "path": "ddl/0003_dbgate_connection.sql",
+        "sha256": "06b0ae659d2e09b0d896c7525814e5681820d3396d2f1c4a003a8cc1c3907255"
+      },
+      "dml": [],
+      "dmlReason": "DbGate URLs are configured per target connection; no seed data is required.",
+      "sql": {
+        "path": "migrations/0003_dbgate_connection.sql",
+        "sha256": "c073a413846008251f203a3ae56af2441cda2f8d84d028b4310f5225b2df1275"
+      }
+    },
+    {
+      "id": "0004_requirement_projects",
+      "fromVersion": 3,
+      "toVersion": 4,
+      "ddl": {
+        "path": "ddl/0004_requirement_projects.sql",
+        "sha256": "98c16be6acec0342b4bc41b4467fe71c4d55b254ad33634caef5a5d67adf5e77"
+      },
+      "dml": [
+        {
+          "path": "dml/0004_requirement_projects.sql",
+          "sha256": "60524b6fd2580f393e7fa656b07414dd0cbfa0e151ed6f218ae0eedb678975a2"
+        }
+      ],
+      "dmlReason": "Preserve existing requirement identities and associate their former project through the many-to-many relation; preserve all document and run evidence.",
+      "sql": {
+        "path": "migrations/0004_requirement_projects.sql",
+        "sha256": "5ae2bd21bbbdaafdbc1e2f17e9743ca8791b0edf34f2a72f13c2c2e1b4f8a090"
+      }
+    },
+    {
+      "id": "0005_project_git_snapshots",
+      "fromVersion": 4,
+      "toVersion": 5,
+      "ddl": {
+        "path": "ddl/0005_project_git_snapshots.sql",
+        "sha256": "3f56574bd66950d7e0e199a941bdb51b1435a6cec13055d78debc1cbef1fac39"
+      },
+      "dml": [
+        {
+          "path": "dml/0005_project_git_snapshots.sql",
+          "sha256": "2dc3f39866b81014e428e3f5ffd46fa84b8b90722cbfb9d6f322fe4d76339b2c"
+        }
+      ],
+      "dmlReason": "Preserve legacy Git receipts under an exact registered repository owner when identifiable; retain unmatched historical receipts without inventing a project association, and retain separate receipts when one BDD version is exported to multiple repositories.",
+      "sql": {
+        "path": "migrations/0005_project_git_snapshots.sql",
+        "sha256": "db7445086fbec0c9ad589f8d34d7adf31f810e4c03f9804bfae8641b28e8b161"
+      }
+    },
+    {
+      "id": "0006_default_example",
+      "fromVersion": 5,
+      "toVersion": 6,
+      "ddl": {
+        "path": "ddl/0006_default_example.sql",
+        "sha256": "cbf3be0e6a68922d712173e676ffc642829703e41d83935a0599fd73c1952a9c"
+      },
+      "dml": [],
+      "dmlReason": "No seed rows are inserted by migration. The application creates its one-time default example through the metadata owner; soft deletion preserves its tombstone and evidence.",
+      "sql": {
+        "path": "migrations/0006_default_example.sql",
+        "sha256": "d90baf1d1f63da128335ba95399ec01823ff31b732a25a2fbb1e5e8eb08bc774"
+      }
+    },
+    {
+      "id": "0007_global_browser_recordings",
+      "fromVersion": 6,
+      "toVersion": 7,
+      "ddl": {
+        "path": "ddl/0007_global_browser_recordings.sql",
+        "sha256": "c7b7642bb80cc107af6e5a3504c0c64d4e0a5b8ce7588db21d2681368f3b2793"
+      },
+      "dml": [
+        {
+          "path": "dml/0007_global_browser_recordings.sql",
+          "sha256": "2a0e4822f6a86d614eb660632e0984d72efe063fb18b85e39c76a69142b94366"
+        }
+      ],
+      "dmlReason": "Preserve every existing document identity and project association while allowing user browser recordings to have no project; no rows are added or removed.",
+      "sql": {
+        "path": "migrations/0007_global_browser_recordings.sql",
+        "sha256": "1b85bfe02bf0d068055593e1a4e0d6df1983d9eeca1c68d744bf9ce247e238ec"
+      }
+    },
+    {
+      "id": "0008_terminal_sessions",
+      "fromVersion": 7,
+      "toVersion": 8,
+      "ddl": {
+        "path": "ddl/0008_terminal_sessions.sql",
+        "sha256": "fae5e29edb58cd48712f88efa95b9d667fbbc0b2861469405a9feced7d2c6c64"
+      },
+      "dml": [],
+      "dmlReason": "Terminal session identifiers are recorded when users open a PTY; migration adds no session rows.",
+      "sql": {
+        "path": "migrations/0008_terminal_sessions.sql",
+        "sha256": "d73e76863949e3df33ee292e49419ebe2ea169f0ca73574cc6173e21f7c75254"
+      }
+    },
+    {
+      "id": "0009_browser_recording_tombstones",
+      "fromVersion": 8,
+      "toVersion": 9,
+      "ddl": {
+        "path": "ddl/0009_browser_recording_tombstones.sql",
+        "sha256": "a08e486dcff8bc61191fd664f12536dee014600aff188b30bcc593c17a5a3f9a"
+      },
+      "dml": [],
+      "dmlReason": "Soft deletion hides saved global browser recordings while preserving document versions and run history that may reference them.",
+      "sql": {
+        "path": "migrations/0009_browser_recording_tombstones.sql",
+        "sha256": "de753500c2b30c58adfa94b8ed6f3f2425a5719cb9e1cb4b4456fc1d7105c375"
+      }
+    },
+    {
+      "id": "0010_llm_agent_settings",
+      "fromVersion": 9,
+      "toVersion": 10,
+      "ddl": {
+        "path": "ddl/0010_llm_agent_settings.sql",
+        "sha256": "26fedab49f6baad45ce48933fe27eda2e7ff4cd5a6c4720e196874e35bc9a8c1"
+      },
+      "dml": [],
+      "dmlReason": "Create persistent CLI, Skill, Agent and one-time seed records; user-selected settings are seeded separately from the application seed file.",
+      "sql": {
+        "path": "migrations/0010_llm_agent_settings.sql",
+        "sha256": "7ef29ea24761365fd0a6f4e3dc03cbef65f6e93f7bc0da024235f347a8d027a1"
+      }
+    },
+    {
+      "id": "0011_workflow_agent_assignments",
+      "fromVersion": 10,
+      "toVersion": 11,
+      "ddl": {
+        "path": "ddl/0011_workflow_agent_assignments.sql",
+        "sha256": "9d47af0a5ceb4ac9afb0bbb62ff15473d26845278adf58264bb366fb379f259e"
+      },
+      "dml": [
+        {
+          "path": "dml/0011_workflow_agent_assignments.sql",
+          "sha256": "461201a12863b6f00d2ae920dafaa9895493476887db778bfaba618c8727006d"
+        }
+      ],
+      "dmlReason": "Create persistent many-to-many Agent assignments for editable workflow stages and bind the existing first-run Gherkin Agent when present; verification remains read-only.",
+      "sql": {
+        "path": "migrations/0011_workflow_agent_assignments.sql",
+        "sha256": "93d6bf4458935d5826f6a0d92efdd2454614d35a6cb11e53cbfb1ad0df735533"
+      }
+    }
+  ],
+  "runner": {
+    "path": "migrate.mjs",
+    "sha256": "647b0ac7147e5c20b6c336785ddfe072c60dc7cab04c0a15f9a1e05ad1fb0bd9"
+  },
+  "seed": {
+    "path": "seed.sql",
+    "sha256": "ee5d87cb07b2bf58ed4278b620bad300d25142385bc3710b1f8301e7a4b7016e"
+  },
+  "seedUpgrade": {
+    "path": "seed-upgrade.sql",
+    "sha256": "7d9b31ae45cd4845fe7cb8b5e6d12c5591384c8bf0871dea627b9845f11d0e77"
+  },
+  "dbgate": {
+    "dockerfile": {
+      "path": "dbgate/Dockerfile",
+      "sha256": "d82c4cc39f86523db0591c35de4d21fabbfdff345aa174f17c4c0eb8a15294e9"
+    }
+  }
+}
