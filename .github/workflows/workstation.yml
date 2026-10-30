@@ -75,6 +75,8 @@ jobs:
   application-build:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/application-browsers
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +92,8 @@ jobs:
         run: npm run check 2>&1 | tee verification/application-check.log
       - name: Build application
         run: npm run build 2>&1 | tee verification/application-build.log
+      - name: Install browser required by existing application UI tests
+        run: node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee verification/application-browser-install.log
       - name: Run application unit and integration checks
         run: npm run test:app 2>&1 | tee verification/application-tests.log
       - name: Preserve application validation logs
