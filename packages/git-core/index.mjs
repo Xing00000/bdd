@@ -39,24 +39,24 @@ export function processEnvironment(extra = {}, { git = false } = {}) {
   }
   return env;
 }
-export async function execute(executable, args, { cwd, env = {}, timeoutMs = 180000, input, maxBytes = 8 * 1024 * 1024, onOutput } = {}) {
+export async function execute(executable, args, { cwd, env = {}, timeoutMs = 180000, input, maxBytes = 8 * 1024 * 1024, onOutput, binaryOutput = false } = {}) {
   invariant(typeof executable === 'string' && executable && Array.isArray(args) && args.every(v => typeof v === 'string' && !v.includes('\0')), 'INVALID_COMMAND', 'Invalid executable/arguments');
   return new Promise((resolve, reject) => {
     const child = trackChild(spawn(executable, args, { cwd, env, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }));
-    let stdout = '', stderr = '', bytes = 0, timedOut = false, overflow = false, hardKill;
+    let stdout = [], stderr = [], bytes = 0, timedOut = false, overflow = false, hardKill;
     const kill = signal => { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} };
     const stop = () => { kill('SIGTERM'); hardKill = setTimeout(() => kill('SIGKILL'), 1000); hardKill.unref(); };
     const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs); timer.unref();
     const capture = (kind, chunk) => {
       bytes += chunk.length;
       if (bytes > maxBytes) { if (!overflow) { overflow = true; stop(); } return; }
-      const text = chunk.toString('utf8'); if (kind === 'stdout') stdout += text; else stderr += text;
-      onOutput?.(kind, text);
+      if (kind === 'stdout') stdout.push(chunk); else stderr.push(chunk);
+      onOutput?.(kind, chunk.toString('utf8'));
     };
     child.stdout.on('data', chunk => capture('stdout', chunk)); child.stderr.on('data', chunk => capture('stderr', chunk));
     child.stdin.on('error', () => {}); child.stdin.end(input);
     child.once('error', error => { clearTimeout(timer); clearTimeout(hardKill); reject(error); });
-    child.once('close', (exitCode, signal) => { clearTimeout(timer); clearTimeout(hardKill); resolve({ exitCode, signal, timedOut, overflow, stdout, stderr }); });
+    child.once('close', (exitCode, signal) => { clearTimeout(timer); clearTimeout(hardKill); resolve({ exitCode, signal, timedOut, overflow, stdout: binaryOutput ? Buffer.concat(stdout) : Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') }); });
   });
 }
 export function createGit(policy = {}) {
@@ -164,6 +164,7 @@ export function createGit(policy = {}) {
   }
   return {
     command, root, resolve, inspect, expect, modules, restore, policy: settings,
+    async blob(directory, sha, maxBytes = 32 * 1024 * 1024) { return (await command(directory, ['cat-file', 'blob', commitId(sha)], { binaryOutput: true, maxBytes })).stdout; },
     async init(directory, branch = 'main') { branchName(branch); await mkdir(directory, { recursive: true }); await command(directory, ['init', '--initial-branch', branch]); return inspect(directory); },
     async clone(url, directory, branch) {
       remoteUrl(url, settings); if (branch) branchName(branch);

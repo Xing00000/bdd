@@ -3,12 +3,18 @@ import { readFile } from 'node:fs/promises';
 import { createGit, remoteUrl } from '../git-core/index.mjs';
 import { id, version, invariant, safePath, exists, writeJson, readJson, digest } from '../contracts/index.mjs';
 import { initialize, createFeature, validate, configuration, confirm, saveFile, scan, reviewState } from '../spec-toolkit/index.mjs';
+import { planUpgrade } from './upgrades.mjs';
+import { planLegacyImport, backupLegacySelection } from './legacy.mjs';
+import { publicPlan, applyPlan, resumePlan } from './transactions.mjs';
+import { reindexReports } from './reports.mjs';
 import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 
 import { validateContract } from '../contracts/schemas.mjs';
 
 export const operationNames = Object.freeze([
   'workspace.clone', 'workspace.initialize', 'workspace.validate',
+  'workspace.upgrade.preview', 'workspace.upgrade.apply', 'workspace.transaction.resume',
+  'legacy.preview', 'legacy.import', 'reports.reindex',
   'spec.feature.create', 'spec.file.save', 'spec.review.confirm',
   'git.fetch', 'git.branch', 'git.commit', 'git.push',
   'submodule.add', 'submodule.restore', 'submodule.pin', 'submodule.remove',
@@ -41,8 +47,28 @@ export async function executeOperation(options, store, request) {
     target = await safePath(root, project.path);
     invariant(request.operation.startsWith('git.'), 'TARGET_NOT_ALLOWED', 'Project targets only accept Git operations');
   }
-  if (!['workspace.validate', 'run.execute', 'run.publish'].includes(request.operation)) await git.expect(target, request.expected);
+  if (!['workspace.validate', 'run.execute', 'run.publish', 'reports.reindex', 'workspace.upgrade.preview', 'legacy.preview'].includes(request.operation)) await git.expect(target, request.expected);
   switch (request.operation) {
+    case 'workspace.upgrade.preview': return publicPlan(await planUpgrade(root, toolkitRoot));
+    case 'workspace.upgrade.apply': {
+      const state = await git.expect(root, request.expected, { clean: true });
+      const plan = await planUpgrade(root, toolkitRoot);
+      return applyPlan({ root, home, workspaceId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
+    }
+    case 'workspace.transaction.resume': {
+      const state = await git.inspect(root);
+      return resumePlan({ root, home, workspaceId: workspace.id, transactionId: input.transactionId, sourceHead: state.head });
+    }
+    case 'legacy.preview': return publicPlan((await planLegacyImport(root, options, input.requirementIds)).plan);
+    case 'legacy.import': {
+      invariant(input.acknowledgeUnverified === true, 'LEGACY_ACK_REQUIRED', 'Acknowledge that archived tests and reports are not current verification');
+      const state = await git.expect(root, request.expected, { clean: true });
+      const { plan, snapshot } = await planLegacyImport(root, options, input.requirementIds);
+      invariant(plan.digest === input.planDigest, 'PLAN_CHANGED', 'Legacy source or destination changed after preview', 409);
+      await backupLegacySelection(home, snapshot);
+      return applyPlan({ root, home, workspaceId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
+    }
+    case 'reports.reindex': return reindexReports({ root, home, workspaceId: workspace.id, git, store, refs: input.refs });
     case 'workspace.initialize':
       return initialize(root, { specRepositoryId: input.specRepositoryId ?? workspace.id,
         toolkitRoot: path.join(toolkitRoot, 'packages'), templateRoot: path.join(toolkitRoot, 'templates/spec-repo/v1') });

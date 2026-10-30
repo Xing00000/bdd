@@ -11,6 +11,8 @@ export function environmentOptions() {
     home: path.resolve(process.env.WB_HOME ?? path.join(os.homedir(), '.bdd-workstation')),
     toolkitRoot: fileURLToPath(new URL('../../', import.meta.url)),
     allowLocal: process.env.WB_ALLOW_LOCAL_GIT === '1',
+    legacyFile: process.env.WB_LEGACY_DB ? path.resolve(process.env.WB_LEGACY_DB) : undefined,
+    legacyArtifactsRoot: process.env.WB_LEGACY_ARTIFACTS ? path.resolve(process.env.WB_LEGACY_ARTIFACTS) : undefined,
     enableExecution: process.env.WB_ENABLE_TRUSTED_EXECUTION === '1',
     hosts: (process.env.WB_GIT_HOSTS ?? 'github.com').split(',').map(x => x.trim()).filter(Boolean)
   };
@@ -24,7 +26,7 @@ export async function main(command = process.argv[2]) {
   let service;
   try {
     if (!command || command === 'help') {
-      process.stdout.write('BDD workstation CLI\n  serve | register | list | detail | inspect | wait | cancel\n  workspace.clone | workspace.initialize | workspace.validate\n  spec.feature.create | spec.file.save | spec.review.confirm\n  git.fetch | git.branch | git.commit | git.push\n  submodule.add | submodule.restore | submodule.pin | submodule.remove\n  run.prepare | run.execute | run.publish\nRead JSON from stdin. WB_HOME selects persistent state. Mutations require inspected expected.head.\n'); return;
+      process.stdout.write('BDD workstation CLI\n  serve | register | list | detail | inspect | wait | cancel\n  workspace.clone | workspace.initialize | workspace.validate\n  spec.feature.create | spec.file.save | spec.review.confirm\n  git.fetch | git.branch | git.commit | git.push\n  submodule.add | submodule.restore | submodule.pin | submodule.remove\n  run.prepare | run.execute | run.publish\n  workspace.upgrade.preview | workspace.upgrade.apply | workspace.transaction.resume\n  legacy.preview | legacy.import | reports.reindex\nRead JSON from stdin. WB_HOME selects persistent state. Mutations require inspected expected.head.\n'); return;
     }
     const options = environmentOptions();
     if (command === 'serve') {

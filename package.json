@@ -27,7 +27,8 @@
     "start:repositories": "node scripts/workstation.mjs serve",
     "workstation": "node scripts/workstation.mjs",
     "check:workstation": "node scripts/check-workstation.mjs",
-    "test:workstation": "node --test tests/workstation/*.test.mjs"
+    "test:workstation": "node --test tests/workstation/*.test.mjs",
+    "test:workstation:e2e": "node --test tests/workstation-e2e/*.test.mjs"
   },
   "dependencies": {
     "@cucumber/cucumber-expressions": "19.0.0",

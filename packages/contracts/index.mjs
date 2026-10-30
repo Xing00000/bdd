@@ -41,9 +41,10 @@ export async function safePath(root, relative, { missing = true } = {}) {
   return current;
 }
 export async function exists(file) { try { await lstat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
-export async function readJson(file) {
+export async function readJson(file, { maxBytes = 4 * 1024 * 1024 } = {}) {
+  invariant((await lstat(file)).size <= maxBytes, 'CONFIG_TOO_LARGE', 'JSON exceeds the permitted size');
   const text = await readFile(file, 'utf8');
-  invariant(Buffer.byteLength(text) <= 4 * 1024 * 1024, 'CONFIG_TOO_LARGE', 'Configuration exceeds 4 MiB');
+  invariant(Buffer.byteLength(text) <= maxBytes, 'CONFIG_TOO_LARGE', 'JSON exceeds the permitted size');
   try { return JSON.parse(text); }
   catch { throw new WorkstationError('CONFIG_FORMAT_UNSUPPORTED', `${path.basename(file)}: v1 accepts JSON syntax (also valid YAML 1.2), not executable configuration`); }
 }

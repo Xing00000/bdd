@@ -46,7 +46,7 @@ export async function prepareRun({ root, home, workspaceId, input, git }) {
   await validate(repository, git, { pinned: true });
   const pinnedReview = await reviewState(repository, input.requirementId, input.featureId);
   invariant(Object.values(pinnedReview.confirmed).every(Boolean) && identity(pinnedReview.hashes) === identity(review.hashes), 'REVIEW_BASELINE_MISMATCH', 'Committed review differs from working tree');
-  const plan = { schemaVersion: 1, runId, workspaceId, requirementId: input.requirementId, featureId: input.featureId,
+  const plan = { schemaVersion: 1, specRepositoryId: verified.config.specRepositoryId, runId, workspaceId, requirementId: input.requirementId, featureId: input.featureId,
     testedSpecCommit: state.head, projects: verified.modules.map(x => ({ id: x.id, path: x.path, commit: x.commit })),
     caseIds: selection ?? feature.caseIds, allCaseIds: feature.caseIds, profiles: feature.profiles, requiredProjectIds: feature.projectIds,
     scope: selection ? 'SELECTED_CASES' : 'ALL_CASES', baseline: review.hashes.tests,
@@ -210,7 +210,11 @@ export async function executeRun({ home, runId, workspaceId, git, enabled = fals
     catch (error) { cleanupFailure = errorResult(error); }
   }
   let unchanged = false;
-  try { unchanged = await git.resolve(repo) === plan.testedSpecCommit && await inputSnapshot(repo, git) === plan.inputDigest; } catch {}
+  try {
+    const modules = await git.modules(repo);
+    unchanged = await git.resolve(repo) === plan.testedSpecCommit && await inputSnapshot(repo, git) === plan.inputDigest
+      && modules.length === plan.projects.length && modules.every(p => !p.dirty && p.actual === p.commit && plan.projects.some(x => x.id === p.id && x.commit === p.actual));
+  } catch {}
   let assessment = { testOutcome: 'NOT_RUN', verification: 'NOT_VERIFIED', coverageComplete: false, evidenceComplete: false, reasons: ['EXECUTION_INCOMPLETE'] };
   if (!failure && discovery && receipt) {
     try { assessment = assessEvidence(plan, discovery, receipt, result, unchanged, managed.receipt); }
@@ -221,7 +225,7 @@ export async function executeRun({ home, runId, workspaceId, git, enabled = fals
   const artifacts = await copyArtifacts(scratch, staging);
   if (receipt) for (const c of receipt.cases ?? []) for (const a of c.attachments ?? [])
     if (!artifacts.some(x => x.path === a.path)) { assessment.verification = 'NOT_VERIFIED'; assessment.evidenceComplete = false; assessment.reasons.push('MISSING_ATTACHMENT'); }
-  const report = { schemaVersion: 1, runId, requirementId: plan.requirementId, featureId: plan.featureId, ...assessment,
+  const report = { schemaVersion: 1, specRepositoryId: plan.specRepositoryId, runId, requirementId: plan.requirementId, featureId: plan.featureId, ...assessment,
     testedSpecCommit: plan.testedSpecCommit, projects: plan.projects, scope: plan.scope, deployment: managed.receipt,
     startedAt: plan.startedAt, finishedAt: new Date().toISOString(), failure, cleanupFailure, cases: receipt?.cases ?? [] };
   await writeJson(path.join(staging, 'report.json'), report);

@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { invariant, id, version } from '../contracts/index.mjs';
 import { createGit, remoteUrl, branchName, processEnvironment } from '../git-core/index.mjs';
+import { artifactDirectory, currentVerification } from './reports.mjs';
+import { listTransactions } from './transactions.mjs';
 import { openStore } from './store.mjs';
 import { validateRequest, workspaceDetail, repositoryPath, readWorkspaceFile } from './operations.mjs';
 
@@ -39,7 +41,19 @@ export async function createWorkstation(configuration) {
       invariant(typeof input.title === 'string' && input.title.trim() && input.title.length <= 200, 'INVALID_TITLE', 'Repository title is required');
       return store.register({ ...input, id: workspaceId });
     },
-    async detail(workspaceId) { const workspace = store.workspace(id(workspaceId)); return { ...(await workspaceDetail(options, workspace)), runs: store.runs(workspaceId), operations: store.operations(workspaceId) }; },
+    async detail(workspaceId) {
+      const workspace = store.workspace(id(workspaceId)), detail = await workspaceDetail(options, workspace);
+      const runs = store.runs(workspaceId), reports = store.reports(workspaceId);
+      const evidence = [...reports, ...runs.filter(x => x.state === 'SEALED').map(x => ({ manifest: x.result }))];
+      for (const feature of detail.spec?.features ?? []) {
+        feature.verification = currentVerification(feature, detail.modules ?? [], evidence);
+        if (feature.verification.status === 'VERIFIED') feature.review.stage = 'VERIFIED';
+      }
+      return { ...detail, runs, reports, transactions: await listTransactions(options.home, workspaceId), operations: store.operations(workspaceId) };
+    },
+    artifactDirectory(workspaceId, runId, reportKey) {
+      store.workspace(id(workspaceId)); return artifactDirectory({ home: options.home, store, workspaceId, runId, reportKey });
+    },
     readFile(workspaceId, relative) { store.workspace(id(workspaceId)); return readWorkspaceFile(options.home, workspaceId, relative); },
     async inspect(workspaceId, projectId) {
       store.workspace(id(workspaceId)); const git = createGit(options), root = await repositoryPath(options.home, workspaceId);

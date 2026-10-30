@@ -41,3 +41,47 @@ jobs:
           path: verification/
           retention-days: 3
           if-no-files-found: error
+
+  browser-acceptance:
+    needs: workstation
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Real browser and repository management acceptance
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+          WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e
+        run: node --test tests/workstation-e2e/*.test.mjs
+      - name: Preserve browser evidence and dependency receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-browser-${{ github.sha }}
+          path: ${{ runner.temp }}/workstation-e2e/
+          retention-days: 3
+          if-no-files-found: error
+
+  application-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install locked application dependencies
+        run: npm ci
+      - name: Type check application
+        run: npm run check
+      - name: Build application
+        run: npm run build
+      - name: Run application unit and integration checks
+        run: npm run test:app

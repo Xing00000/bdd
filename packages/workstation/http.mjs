@@ -33,7 +33,7 @@ export async function dispatch(service, request) {
     invariant(Buffer.byteLength(JSON.stringify(input)) <= 2 * 1024 * 1024, 'REQUEST_TOO_LARGE', 'Request exceeds 2 MiB', 413);
   }
   let result, status = 200;
-  if (method === 'GET' && parts.join('/') === 'capabilities') result = { schemaVersion: 1, executionEnabled: service.options.enableExecution, configFormat: 'JSON-compatible YAML', nestedSubmodules: false, authentication: 'private-loopback deployment' };
+  if (method === 'GET' && parts.join('/') === 'capabilities') result = { schemaVersion: 1, executionEnabled: service.options.enableExecution, configFormat: 'JSON-compatible YAML', nestedSubmodules: false, authentication: 'private-loopback deployment', toolkitUpgrade: true, reportReindex: true, legacyImport: Boolean(service.options.legacyFile) };
   else if (parts[0] === 'workspaces' && parts.length === 1) {
     if (method === 'GET') result = service.list();
     else if (method === 'POST') { result = service.register(input); status = 201; }
@@ -45,9 +45,8 @@ export async function dispatch(service, request) {
   else if (parts[0] === 'operations' && parts[2] === 'cancel' && parts.length === 3 && method === 'POST') result = service.cancel(id(parts[1]));
   else if (parts[0] === 'workspaces' && parts[2] === 'runs' && parts[4] === 'artifact' && parts.length === 5 && method === 'GET') {
     const workspaceId = id(parts[1]), runId = id(parts[3]), relative = url.searchParams.get('path');
-    const runDirectory = await safePath(service.options.home, `executions/${runId}`), plan = await readJson(`${runDirectory}/plan.json`);
-    invariant(plan.workspaceId === workspaceId, 'RUN_WORKSPACE_MISMATCH', 'Run belongs to another workspace', 403);
-    const evidence = await safePath(runDirectory, 'evidence'), manifest = await verifyBundle(evidence);
+    const evidence = await service.artifactDirectory(workspaceId, runId, url.searchParams.get('reportKey'));
+    const manifest = await verifyBundle(evidence);
     invariant(['manifest.json', 'seal.json'].includes(relative) || manifest.artifacts.some(x => x.path === relative), 'ARTIFACT_NOT_FOUND', 'Unknown artifact', 404);
     const body = await readFile(await safePath(evidence, relative, { missing: false }));
     let type = 'application/octet-stream';

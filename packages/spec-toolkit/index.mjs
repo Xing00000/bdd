@@ -28,6 +28,12 @@ export async function configuration(root) {
   invariant(config.reports?.storage === 'git' && config.reports.publishMode === 'explicit', 'INVALID_REPORT_POLICY', 'v1 reports use Git and explicit publication');
   return config;
 }
+export const TOOLKIT_VERSION = '1.1.0';
+export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/cli.mjs']);
+export async function toolkitSnapshot(toolkitRoot) {
+  const files = await Promise.all(TOOLKIT_FILES.map(async relative => ({ path: relative, content: await readFile(path.join(toolkitRoot, relative)) })));
+  return { files, manifest: { schemaVersion: 1, version: TOOLKIT_VERSION, files: files.map(x => ({ path: x.path, sha256: digest(x.content) })) } };
+}
 export async function initialize(root, { specRepositoryId, templateRoot = path.join(sourceRoot, 'templates/spec-repo/v1'), toolkitRoot = path.join(sourceRoot, 'packages') }) {
   id(specRepositoryId, 'specRepositoryId');
   const existing = (await readdir(root)).filter(name => name !== '.git');
@@ -40,16 +46,12 @@ export async function initialize(root, { specRepositoryId, templateRoot = path.j
   }
   const config = await readJson(path.join(root, 'workbench.yaml')); config.specRepositoryId = specRepositoryId;
   await writeJson(path.join(root, 'workbench.yaml'), config);
-  const snapshot = [];
-  for (const relative of ['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/cli.mjs']) {
-    const content = await readFile(path.join(toolkitRoot, relative));
-    const destination = await safePath(root, `.workbench-tools/${relative}`);
-    await mkdir(path.dirname(destination), { recursive: true }); await copyFile(path.join(toolkitRoot, relative), destination);
-    snapshot.push({ path: relative, sha256: digest(content) });
-  }
-  await writeJson(path.join(root, '.workbench-tools/manifest.json'), { schemaVersion: 1, version: '1.0.0', files: snapshot });
-  return { schemaVersion: 1, files: [...files, ...snapshot.map(x => `.workbench-tools/${x.path}`), '.workbench-tools/manifest.json'], requiresDependencyLock: true };
+  const snapshot = await toolkitSnapshot(toolkitRoot);
+  for (const file of snapshot.files) await atomicWrite(await safePath(root, `.workbench-tools/${file.path}`), file.content);
+  await writeJson(path.join(root, '.workbench-tools/manifest.json'), snapshot.manifest);
+  return { schemaVersion: 1, files: [...files, ...snapshot.files.map(x => `.workbench-tools/${x.path}`), '.workbench-tools/manifest.json'], requiresDependencyLock: true };
 }
+
 export async function createFeature(root, input) {
   const key = featureKey(input.requirementId, input.featureId), config = await configuration(root);
   invariant(typeof input.title === 'string' && input.title.trim() && input.title.length <= 300 && !/[\r\n]/.test(input.title), 'INVALID_TITLE', 'A one-line title is required');

@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const apiRoot = '/repository-api/v1';
-let workspaceId, detail, editorFile, gitState, selectedFeature, capabilities;
+let workspaceId, detail, editorFile, gitState, selectedFeature, capabilities, upgradePlan, legacyPlan;
 function notify(message, error = false) { $('#notice').textContent = message; $('#notice').classList.toggle('error', error); }
 function el(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
 function button(label, action) { const node = el('button', label); node.type = 'button'; node.addEventListener('click', () => safely(action)); return node; }
@@ -30,11 +30,11 @@ async function refresh() {
   if (!features.some(f => f.key === selectedFeature)) selectedFeature = features[0]?.key;
   $('#feature-select').replaceChildren(...features.map(f => new Option(`${f.requirementId} / ${f.id} — ${f.title}`, f.key)));
   if (selectedFeature) $('#feature-select').value = selectedFeature;
-  updateFeature(); renderProjects(); renderRuns(); renderOperations();
+  updateFeature(); renderProjects(); renderRuns(); renderOperations(); renderTransactions();
 }
 function updateFeature() {
   const f = currentFeature();
-  $('#feature-stage').textContent = f ? `階段：${f.review.stage} · 案例：${f.caseIds.join(', ')} · 瀏覽器：${f.profiles.join(', ')}` : '尚無 Feature';
+  $('#feature-stage').textContent = f ? `階段：${f.review.stage} · 驗收：${f.verification?.status ?? 'NOT_RUN'} · 案例：${f.caseIds.join(', ')} · 瀏覽器：${f.profiles.join(', ')}` : '尚無 Feature';
   const options = f ? [`spec/${f.key}/${f.id}.feature`, `spec/${f.key}/${f.id}.sd.md`, `tests/${f.key}/${f.id}.steps.ts`, `tests/${f.key}/${f.id}.hooks.ts`, `spec/${f.key}/feature.yaml`] : [];
   $('#file-select').replaceChildren(...options.map(name => new Option(name, name)));
 }
@@ -77,21 +77,27 @@ function renderProjects() {
   if ([...$('#git-target').options].some(x => x.value === previous)) $('#git-target').value = previous;
   gitState = null;
 }
-function artifactUrl(runId, file) { return `${apiRoot}/workspaces/${workspaceId}/runs/${runId}/artifact?path=${encodeURIComponent(file)}`; }
-async function showReport(runId) {
-  const response = await fetch(artifactUrl(runId, 'manifest.json')), manifest = await response.json();
+function artifactUrl(runId, file, reportKey) { return `${apiRoot}/workspaces/${workspaceId}/runs/${runId}/artifact?path=${encodeURIComponent(file)}${reportKey ? '&reportKey=' + encodeURIComponent(reportKey) : ''}`; }
+async function showReport(runId, reportKey) {
+  const response = await fetch(artifactUrl(runId, 'manifest.json', reportKey)), manifest = await response.json();
   if (!response.ok) throw new Error(manifest.message);
   const view = $('#report-view'); view.replaceChildren(el('h3', `報告 ${runId}`), el('pre', JSON.stringify(manifest, null, 2)));
   const gallery = el('div', undefined, 'gallery');
   for (const file of manifest.artifacts.filter(a => a.path.startsWith('screenshots/'))) {
-    const link = el('a'); link.href = artifactUrl(runId, file.path); link.target = '_blank'; link.rel = 'noopener';
+    const link = el('a'); link.href = artifactUrl(runId, file.path, reportKey); link.target = '_blank'; link.rel = 'noopener';
     const image = document.createElement('img'); image.src = link.href; image.alt = file.path; image.loading = 'lazy'; link.append(image); gallery.append(link);
   }
   view.append(gallery);
-  const download = el('a', '取得 HTML 報告'); download.href = artifactUrl(runId, 'report.html'); download.download = 'report.html'; view.append(download);
+  const download = el('a', '取得 HTML 報告'); download.href = artifactUrl(runId, 'report.html', reportKey); download.download = 'report.html'; view.append(download);
 }
 function renderRuns() {
   $('#run-list').replaceChildren();
+  for (const entry of detail.reports ?? []) {
+    const card = el('div', undefined, 'card');
+    card.append(el('h4', entry.key), el('span', entry.invalidReason ?? 'GIT_INDEXED', 'badge'), el('p', `來源：${entry.ref} · 報告版本 ${entry.reportCommit}`));
+    if (!entry.invalidReason) card.append(button('檢視 Git 報告與截圖', () => showReport(entry.runId, entry.key)));
+    $('#run-list').append(card);
+  }
   for (const run of detail.runs ?? []) {
     const card = el('div', undefined, 'card'), result = run.result;
     card.append(el('h4', run.id), el('span', run.state, 'badge'), el('span', result.testOutcome ?? '尚未執行', 'badge'), el('span', result.verification ?? 'NOT_VERIFIED', 'badge'), el('p', `受測版本：${result.testedSpecCommit}`));
@@ -148,3 +154,37 @@ await safely(async () => {
   capabilities = await api('/capabilities'); $('#execution-policy').textContent = capabilities.executionEnabled ? '受信任 Worker 執行已啟用；此程序不是 OS sandbox。' : '程式執行預設關閉。請在隔離環境設定 WB_ENABLE_TRUSTED_EXECUTION=1。';
   await loadList(); notify('已連線。Git Push、人工確認與測試執行都是獨立操作。');
 });
+
+function renderTransactions() {
+  $('#transactions').replaceChildren();
+  for (const transaction of detail.transactions ?? []) {
+    const card = el('div', undefined, 'card');
+    card.append(el('h4', transaction.transactionId), el('span', transaction.status, 'badge'), el('p', transaction.metadata.kind));
+    if (transaction.status !== 'APPLIED') card.append(button('檢查並續做', () => operation('workspace.transaction.resume', { transactionId: transaction.transactionId })));
+    $('#transactions').append(card);
+  }
+}
+function legacySelection() { const value = $('#legacy-selection').value.trim(); return value ? { requirementIds: value.split(',').map(x => x.trim()).filter(Boolean) } : {}; }
+$('#reindex-reports').addEventListener('click', () => safely(async () => {
+  const result = await operation('reports.reindex');
+  notify(`已索引 ${result.indexed.length} 份報告；${result.errors.length} 項錯誤。此操作不切換分支或修改工作區。`, result.errors.length > 0);
+}));
+$('#preview-upgrade').addEventListener('click', () => safely(async () => {
+  upgradePlan = await operation('workspace.upgrade.preview'); $('#maintenance-plan').textContent = JSON.stringify(upgradePlan, null, 2); $('#apply-upgrade').disabled = upgradePlan.changed === 0;
+}));
+$('#apply-upgrade').addEventListener('click', () => safely(async () => {
+  if (upgradePlan && confirm('套用預覽的工具升級？既有規格／測試與鎖定依賴不會被覆寫；測試確認需要重檢。')) {
+    await operation('workspace.upgrade.apply', { planDigest: upgradePlan.digest }); upgradePlan = null; $('#apply-upgrade').disabled = true;
+  }
+}));
+$('#preview-legacy').addEventListener('click', () => safely(async () => {
+  legacyPlan = { selection: legacySelection(), preview: await operation('legacy.preview', legacySelection()) };
+  $('#maintenance-plan').textContent = JSON.stringify(legacyPlan.preview, null, 2); $('#apply-legacy').disabled = false;
+}));
+$('#apply-legacy').addEventListener('click', () => safely(async () => {
+  if (legacyPlan && confirm('匯入所選原始文件與歷史封存？舊 DB 保持不變，舊確認與通過狀態不視為新驗收，所有測試需人工重新接線。匯入內容請審查機密後再提交。')) {
+    await operation('legacy.import', { ...legacyPlan.selection, planDigest: legacyPlan.preview.digest, acknowledgeUnverified: true }); legacyPlan = null; $('#apply-legacy').disabled = true;
+  }
+}));
+$('#legacy-policy').textContent = capabilities?.legacyImport ? '已設定唯讀舊 DB 來源；只匯入所選需求，不搬移帳密與站台設定。' : '伺服器尚未設定 WB_LEGACY_DB。不能從瀏覽器傳入任意檔案路徑。';
+$('#preview-legacy').disabled = !capabilities?.legacyImport;
