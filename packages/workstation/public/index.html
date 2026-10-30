@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BDD · Git 工作站</title><link rel="stylesheet" href="/repositories/style.css"></head>
+<body>
+<header><div><small>BDD WORKSTATION / REPOSITORY MANAGEMENT</small><h1>規格與驗收工作區</h1></div><a href="/">既有工作台</a></header>
+<p id="notice" role="status" aria-live="polite">連線中…</p>
+<main>
+<aside>
+  <h2>Spec Repositories</h2><div id="workspaces"></div>
+  <details><summary>登錄 Spec Repository</summary>
+    <form id="register"><label>名稱<input name="title" required placeholder="BDD Spec"></label><label>Git URL<input name="remoteUrl" required placeholder="git@github.com:Xing00000/bdd-spec.git"></label><label>分支（空 Repo 請留白）<input name="branch" placeholder="遠端預設分支"></label><button>登錄</button></form>
+  </details>
+  <p class="muted">工作站只保存管理資料。規格、測試、報告與 Project gitlinks 都屬於 Spec Repo。</p>
+</aside>
+<section id="workspace" hidden>
+  <div class="heading"><div><h2 id="workspace-title"></h2><code id="head"></code></div><button id="refresh">重新整理</button></div>
+  <div class="toolbar"><button data-op="workspace.clone">Clone</button><button data-op="workspace.initialize">初始化 Spec 結構</button><button data-op="workspace.validate">驗證結構</button><button data-op="git.fetch">Fetch</button><button data-op="submodule.restore">還原固定 Projects</button></div>
+  <p id="structure-error" class="error"></p>
+  <nav aria-label="工作區分頁"><button data-tab="features">需求與規格</button><button data-tab="git">Git / Projects</button><button data-tab="runs">Runs / Reports</button><button data-tab="operations">作業紀錄</button></nav>
+  <section id="features" class="tab">
+    <div class="heading"><h3>Features</h3><select id="feature-select" aria-label="選擇 Feature"></select></div>
+    <p id="feature-stage"></p>
+    <details><summary>新增需求 / Feature</summary><form id="create-feature" class="grid-form"><label>需求 ID<input name="requirementId" required placeholder="REQ-001"></label><label>Feature ID<input name="featureId" required placeholder="login"></label><label>標題<input name="title" required></label><label>Project IDs（逗號分隔）<input name="projects"></label><button>建立平行目錄與待實作骨架</button></form></details>
+    <div class="toolbar"><select id="file-select" aria-label="選擇原始檔"></select><button id="open-file">開啟</button><button id="save-file">保存檔案（不提交）</button><button id="open-config">工作區設定</button></div>
+    <p><code id="file-path">尚未開啟檔案</code></p><textarea id="editor" spellcheck="false" aria-label="原始檔編輯器"></textarea>
+    <div class="toolbar"><label>人工確認者<input id="reviewer" placeholder="您的名稱"></label><button data-review="gherkin">確認 Gherkin</button><button data-review="sd">確認 SD</button><button data-review="tests">確認 Tests / Hooks</button></div>
+    <p class="muted">確認綁定目前內容摘要；保存與確認都不會自動 Push。請在 Git 分頁提交候選版本。</p>
+  </section>
+  <section id="git" class="tab" hidden>
+    <h3>Projects（Git Submodules）</h3><div id="modules"></div>
+    <details><summary>新增 Project Submodule</summary><form id="add-project" class="grid-form"><label>Project ID<input name="projectId" required placeholder="bdd"></label><label>Git URL<input name="url" required placeholder="git@github.com:Xing00000/bdd.git"></label><label>固定完整 Commit SHA<input name="commit" required></label><button>新增 Submodule</button></form></details>
+    <div class="toolbar"><select id="git-target" aria-label="Git 操作目標"></select><button id="inspect-git">讀取變更</button><input id="branch-name" placeholder="feat/REQ-001" aria-label="分支名稱"><button id="create-branch">建立工作分支</button></div>
+    <div id="changed-files"></div><label>Commit message<input id="commit-message" placeholder="Implement REQ-001"></label><div class="toolbar"><button id="commit-selected">只提交勾選檔案</button><button id="push">Push 目前分支</button></div><pre id="diff"></pre>
+  </section>
+  <section id="runs" class="tab" hidden>
+    <h3>固定版本驗收</h3><p id="execution-policy"></p><p class="muted">正式執行需要已提交的規格、測試、依賴鎖與確認紀錄。每次 Run 使用獨立 clone；單靠網址不代表部署版本已證明。</p>
+    <div class="toolbar"><input id="selected-cases" placeholder="空白＝全案例；或 CASE-001,CASE-002" aria-label="選取案例"><button id="prepare-run">準備目前 Feature 的驗收候選</button></div><div id="run-list"></div><div id="report-view"></div>
+  </section>
+  <section id="operations" class="tab" hidden><h3>持久作業紀錄</h3><div id="operation-list"></div></section>
+</section>
+<section id="empty"><h2>選擇或登錄一個 Spec Repo</h2><p>初始化後會建立 Spec Repo 契約與工具封裝，不會把產品程式碼放進工作站 Repo。</p></section>
+</main><script type="module" src="/repositories/app.js"></script>
+</body></html>

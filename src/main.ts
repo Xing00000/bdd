@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from './http/server.js';
 import {allowlistedRecordingSecretResolver} from './adapters/runtime/secrets.js';
 import {dbgateFromEnvironment} from './adapters/runtime/dbgate.ts';
@@ -7,6 +7,10 @@ import {llmFromEnvironment} from './adapters/generation/config.ts';
 const root=path.resolve(process.env.WB_ROOT??fileURLToPath(new URL('../..',import.meta.url)));
 const host='127.0.0.1',port=Number(process.env.WB_PORT??4173),baseUrl=process.env.WB_BASE_URL??`http://${host}:${port}`;
 const server=await createServer({root,metadataFile:path.resolve(process.env.WB_METADATA_DB??path.join(root,'.workbench/metadata.sqlite')),dataRoot:path.resolve(process.env.WB_DATA_ROOT??path.join(root,'.workbench')),baseUrl,logger:true,resolveRecordingSecret:allowlistedRecordingSecretResolver({'target-fixture-password':()=>process.env.WB_TARGET_PASSWORD}),llm:llmFromEnvironment(process.env),dbgate:dbgateFromEnvironment(process.env),initializeDefaultExample:true});
+// Git-backed workspaces use a separate operational database; legacy documents remain untouched.
+const { registerRepositoryRoutes } = await import(pathToFileURL(path.join(root,'packages/workstation/http.mjs')).href);
+const { environmentOptions } = await import(pathToFileURL(path.join(root,'packages/workstation/cli.mjs')).href);
+await registerRepositoryRoutes(server.app,{...environmentOptions(),toolkitRoot:root});
 await server.app.listen({host,port});
 console.log(`Workbench listening at ${baseUrl}; cloud loopback only`);
 let closing=false;for(const signal of ['SIGTERM','SIGINT'] as const)process.on(signal,()=>{if(closing)return;closing=true;void server.app.close().then(()=>{process.exitCode=0;});});

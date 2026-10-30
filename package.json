@@ -23,7 +23,11 @@
     "spec:list": "playwright test --list --reporter=list",
     "spec:typecheck": "tsc --noEmit -p tsconfig.json",
     "test:tooling": "node --import ./tools/bdd/register-ts.mjs --test tests/integration/bdd-tooling.test.mjs",
-    "test:checks": "node tools/bdd/checks.mjs"
+    "test:checks": "node tools/bdd/checks.mjs",
+    "start:repositories": "node scripts/workstation.mjs serve",
+    "workstation": "node scripts/workstation.mjs",
+    "check:workstation": "node scripts/check-workstation.mjs",
+    "test:workstation": "node --test tests/workstation/*.test.mjs"
   },
   "dependencies": {
     "@cucumber/cucumber-expressions": "19.0.0",
