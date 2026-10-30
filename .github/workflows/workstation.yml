@@ -1,0 +1,43 @@
+name: Git workstation
+on:
+  push:
+    branches: [main, 'iteration/**']
+    paths-ignore: ['reports/**']
+  pull_request:
+    paths-ignore: ['reports/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: workstation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  workstation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Package exact source revision
+        run: |
+          mkdir -p verification
+          git archive --format=tar.gz --output=verification/workstation-source.tar.gz HEAD
+          git rev-parse HEAD > verification/source-commit.txt
+          node --version > verification/runtime.txt
+          git --version >> verification/runtime.txt
+      - name: Check workstation syntax
+        run: node scripts/check-workstation.mjs 2>&1 | tee verification/syntax.log
+      - name: Test actual Git, processes, CLI and HTTP
+        run: node --test tests/workstation/*.test.mjs 2>&1 | tee verification/tests.log
+      - name: Preserve exact source and verification receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-${{ github.sha }}
+          path: verification/
+          retention-days: 3
+          if-no-files-found: error
