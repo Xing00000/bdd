@@ -8,6 +8,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: workstation-${{ github.ref }}
   cancel-in-progress: true
@@ -57,7 +60,9 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
           WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e
-        run: node --test tests/workstation-e2e/*.test.mjs
+        run: |
+          mkdir -p "$WB_E2E_ARTIFACTS"
+          node --test tests/workstation-e2e/*.test.mjs 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
       - name: Preserve browser evidence and dependency receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -78,10 +83,20 @@ jobs:
         with:
           node-version: '24'
       - name: Install locked application dependencies
-        run: npm ci
+        run: |
+          mkdir -p verification
+          npm ci 2>&1 | tee verification/application-install.log
       - name: Type check application
-        run: npm run check
+        run: npm run check 2>&1 | tee verification/application-check.log
       - name: Build application
-        run: npm run build
+        run: npm run build 2>&1 | tee verification/application-build.log
       - name: Run application unit and integration checks
-        run: npm run test:app
+        run: npm run test:app 2>&1 | tee verification/application-tests.log
+      - name: Preserve application validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-application-${{ github.sha }}
+          path: verification/application-*.log
+          retention-days: 3
+          if-no-files-found: error

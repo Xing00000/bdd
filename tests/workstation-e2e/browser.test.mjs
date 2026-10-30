@@ -94,6 +94,7 @@ Then('the page confirms I signed in', async ({ page }) => { await expect(page.ge
   await page.waitForFunction(() => document.querySelector('#feature-stage')?.textContent.includes('驗收：VERIFIED'));
   await page.getByRole('button', { name: 'Runs / Reports', exact: true }).click();
   await page.getByRole('button', { name: '檢視報告與截圖', exact: true }).click();
+  await page.locator('.gallery').scrollIntoViewIfNeeded();
   await page.waitForFunction(() => [...document.querySelectorAll('.gallery img')].length >= 3 && [...document.querySelectorAll('.gallery img')].every(x => x.complete && x.naturalWidth > 0));
   await page.screenshot({ path: path.join(evidenceOutput, 'management-reports.png'), fullPage: true }); assert.deepEqual(browserErrors, []);
 });

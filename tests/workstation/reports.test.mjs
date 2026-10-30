@@ -86,3 +86,27 @@ test('report push is explicit, uses an evidence branch and is independently retr
   const pushed = await publishRun({ root: f.repo, home: f.home, workspaceId: plan.workspaceId, runId: plan.runId, git, push: true }); assert.equal(pushed.status, 'PUBLISHED'); assert.equal(pushed.reportCommit, local.reportCommit);
   assert.equal((await git.command(undefined, ['--git-dir', f.remote, 'rev-parse', 'refs/heads/main'])).stdout.trim(), testedSpecCommit);
 });
+
+test('real playwright-bdd hook titles omit keywords while reporter steps include them', () => {
+  const execution = receipt();
+  execution.cases[0].steps = [
+    { title: 'Given the website is open', category: 'test.step' },
+    { title: 'When I sign in', category: 'test.step' },
+    { title: 'Then I am signed in', category: 'test.step' }
+  ];
+  execution.cases[0].attachments = ['the website is open', 'I sign in', 'I am signed in'].map((title, i) => ({ path: `screenshots/case/${i}.png`, name: `step-${title}` }));
+  assert.equal(assessEvidence(plan, receipt(), execution, passed, true, { verified: true }).verification, 'VERIFIED');
+  execution.cases[0].attachments.pop();
+  assert.equal(assessEvidence(plan, receipt(), execution, passed, true, { verified: true }).verification, 'NOT_VERIFIED');
+});
+test('repeated step titles cannot reuse the same screenshot as multiple pieces of evidence', () => {
+  const execution = receipt();
+  execution.cases[0].steps = [
+    { title: 'Given a repeated action', category: 'test.step' },
+    { title: 'Then a repeated action', category: 'test.step' }
+  ];
+  execution.cases[0].attachments = [{ path: 'screenshots/one.png', name: 'step-a repeated action' }];
+  assert.equal(assessEvidence(plan, receipt(), execution, passed, true, { verified: true }).evidenceComplete, false);
+  execution.cases[0].attachments.push({ path: 'screenshots/two.png', name: 'step-a repeated action' });
+  assert.equal(assessEvidence(plan, receipt(), execution, passed, true, { verified: true }).evidenceComplete, true);
+});

@@ -71,8 +71,17 @@ export function assessEvidence(plan, discovery, receipt, processResult, inputsUn
     && receipt.status === 'passed' && receipt.errors.length === 0 && receipt.cases.length > 0
     && receipt.cases.every(x => x.status === 'passed' && x.expectedStatus === 'passed' && x.retry === 0);
   const evidenceComplete = receipt.cases.every(x => {
-    const steps = (x.steps ?? []).filter(s => s.category === 'test.step' && /^(Given|When|Then|And|But|假如|假設|假定|當|那麼|那么|而且|並且|并且|但是)\s/.test(s.title));
-    return x.assertions > 0 && steps.length > 0 && steps.every(step => (x.attachments ?? []).some(a => a.path.startsWith('screenshots/') && a.name === `step-${step.title}`));
+    const keyword = /^(Given|When|Then|And|But|假如|假設|假定|當|那麼|那么|而且|並且|并且|但是)\s+/;
+    const steps = (x.steps ?? []).filter(s => s.category === 'test.step' && keyword.test(s.title));
+    const used = new Set();
+    // Playwright reports the localized keyword; playwright-bdd's $step.title omits it.
+    // Match the declared hook convention while requiring a distinct image for each step.
+    return x.assertions > 0 && steps.length > 0 && steps.every(step => {
+      const names = new Set([`step-${step.title}`, `step-${step.title.replace(keyword, '')}`]);
+      const image = (x.attachments ?? []).find(a => a.path.startsWith('screenshots/') && names.has(a.name) && !used.has(a.path));
+      if (!image) return false;
+      used.add(image.path); return true;
+    });
   });
   const deploymentMatches = deployment?.verified && (plan.requiredProjectIds ?? []).every(projectId => deployment.projectId === projectId && deployment.commit === plan.projects?.find(p => p.id === projectId)?.commit);
   const reasons = [];
