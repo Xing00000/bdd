@@ -32,12 +32,13 @@
 | `packages/spec-toolkit/` | 規格契約、內容摘要、可攜工具、驗收候選與證據 |
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
 
-## SQLite schema 5
+## SQLite schema 6
 
 `spec_repositories` 保存綁定網址，不因連線失敗取消登錄。以下是需要備份的正式資料，不是可丟棄快取：
 
 - `authoring_state`：每個綁定的目前修訂與設定。
 - `authoring_files`：規格、SD、測試與產品文字編輯。`spec` 與 `project:<id>` 是不同命名空間，即使產品代號叫 spec 也不混淆。
+- `requirement_proposals`：原始描述、生成前 Gherkin 及生成結果，按 repository 與需求編輯識別隔離；不授予確認。
 - `authoring_history`：修訂原文、設定與儲存收據；每個操作 ID 只能代表同一份請求。
 - `repository_preferences`、`operations`、`tooling_checks`、`runs`：站台偏好、持久操作、真實檢查與驗收紀錄。
 
@@ -68,3 +69,11 @@ Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<RE
 ## 安全與範圍
 
 儲存與讀取不執行 Repo 設定程式。路徑、文字大小、symlink、私密檔案及跨規格庫存取有檢查。SQLite 與歷史可能包含敏感原文，備份必須保密。主機為 loopback 信任模型，沒有公開多租戶 ACL 或 OS sandbox；Agent、MCP、Terminal、錄製的新 UI 完整接線仍未全部提供。
+
+## 兩區編輯資料契約
+
+`requirements.mjs` 提供來源、格式草稿、結構診斷與成對儲存。`requirement-documents.mjs` 只做受限文字提取，不執行文件中的任何程式。既有檔案首次開啟不改寫；若沒有來源描述，僅上方留空。
+
+正式 Gherkin 保存為 `spec/<REQ>/<feature>/<feature>.feature`；原始描述保存為同層 `requirement-source.json`，兩者在 `authoring_files` 與 `authoring_history` 的同一 SQL 交易更新，只有同步／驗收時才輸出到 Repo。後續確認的摘要綁定下方 `.feature` 而不是可隨時補充的來源素材。
+
+生成採用明確標示的本機格式整理，不冒充語意推理。輸出使用 Feature／Scenario／Given／When／Then 及穩定案例標記；瀏覽器回歸另用固定版本的官方 Cucumber parser 驗證輸出。人工編輯的儲存路徑保留原始 bytes，不會因診斷失敗拒絕草稿保存。執行前的完整 BDD discovery 是另一個關卡。

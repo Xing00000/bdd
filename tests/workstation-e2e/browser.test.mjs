@@ -10,12 +10,13 @@ import { spawn } from 'node:child_process';
 import { createGit, execute } from '../../packages/git-core/index.mjs';
 import { writeJson, exists } from '../../packages/contracts/index.mjs';
 import { toolkitRoot } from '../workstation/helpers.mjs';
+import { docxArchive } from '../workstation/requirement-fixtures.mjs';
 
 async function port() { const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const value=server.address().port;await new Promise(r=>server.close(r));return value; }
 // Fixture setup provisions only remote Git servers, a deliberately incomplete product,
 // browser dependencies and the actual production entry point. No Spec Repo, review,
 // operation, candidate or report is populated through a service/API/filesystem shortcut.
-test('all-UI: one-time setup → save without Git → one installation consent → failed/fixed verification → one remote sync', { timeout: 900000 }, async t => {
+test('all-UI: two textareas → upload/generate/edit/restore → SQLite save → failure/fix/verification → sync and offline save', { timeout: 900000 }, async t => {
   const base=await mkdtemp(path.join(os.tmpdir(),'workbench-ui-')),home=path.join(base,'station');
   const artifacts=path.resolve(process.env.WB_E2E_ARTIFACTS??path.join(base,'evidence'));await mkdir(artifacts,{recursive:true});
   const driver=path.join(base,'driver');await mkdir(driver);
@@ -35,11 +36,15 @@ const server=http.createServer((request,response)=>{
   await writeFile(path.join(product,'message.txt'),'Not implemented\n');
   const initialProduct=await git.commitSelected(product,{paths:['server.mjs','message.txt'],message:'Incomplete product fixture'},{head:null});
   await git.command(product,['remote','add','origin',remotes.product]);await git.push(product,{branch:'main'},await git.inspect(product));
-  await writeJson(path.join(driver,'package.json'),{private:true,type:'module',devDependencies:{'@playwright/test':'1.64.1'}});
+  await writeJson(path.join(driver,'package.json'),{private:true,type:'module',devDependencies:{'@playwright/test':'1.64.1','@cucumber/gherkin':'39.1.0','@cucumber/messages':'32.3.1'}});
   async function install(args,label){const result=await execute(args[0],args.slice(1),{cwd:driver,env,timeoutMs:300000,maxBytes:24*1024*1024});await writeJson(path.join(artifacts,`${label}.json`),result);assert.equal(result.exitCode,0,result.stderr+result.stdout);assert.equal(result.timedOut,false);}
   await install(['npm','install','--ignore-scripts'],'driver-install');
   await install([path.join(driver,'node_modules/.bin/playwright'),'install','--with-deps','chromium'],'browser-install');
-  const {chromium,expect}=createRequire(path.join(driver,'package.json'))('@playwright/test');
+  const require=createRequire(path.join(driver,'package.json'));
+  const {chromium,expect}=require('@playwright/test');
+  const {Parser,AstBuilder,GherkinClassicTokenMatcher}=require('@cucumber/gherkin');
+  const {IdGenerator}=require('@cucumber/messages');
+  const parse=text=>new Parser(new AstBuilder(IdGenerator.incrementing()),new GherkinClassicTokenMatcher()).parse(text);
   const sitePort=await port(),productPort=await port(),site=`http://127.0.0.1:${sitePort}`,target=`http://127.0.0.1:${productPort}`;
   const server=spawn(process.execPath,[path.join(toolkitRoot,'scripts/workstation.mjs'),'serve'],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_PORT:String(sitePort),WB_ALLOW_LOCAL_GIT:'1',WB_ENABLE_TRUSTED_EXECUTION:'1'},stdio:['ignore','pipe','pipe']});
   let serverLog='',browser,context,page;server.stdout.on('data',x=>serverLog+=x);server.stderr.on('data',x=>serverLog+=x);
@@ -85,13 +90,34 @@ const server=http.createServer((request,response)=>{
   await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();
   await click('開啟規格庫 Alpha 規格庫');
   assert.equal(await page.getByRole('button',{name:/Commit|Push|Clone|安裝 Chromium|檢查測試接線|準備驗收候選/}).count(),0);
-  await click('＋ 新增需求');let d=page.getByRole('dialog');await d.getByLabel('這個功能要做到什麼？',{exact:true}).fill('真正產品登入');await d.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('點擊登入按鈕，出現已登入訊息');await d.getByText('進階：自訂需求編號和功能代號（一般不需要）').click();await d.getByLabel('需求 ID',{exact:true}).fill('REQ-001');await d.getByLabel('功能 ID',{exact:true}).fill('login');await job(d.getByRole('button',{name:'建立需求草稿',exact:true}),'workflow.create');await expect(d).not.toBeVisible();await expect(page.locator('#gherkin-guided')).toBeVisible();await page.getByRole('button',{name:'直接編輯 Gherkin（進階）',exact:true}).click();
-  await editSource(`Feature: Sign in to the actual product\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`);
+  await click('＋ 新增需求');let d=page.getByRole('dialog');
+  await expect(d).not.toBeVisible();
+  await expect(page.locator('#features-view textarea:visible')).toHaveCount(2);
+  await expect(page.locator('#features-view input:visible')).toHaveCount(0);
+  const upper=page.getByRole('textbox',{name:'需求描述',exact:true}),lower=page.getByRole('textbox',{name:'Gherkin',exact:true});
+  const sourceDescription='真正產品登入\n當使用者點擊登入按鈕時，顯示已登入訊息';
+  await upper.fill(sourceDescription);
+  await page.getByRole('button',{name:'產生 Gherkin 草稿',exact:true}).click();
+  await expect(lower).toHaveValue(/Feature: 真正產品登入/);await ready();
+  assert.ok(parse(await lower.inputValue()).feature.children[0].scenario,'Actual Cucumber parser accepts generated grammar');
+  const manual=`Feature: Sign in to the actual product\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`;
+  await lower.fill(manual);
+  await upper.fill(sourceDescription+'\n上方修改不應蓋掉下方手動編輯');await expect(lower).toHaveValue(manual);
+  await page.getByRole('button',{name:'產生 Gherkin 草稿',exact:true}).click();await expect(d).toContainText('重新產生');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(lower).toHaveValue(manual);
+  const beforeGeneration=await page.locator('#requirement-panel').getAttribute('data-generation');
+  await page.getByRole('button',{name:'產生 Gherkin 草稿',exact:true}).click();await d.getByRole('button',{name:'保留原稿並產生',exact:true}).click();
+  await page.waitForFunction(id=>document.querySelector('#requirement-panel').dataset.generation!==id,beforeGeneration);await ready();
+  await expect(lower).not.toHaveValue(manual);assert.ok(parse(await lower.inputValue()).feature);
+  await page.getByText('先前的生成草稿',{exact:true}).click();
+  await page.getByRole('button',{name:'還原產生前內容',exact:true}).first().click();await d.getByRole('button',{name:'還原草稿',exact:true}).click();await expect(lower).toHaveValue(manual);
+  await job(page.locator('#save-requirement'),'workflow.requirement.save');
+  await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
+  await page.screenshot({path:path.join(artifacts,'00-two-input-requirement.png'),fullPage:true});
   const savedRoot=path.join(home,'repositories',alpha,'repo');
   assert.equal(await exists(savedRoot),false,'Saving must not require or create a Git checkout');
   const readSaved=(repo,path)=>{const db=new DatabaseSync(`${home}/metadata.sqlite`,{readOnly:true});try{return db.prepare('SELECT content FROM authoring_files WHERE repository_id=? AND path=?').get(repo,path)?.content;}finally{db.close();}};
-  assert.match(readSaved(alpha,'spec/REQ-001/login/login.feature'),/Sign in to the actual product/);
-  await page.reload();await ready();await expect(page.getByRole('textbox',{name:'規格測試原始碼',exact:true})).toHaveValue(/Sign in to the actual product/);
+  assert.match(readSaved(alpha,'spec/REQ-001/feature/feature.feature'),/Sign in to the actual product/);
+  await page.reload();await ready();await expect(lower).toHaveValue(manual);await expect(upper).toHaveValue(sourceDescription+'\n上方修改不應蓋掉下方手動編輯');
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
   // Revisit settings with no checkout and no successful remote operation.
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
@@ -123,43 +149,47 @@ const server=http.createServer((request,response)=>{
   const tested=await git.resolve(savedRoot);await job(page.getByRole('button',{name:'遠端同步',exact:true}),'repository.sync');await expect(run).toContainText('已同步至遠端');await expect(page.getByRole('dialog')).not.toBeVisible();
   assert.equal((await git.command(undefined,['--git-dir',remotes.product,'rev-parse','main'])).stdout.trim(),productHead);assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'rev-parse','main'])).stdout.trim(),tested);
   const reportCommit=(await git.command(undefined,['--git-dir',remotes.alpha,'rev-parse',`refs/heads/evidence/${passedRunId}`])).stdout.trim();assert.notEqual(reportCommit,tested);
-  const manifest=JSON.parse((await git.command(undefined,['--git-dir',remotes.alpha,'show',`${reportCommit}:reports/REQ-001/login/${passedRunId}/manifest.json`])).stdout);assert.equal(manifest.testedSpecCommit,tested);assert.equal(manifest.verification,'VERIFIED');assert.equal(manifest.projects[0].commit,productHead);assert.ok(manifest.artifacts.filter(x=>x.path.startsWith('screenshots/')).length>=3);
+  const manifest=JSON.parse((await git.command(undefined,['--git-dir',remotes.alpha,'show',`${reportCommit}:reports/REQ-001/feature/${passedRunId}/manifest.json`])).stdout);assert.equal(manifest.testedSpecCommit,tested);assert.equal(manifest.verification,'VERIFIED');assert.equal(manifest.projects[0].commit,productHead);assert.ok(manifest.artifacts.filter(x=>x.path.startsWith('screenshots/')).length>=3);
   const operations=events.filter(e=>e.url.endsWith('/operations')).map(e=>e.body);const installs=operations.filter(x=>x.input.installConsent);
   assert.equal(installs.length,1,'Exactly one approved installation for the entire workflow');assert.ok(operations.every(x=>!x.operation.startsWith('git.')&&!x.operation.startsWith('submodule.')&&!x.operation.startsWith('run.')),'No Git plumbing or split run steps are exposed to the UI');
   await writeJson(path.join(artifacts,'ui-flow-receipt.json'),{repositoryIds:{alpha,beta},failedRunId,passedRunId,initialProduct:initialProduct.commit,fixedProduct:productHead,testedSpecCommit:tested,reportCommit,localVerificationBeforeSync:true,oneInstallationConsent:installs.length,uiOperations:operations.map(x=>x.operation),noGitControls:true});
   await page.reload();await ready();await expect(page.locator('#run-list')).toContainText('已同步至遠端');await tab('需求流程');await expect(page.locator('#feature-status')).toHaveText('VERIFIED');
   await click('開啟規格庫 Beta 規格庫');await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();assert.equal(await page.getByRole('button',{name:'開啟產品 product',exact:true}).count(),0);await tab('驗收紀錄');await expect(page.locator('#run-list')).toContainText('尚無驗收紀錄');await expect(page.locator('#report-view')).not.toBeVisible();
   await tab('需求流程');await expect(page.locator('#feature-empty')).toBeVisible();
-  const quick=page.locator('#quick-feature-form');
-  await quick.getByLabel('功能名稱',{exact:true}).fill('獨立規格庫查詢');
-  await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');
-  await d.getByRole('button',{name:'取消',exact:true}).click();
-  await expect(quick.getByLabel('功能名稱',{exact:true})).toHaveValue('獨立規格庫查詢');
-  await quick.getByLabel('怎樣才算成功？',{exact:true}).fill('可以找到符合關鍵字的資料');
-  await job(page.getByRole('button',{name:'建立需求草稿',exact:true}),'workflow.create');
-  await expect(page.locator('#gherkin-guided')).toBeVisible();
-  await expect(page.locator('#guided-acceptance')).toHaveValue('可以找到符合關鍵字的資料');
+  await expect(page.locator('#features-view textarea:visible')).toHaveCount(2);
+  await upper.fill('獨立規格庫查詢');
+  await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(upper).toHaveValue('獨立規格庫查詢');
+  const doc=docxArchive('<w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:t>當輸入關鍵字時，顯示符合條件的資料</w:t></w:r></w:p></w:body></w:document>');
+  await page.locator('#requirement-file').setInputFiles({name:'需求.docx',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',buffer:doc});
+  await expect(upper).toHaveValue('獨立規格庫查詢\n\n當輸入關鍵字時，顯示符合條件的資料');await ready();await expect(lower).toHaveValue('');
+  await page.getByRole('button',{name:'產生 Gherkin 草稿',exact:true}).click();await expect(lower).toHaveValue(/Feature: 獨立規格庫查詢/);await ready();
+  const betaGenerated=await lower.inputValue();assert.ok(parse(betaGenerated).feature.children[0].scenario);
+  await page.locator('#requirement-file').setInputFiles({name:'more.md',mimeType:'text/markdown',buffer:Buffer.from('查不到時顯示空結果')});await expect(upper).toHaveValue(/查不到時顯示空結果/);await ready();await expect(lower).toHaveValue(betaGenerated);
+  const importSource=await upper.inputValue();
+  await page.locator('#requirement-file').setInputFiles({name:'invalid.pdf',mimeType:'application/pdf',buffer:Buffer.from('invalid')});await expect(page.locator('#notice')).toContainText('目前支援');await ready();await expect(upper).toHaveValue(importSource);await expect(lower).toHaveValue(betaGenerated);
+  await lower.fill(betaGenerated+'# 手動加入且必須原樣保留\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
   await expect(page.locator('#feature-select option:checked')).toHaveText('獨立規格庫查詢');
-  await page.screenshot({path:path.join(artifacts,'05-guided-requirement.png'),fullPage:true});
-  await page.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('能找到符合關鍵字的資料\n查不到時顯示空結果');
-  await job(page.getByRole('button',{name:'儲存需求',exact:true}),'workflow.draft');
-  const betaRoot=path.join(home,'repositories',beta,'repo');
-  const betaFeature=readSaved(beta,'spec/REQ-001/feature/feature.feature');assert.equal(await exists(betaRoot),false);
-  assert.match(betaFeature,/@case:CASE-002/);
+  await page.screenshot({path:path.join(artifacts,'05-two-input-upload.png'),fullPage:true});
+  const betaRoot=path.join(home,'repositories',beta,'repo');assert.equal(await exists(betaRoot),false);
+  assert.match(readSaved(beta,'spec/REQ-001/feature/feature.feature'),/手動加入且必須原樣保留/);
+  // Saving unfinished Gherkin must work; confirmation must not pretend it is valid.
+  await lower.fill('Feature: unfinished\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
+  let priorJob=await page.locator('#notice').getAttribute('data-job-id');await page.getByRole('button',{name:'確認需求並繼續',exact:true}).click();
+  await page.waitForFunction(previous=>{const n=document.querySelector('#notice');return n.dataset.jobId!==previous&&n.dataset.operation==='workflow.review';},priorJob);
+  await expect(page.locator('#notice')).toHaveAttribute('data-outcome','FAILED');await ready();await expect(lower).toHaveValue('Feature: unfinished\n');await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
+  await lower.fill(betaGenerated);await job(page.locator('#save-requirement'),'workflow.requirement.save');
   // Break the isolated remote after binding. A real UI sync fails, while later saves succeed.
   const moved=remotes.beta+'.offline';await import('node:fs/promises').then(fs=>fs.rename(remotes.beta,moved));
-  const previousJob=await page.locator('#notice').getAttribute('data-job-id');
-  await page.getByRole('button',{name:'遠端同步',exact:true}).click();
+  const previousJob=await page.locator('#notice').getAttribute('data-job-id');await page.getByRole('button',{name:'遠端同步',exact:true}).click();
   await page.waitForFunction(previous=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation==='repository.sync';},previousJob);
   await expect(page.locator('#notice')).toHaveAttribute('data-outcome','FAILED');await ready();
-  await page.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('同步失敗後仍可儲存');
-  await job(page.getByRole('button',{name:'儲存需求',exact:true}),'workflow.draft');
-  await page.reload();await ready();await expect(page.locator('#guided-acceptance')).toHaveValue('同步失敗後仍可儲存');
+  await lower.fill(betaGenerated+'# 同步失敗後仍可儲存\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
+  await page.reload();await ready();await expect(lower).toHaveValue(betaGenerated+'# 同步失敗後仍可儲存\n');await expect(upper).toHaveValue(importSource);
   assert.match(readSaved(beta,'spec/REQ-001/feature/feature.feature'),/同步失敗後仍可儲存/);
-  await page.getByLabel('使用情境（選填）',{exact:true}).fill('尚未儲存的草稿');
-  await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');
-  await d.getByRole('button',{name:'取消',exact:true}).click();
-  await expect(page.getByLabel('使用情境（選填）',{exact:true})).toHaveValue('尚未儲存的草稿');
+  await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(artifacts,'06-two-input-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));await page.setViewportSize({width:1440,height:1000});
+  await upper.fill('尚未儲存的來源草稿');await lower.fill(betaGenerated+'# 尚未儲存的下方修改\n');
+  await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');await d.getByRole('button',{name:'取消',exact:true}).click();
+  await expect(upper).toHaveValue('尚未儲存的來源草稿');await expect(lower).toHaveValue(betaGenerated+'# 尚未儲存的下方修改\n');
   await page.getByRole('button',{name:'開啟規格庫 Alpha 規格庫',exact:true}).click();await d.getByRole('button',{name:'捨棄草稿並離開',exact:true}).click();await ready();await expect(page.getByRole('heading',{name:'Alpha 規格庫',exact:true})).toBeVisible();
   await page.setViewportSize({width:390,height:844});await tab('驗收紀錄');await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'04-simple-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));
   await page.getByRole('button',{name:'展開導覽',exact:true}).click();await expect(page.getByRole('button',{name:'開啟規格庫 Beta 規格庫',exact:true})).toBeVisible();await click('開啟規格庫 Beta 規格庫');await expect(page.locator('#sidebar')).not.toBeVisible();assert.deepEqual(browserErrors,[]);

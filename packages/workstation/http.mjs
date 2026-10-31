@@ -40,6 +40,10 @@ export async function dispatch(service, request) {
     if (method === 'GET') result = service.list();
     else if (method === 'POST') { result = service.register(input); status = 201; }
   } else if (parts[0] === 'spec-repositories' && parts.length === 2 && method === 'GET') result = await service.detail(id(parts[1]));
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts.length === 3 && method === 'GET') result = await service.requirement(id(parts[1]), id(url.searchParams.get('requirementId')), id(url.searchParams.get('featureId')));
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts[3] === 'generate' && parts.length === 4 && method === 'POST') result = service.generateRequirement(id(parts[1]), input);
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts[3] === 'import' && parts.length === 4 && method === 'POST') result = service.importRequirementDocument(id(parts[1]), input);
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts[3] === 'proposals' && parts.length === 4 && method === 'GET') result = service.requirementProposals(id(parts[1]), url.searchParams.get('editorKey'));
   else if (parts[0] === 'spec-repositories' && parts[2] === 'git' && parts.length === 3 && method === 'GET') result = await service.inspect(id(parts[1]), url.searchParams.get('projectId') || undefined);
   else if (parts[0] === 'spec-repositories' && parts[2] === 'file' && parts.length === 3 && method === 'GET') result = await service.readFile(id(parts[1]), url.searchParams.get('path'));
   else if (parts[0] === 'spec-repositories' && parts[2] === 'projects' && parts.length === 5 && method === 'GET') {

@@ -43,3 +43,7 @@ Operational DB schema 4 保留 schema 3 的轉換，新增 `repository_preferenc
 ## 日常 UI 的機械操作已退役
 
 Git 操作頁、分開 Clone／初始化／Commit／Push／pin、獨立套件及瀏覽器安裝、接線檢查、準備候選與報告發布按鈕均不再是主流程。低階 API／CLI 保留供維護；正式 UI 只送出 setup、save、sync 與 workflow 語意操作。原有元件回歸仍保留，瀏覽器驗收改為使用新操作並檢查未同步先驗收、安裝取消與一次同意續行。
+
+## 需求編輯器改版
+
+舊多欄位 guided／quick-create UI 已移除，正常入口只有來源描述與 Gherkin 兩區。舊 `.feature` 不重寫，`workflow.create`／`workflow.draft` 保留為舊程式呼叫相容層，不是新 UI 的流程。SQLite schema 6 保留舊 authoring 與確認紀錄，只新增可恢復的生成歷史。

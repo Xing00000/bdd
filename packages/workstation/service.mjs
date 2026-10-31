@@ -1,4 +1,6 @@
-import { draftDetail, readDraftFile, draftProjectFiles } from './authoring.mjs';
+import { draftDetail, readDraftFile, draftProjectFiles, ensureDraft, inDraftView } from './authoring.mjs';
+import { readComposer, generateRequirement, requirementText } from './requirements.mjs';
+import { importRequirementDocument } from './requirement-documents.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir, realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +41,23 @@ export async function createWorkstation(configuration) {
   for (const operationId of store.recover()) launch(operationId);
   const service = {
     options,
+    async requirement(repositoryId, requirementId, featureId) {
+      store.repository(id(repositoryId));
+      const root=await repositoryPath(options.home,repositoryId);
+      const snapshot=await ensureDraft({root,options,store,repositoryId});
+      const result=await inDraftView(snapshot,view=>readComposer(view,requirementId,featureId));
+      return {...result,proposals:store.requirementProposals(repositoryId,result.key)};
+    },
+    generateRequirement(repositoryId,input) {
+      store.repository(id(repositoryId));
+      invariant(typeof input.editorKey==='string'&&/^(?:new-[A-Za-z0-9-]+|[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)$/.test(input.editorKey)&&input.editorKey.length<=180,'INVALID_EDITOR','需求編輯識別無效。');
+      requirementText(input.previousGherkin??'','Gherkin');
+      const generated=generateRequirement(input.description);
+      const receipt=store.saveRequirementProposal(repositoryId,{...input,previousGherkin:input.previousGherkin??'',gherkin:generated.gherkin});
+      return {...generated,...receipt};
+    },
+    requirementProposals(repositoryId,key) {store.repository(id(repositoryId));return store.requirementProposals(repositoryId,key);},
+    importRequirementDocument(repositoryId,input) {store.repository(id(repositoryId));return importRequirementDocument(input);},
     list() { return store.repositories(); },
     register(input) {
       const repositoryId = id(input.id ?? `SPEC-${randomUUID()}`);

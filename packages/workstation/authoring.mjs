@@ -1,5 +1,6 @@
 /** Authoring does not invoke Git, create branches, download repositories or execute repository code. */
 import path from 'node:path';
+import { saveComposer, requirementDiagnostics } from './requirements.mjs';
 import os from 'node:os';
 import { mkdtemp, mkdir, readFile, readdir, rm, lstat } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, exists, walk, atomicWrite, writeJson, readJson } from '../contracts/index.mjs';
@@ -134,7 +135,9 @@ export async function editDraft(context) {
       result={ready:true,settings,connection:'NOT_CHECKED'};
     } else {
       invariant(settings.configured,'SETUP_REQUIRED','請先儲存基本設定；不需要先連線遠端。');
-      if(request.operation==='repository.save') {
+      if(request.operation==='workflow.requirement.save') {
+        result=await saveComposer(root,input);
+      } else if(request.operation==='repository.save') {
         if(input.kind==='scope'){await configureFeature(root,input);}
         else if(input.kind==='project') {
           id(input.projectId);sourcePath(input.path);invariant(settings.projects.some(p=>p.id===input.projectId),'UNKNOWN_PROJECT','產品不屬於此規格庫。',404);
@@ -159,11 +162,11 @@ export async function editDraft(context) {
         result={key,sha256:digest(draft.featureText)};
       } else {
         invariant(request.operation==='workflow.review'&&['gherkin','sd'].includes(input.stage),'INVALID_STAGE','此操作需要執行驗收環境。');
-        if(input.stage==='gherkin'){const text=await readFile(await safePath(root,`spec/${id(input.requirementId)}/${id(input.featureId)}/${input.featureId}.feature`),'utf8');invariant(!text.includes('Then 請補充可驗收的結果'),'ACCEPTANCE_REQUIRED','請先補上可驗收的結果。');}
+        if(input.stage==='gherkin'){const text=await readFile(await safePath(root,`spec/${id(input.requirementId)}/${id(input.featureId)}/${input.featureId}.feature`),'utf8');invariant(!text.includes('Then 請補充可驗收的結果'),'ACCEPTANCE_REQUIRED','請先補上可驗收的結果。');const diagnostics=requirementDiagnostics(text);invariant(!diagnostics.length,'GHERKIN_INVALID',diagnostics.map(d=>`第 ${d.line} 行：${d.message}`).join(' '));}
         result={...await confirm(root,{...input,confirmedBy:settings.reviewer}),nextStage:input.stage==='gherkin'?'SD':'TESTS'};
       }
     }
     const after=await sourceFiles(root),changes=after.filter(f=>!snapshot.files.some(x=>fileKey(x)===fileKey(f)&&x.sha256===digest(f.content))).map(f=>({...f,baseHash:snapshot.files.find(x=>fileKey(x)===fileKey(f))?.baseHash??null}));
-    return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,files:[...changes,...extra],settings,operationId:request.operationId,request,result});
+    return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,files:[...changes,...extra],settings,operationId:request.operationId,request,result,proposalKey:request.operation==='workflow.requirement.save'?input.editorKey:undefined});
   });
 }

@@ -112,7 +112,7 @@ test('recorded installation is reused, but missing browsers request a single new
   await rm(executable);await assert.rejects(ensureInstallation(context),{code:'INSTALL_REQUIRED'});
 });
 test('review progresses only on human content confirmation; execution remains opt-in',async t=>{
-  const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login'});
+  const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',guided:true,acceptance:'成功登入'});
   let d=await f.service.detail('SPEC-flow'),feature=d.spec.features[0];
   await f.job('workflow.review',{requirementId:'REQ-001',featureId:'login',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
   d=await f.service.detail('SPEC-flow');assert.equal(d.spec.features[0].review.stage,'SD');assert.equal(d.state.clean,true);

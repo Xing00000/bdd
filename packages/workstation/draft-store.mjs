@@ -42,7 +42,7 @@ export function draftMethods(db) {
       return JSON.parse(row.result_json);
     },
     /** One SQLite transaction includes content, settings, history and the durable save receipt. */
-    saveDraft(repositoryId, { expectedRevision, settings, files, operationId, request, result = {} }) {
+    saveDraft(repositoryId, { expectedRevision, settings, files, operationId, request, result = {}, proposalKey }) {
       db.exec('BEGIN IMMEDIATE');
       try {
         const previous = this.draftReceipt(repositoryId, operationId, request);
@@ -66,6 +66,7 @@ export function draftMethods(db) {
         db.prepare(`INSERT INTO repository_preferences(repository_id,settings_json) VALUES(?,?) ON CONFLICT(repository_id)
           DO UPDATE SET settings_json=excluded.settings_json`).run(repositoryId,JSON.stringify(value));
         db.prepare('INSERT INTO authoring_history VALUES(?,?,?,?,?,?,?,?)').run(repositoryId,revision,operationId,identity(request),JSON.stringify(files),JSON.stringify(value),JSON.stringify(receipt),at);
+        if(proposalKey && result.key) db.prepare('UPDATE requirement_proposals SET editor_key=? WHERE repository_id=? AND editor_key=?').run(result.key,repositoryId,proposalKey);
         db.exec('COMMIT'); return receipt;
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
@@ -79,6 +80,6 @@ export function draftMethods(db) {
   };
 }
 
-export const isLocalSave = request => ['repository.setup','repository.save','workflow.create','workflow.draft'].includes(request.operation)
+export const isLocalSave = request => ['repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save'].includes(request.operation)
   || request.operation === 'workflow.review' && ['gherkin','sd'].includes(request.input?.stage);
-export const projectionJobPredicate = `NOT (json_extract(request_json,'$.operation') IN ('repository.setup','repository.save','workflow.create','workflow.draft') OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage') IN ('gherkin','sd')))`;
+export const projectionJobPredicate = `NOT (json_extract(request_json,'$.operation') IN ('repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save') OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage') IN ('gherkin','sd')))`;

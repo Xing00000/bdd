@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { installDraftSchema, draftMethods, isLocalSave, projectionJobPredicate } from './draft-store.mjs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { existsSync, chmodSync } from 'node:fs';
 import { normalizeStoredRequest } from './migrate.mjs';
 import { invariant, identity, errorResult } from '../contracts/index.mjs';
@@ -9,13 +10,17 @@ export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 5, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 6, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
   }
   if(version>0&&version<5) {
     const backup=path.join(home,'before-authoring-v5.sqlite');
+    if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}
+  }
+  if(version>0&&version<6) {
+    const backup=path.join(home,'before-requirement-editor-v6.sqlite');
     if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}
   }
   db.exec('BEGIN IMMEDIATE');
@@ -66,7 +71,13 @@ export function openStore(home) {
     CREATE TABLE IF NOT EXISTS repository_preferences (
       repository_id TEXT PRIMARY KEY REFERENCES spec_repositories(id), settings_json TEXT NOT NULL, sync_json TEXT
     );
-    PRAGMA user_version=5;
+    CREATE TABLE IF NOT EXISTS requirement_proposals (
+      id TEXT PRIMARY KEY, repository_id TEXT NOT NULL REFERENCES spec_repositories(id),
+      editor_key TEXT NOT NULL, description TEXT NOT NULL, original_gherkin TEXT NOT NULL,
+      generated_gherkin TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS proposals_by_editor ON requirement_proposals(repository_id,editor_key,created_at);
+    PRAGMA user_version=6;
   `);
   installDraftSchema(db);
   db.exec(`DROP INDEX IF EXISTS one_writer_per_repository; CREATE UNIQUE INDEX one_writer_per_repository ON operations(repository_id) WHERE status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate};`);
@@ -76,6 +87,14 @@ export function openStore(home) {
   const get = operationId => decode(db.prepare('SELECT * FROM operations WHERE id=?').get(operationId));
   return {
     ...draftMethods(db),
+    saveRequirementProposal(repositoryId, { editorKey, description, previousGherkin, gherkin }) {
+      const proposalId=randomUUID(), createdAt=new Date().toISOString();
+      db.prepare('INSERT INTO requirement_proposals VALUES(?,?,?,?,?,?,?)').run(proposalId,repositoryId,editorKey,description,previousGherkin,gherkin,createdAt);
+      return {proposalId,createdAt};
+    },
+    requirementProposals(repositoryId,editorKey) {
+      return db.prepare('SELECT id,description,original_gherkin originalGherkin,generated_gherkin generatedGherkin,created_at createdAt FROM requirement_proposals WHERE repository_id=? AND editor_key=? ORDER BY created_at DESC,rowid DESC LIMIT 20').all(repositoryId,editorKey);
+    },
     close() { db.close(); },
     repositories() { return db.prepare('SELECT id,title,remote_url remoteUrl,branch,created_at createdAt FROM spec_repositories ORDER BY created_at').all(); },
     repository(repositoryId) {
