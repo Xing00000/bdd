@@ -48,7 +48,7 @@ async function navigate(patch,{replace=false,guard=true}={}) {
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);if(state.stage)url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);if(state.gitTarget)url.searchParams.set('target',state.gitTarget);}
   history[replace?'replaceState':'pushState']({},'',url);$('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');await refresh();
 }
-async function readRoute() { const q=new URLSearchParams(location.search);Object.assign(state,{repositoryId:q.get('repo'),view:q.get('view')??'overview',featureKey:q.get('feature'),stage:q.get('stage')??'GHERKIN',projectId:q.get('project'),gitTarget:q.get('target')??''});await refresh(); }
+async function readRoute() { const q=new URLSearchParams(location.search);await navigate({repositoryId:q.get('repo'),view:q.get('view')??'overview',featureKey:q.get('feature'),stage:q.get('stage')??'GHERKIN',projectId:q.get('project'),gitTarget:q.get('target')??''},{replace:true,guard:false}); }
 function applyBusy() { const busy=Boolean(state.busy);all('[data-mutate]').forEach(n=>{if(busy){n.dataset.wasDisabled=String(n.disabled);n.disabled=true;}else if(n.dataset.wasDisabled!==undefined){n.disabled=n.dataset.wasDisabled==='true';delete n.dataset.wasDisabled;}});$('#source-editor').readOnly=busy;$('#project-editor').readOnly=busy;$('#job-progress').hidden=!busy;if(busy){$('#job-title').textContent=labels[state.busy.name]??state.busy.name;$('#job-id').textContent=`${state.busy.repositoryTitle} · ${state.busy.id}`;} }
 async function operation(name,input={},options={}) {
   if(state.busy)throw new Error('已有作業執行中；可查看進度或取消，不會重複送出。');
@@ -69,7 +69,7 @@ async function operation(name,input={},options={}) {
   }
 }
 async function refresh() {
-  const epoch=++state.epoch; $('#repository-view').inert=true;
+  const epoch=++state.epoch; $('#repository-view').inert=true;$('#repository-view').setAttribute('aria-busy','true');
   try {
   const list=await api('/spec-repositories'); if(epoch!==state.epoch)return;state.repositories=list;
   if(state.repositoryId){const detail=await api(`/spec-repositories/${state.repositoryId}`);if(epoch!==state.epoch)return;state.detail=detail;}
@@ -89,7 +89,7 @@ async function refresh() {
   if(state.view==='reports')renderRuns();
   if(state.view==='maintenance')renderMaintenance();
   if(epoch===state.epoch&&state.busy)applyBusy();
-  } finally { if(epoch===state.epoch)$('#repository-view').inert=false; }
+  } finally { if(epoch===state.epoch){$('#repository-view').inert=false;$('#repository-view').setAttribute('aria-busy','false');} }
 }
 function renderNavigation() {
   $('#repository-list').replaceChildren();
