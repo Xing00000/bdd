@@ -162,7 +162,7 @@ export async function editDraft(context) {
         result={key,sha256:digest(draft.featureText)};
       } else {
         invariant(request.operation==='workflow.review'&&['gherkin','sd'].includes(input.stage),'INVALID_STAGE','此操作需要執行驗收環境。');
-        if(input.stage==='gherkin'){const text=await readFile(await safePath(root,`spec/${id(input.requirementId)}/${id(input.featureId)}/${input.featureId}.feature`),'utf8');invariant(!text.includes('Then 請補充可驗收的結果'),'ACCEPTANCE_REQUIRED','請先補上可驗收的結果。');const diagnostics=requirementDiagnostics(text);invariant(!diagnostics.length,'GHERKIN_INVALID',diagnostics.map(d=>`第 ${d.line} 行：${d.message}`).join(' '));}
+        if(input.stage==='gherkin'){const text=await readFile(await safePath(root,`spec/${id(input.requirementId)}/${id(input.featureId)}/${input.featureId}.feature`),'utf8');const diagnostics=requirementDiagnostics(text);invariant(!diagnostics.length,'GHERKIN_INVALID',diagnostics.map(d=>`第 ${d.line} 行：${d.message}`).join(' '));}
         result={...await confirm(root,{...input,confirmedBy:settings.reviewer}),nextStage:input.stage==='gherkin'?'SD':'TESTS'};
       }
     }

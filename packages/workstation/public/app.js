@@ -237,7 +237,13 @@ async function openComposer(f,epoch) {
   $('#requirement-state').textContent=f?'已儲存至 SQLite':'尚未儲存';
   $('#document-info').textContent='TXT、Markdown、Gherkin、DOCX · 最大 1 MiB';
   renderRequirementHistory(value.proposals??[]);
-  $('#requirement-feedback').textContent=value.diagnostics?.length?'草稿已保留；確認需求前請修正：'+value.diagnostics.map(x=>x.message).join(' '):'在這裡直接編輯正式規格。上方文字不會自動覆蓋這裡。';
+  renderRequirementFeedback(value);
+}
+function renderRequirementFeedback(value) {
+  const feedback=$('#requirement-feedback');
+  if(value.diagnostics?.length) feedback.textContent='草稿可儲存；確認前請修正格式：'+value.diagnostics.map(x=>`第 ${x.line} 行：${x.message}`).join(' ');
+  else if(value.suggestions?.length) feedback.textContent='內容提醒（不阻擋確認）：'+value.suggestions.map(x=>`第 ${x.line} 行：${x.message}`).join(' ');
+  else feedback.textContent='在這裡直接編輯正式規格。上方文字不會自動覆蓋這裡。';
 }
 function renderRequirementHistory(proposals) {
   const area=$('#requirement-history-items');area.replaceChildren();$('#requirement-history').hidden=!proposals.length;
@@ -266,7 +272,7 @@ async function generateGherkin() {
     if(epoch!==state.epoch||repositoryId!==state.repositoryId)return;
     $('#requirement-gherkin').value=result.gherkin;
     renderRequirementHistory(await api(`/spec-repositories/${repositoryId}/requirement/proposals?editorKey=${encodeURIComponent(state.composer.key)}`));
-    composerChanged();$('#requirement-feedback').textContent='已依描述整理為格式草稿，請在下方審閱與修改；不代表測試已實作。';
+    composerChanged();renderRequirementFeedback(result);
     note('Gherkin 草稿已產生，請在下方直接編輯。');$('#requirement-panel').dataset.generation=result.proposalId;
   }finally{state.transient=false;$('#generate-gherkin').textContent='產生 Gherkin 草稿';block();}
   $('#requirement-gherkin').focus();

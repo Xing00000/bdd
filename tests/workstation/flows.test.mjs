@@ -234,13 +234,16 @@ test('guided requirement revisions are saved locally and remain editable without
   assert.equal(stale.error.code,'CONTENT_CHANGED');
 });
 
-test('incomplete plain-language acceptance stays a draft and cannot be approved',async t=>{
+test('legacy placeholder cannot veto a human review or fabricate verification',async t=>{
   const f=await setup(t,{product:false});
   await f.job('workflow.create',{title:'搜尋',guided:true});
   const d=await f.service.detail('SPEC-flow'),feature=d.spec.features[0];
-  const approved=await f.job('workflow.review',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin},{fail:true});
-  assert.equal(approved.error.code,'ACCEPTANCE_REQUIRED');
-  assert.equal((await f.service.detail('SPEC-flow')).spec.features[0].review.confirmed.gherkin,false);
+  const approved=await f.job('workflow.review',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
+  assert.equal(approved.status,'SUCCEEDED');
+  const after=(await f.service.detail('SPEC-flow')).spec.features[0];
+  assert.equal(after.review.confirmed.gherkin,true);
+  assert.equal(after.review.confirmed.tests,false);
+  assert.equal(after.verification.status,'NOT_RUN');
 });
 
 test('editing a real Gherkin file disables guided overwrite protection',async t=>{

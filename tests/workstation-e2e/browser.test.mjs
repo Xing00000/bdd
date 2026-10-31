@@ -100,7 +100,7 @@ const server=http.createServer((request,response)=>{
   await page.getByRole('button',{name:'產生 Gherkin 草稿',exact:true}).click();
   await expect(lower).toHaveValue(/Feature: 真正產品登入/);await ready();
   assert.ok(parse(await lower.inputValue()).feature.children[0].scenario,'Actual Cucumber parser accepts generated grammar');
-  const manual=`Feature: Sign in to the actual product\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`;
+  const manual=`Feature: Sign in to the actual product\n  # Regression: Then 請補充可驗收的結果 in a comment must not block human review.\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`;
   await lower.fill(manual);
   await upper.fill(sourceDescription+'\n上方修改不應蓋掉下方手動編輯');await expect(lower).toHaveValue(manual);
   await page.getByRole('button',{name:'產生 Gherkin 草稿',exact:true}).click();await expect(d).toContainText('重新產生');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(lower).toHaveValue(manual);
@@ -172,6 +172,26 @@ const server=http.createServer((request,response)=>{
   await page.screenshot({path:path.join(artifacts,'05-two-input-upload.png'),fullPage:true});
   const betaRoot=path.join(home,'repositories',beta,'repo');assert.equal(await exists(betaRoot),false);
   assert.match(readSaved(beta,'spec/REQ-001/feature/feature.feature'),/手動加入且必須原樣保留/);
+  // The user explicitly approves content; old scaffold text is advice, not a veto.
+  const placeholderDraft=betaGenerated.replace(/^    Then .+$/m,'    Then 請補充可驗收的結果');
+  assert.ok(parse(placeholderDraft).feature);
+  await lower.fill(placeholderDraft);await job(page.locator('#save-requirement'),'workflow.requirement.save');
+  await expect(page.locator('#requirement-feedback')).toContainText('不阻擋確認');
+  await page.screenshot({path:path.join(artifacts,'07-advice-not-a-gate.png'),fullPage:true});
+  await job(page.getByRole('button',{name:'確認需求並繼續',exact:true}),'workflow.review');
+  await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
+  await expect(page.locator('#feature-status')).not.toHaveText('VERIFIED');
+  await page.screenshot({path:path.join(artifacts,'08-human-review-progressed.png'),fullPage:true});
+  await page.reload();await ready();await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
+  await click('1 需求');await expect(lower).toHaveValue(placeholderDraft);
+  assert.equal(readSaved(beta,'spec/REQ-001/feature/feature.feature'),placeholderDraft);
+  assert.equal(await exists(betaRoot),false,'Human content approval is still an offline SQLite action');
+  // Official parser accepts static checks and * style without a mandatory When/Then pair.
+  for(const source of [
+    'Feature: Static data\n Scenario: Version\n  Given a version exists\n  Then the version is correct\n',
+    'Feature: List\n Scenario: Items\n  * the first item exists\n  * the second item exists\n',
+    'Feature: Background action\n Background:\n  When the page opens\n Scenario: Result\n  Then the homepage appears\n'
+  ]) assert.ok(parse(source).feature);
   // Saving unfinished Gherkin must work; confirmation must not pretend it is valid.
   await lower.fill('Feature: unfinished\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
   let priorJob=await page.locator('#notice').getAttribute('data-job-id');await page.getByRole('button',{name:'確認需求並繼續',exact:true}).click();

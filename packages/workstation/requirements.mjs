@@ -24,8 +24,8 @@ export function generateRequirement(description) {
   const normalized = description.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
   if (/^(?:#[^\n]*\n\s*)*(?:Feature|功能|機能|特性):/.test(normalized)) {
     const diagnostics = requirementDiagnostics(normalized);
-    invariant(!diagnostics.length, 'GHERKIN_INVALID', diagnostics.map(x => x.message).join(' '));
-    return { gherkin: normalized + '\n', diagnostics: [], method: 'existing-gherkin', draft: true };
+    // Existing Gherkin may be unfinished. Generating a draft is not approval.
+    return { gherkin: normalized + '\n', diagnostics, suggestions: requirementSuggestions(normalized), method: 'existing-gherkin', draft: true };
   }
   const lines = normalized.split(/\n+/).map(x => x.replace(/^\s*(?:[-*•]|\d+[.)、]|#+)\s*/, '').trim()).filter(Boolean);
   const title = oneLine(lines[0]);
@@ -46,10 +46,28 @@ export function generateRequirement(description) {
   requirementText(gherkin, 'Gherkin');
   const diagnostics = requirementDiagnostics(gherkin);
   invariant(!diagnostics.length, 'GENERATION_FORMAT_ERROR', '草稿未通過格式檢查；下方內容未被修改。');
-  return { gherkin, diagnostics, method: 'local-format-draft', draft: true };
+  return { gherkin, diagnostics, suggestions: requirementSuggestions(gherkin), method: 'local-format-draft', draft: true };
+}
+/** Non-blocking editorial suggestions. Do not inspect comments or document data,
+ * and never infer approval or test success from words chosen by the author.
+ */
+export function requirementSuggestions(text) {
+  const suggestions = []; let docString = null;
+  for (const [index, row] of text.split(/\r?\n/).entries()) {
+    const line = row.trim();
+    if (docString) { if (line.startsWith(docString)) docString = null; continue; }
+    if (/^("""|```)/.test(line)) { docString = line.slice(0, 3); continue; }
+    if (/^(Then|那麼|那么)\s+請補充可驗收的結果[。.]?$/.test(line)) {
+      suggestions.push({ line: index + 1, code: 'LEGACY_PLACEHOLDER',
+        message: '這行是舊範本的提示文字，可在下方改寫；不會阻擋儲存或人工確認。' });
+    }
+  }
+  return suggestions.slice(0, 10);
 }
 /** Conservative structural diagnostics, not a substitute for full BDD discovery.
- * Invalid/incomplete drafts remain saveable. Confirmation is the gate.
+ * Do not require a When/Then pair: static checks, Background and * are valid styles.
+ * Business adequacy belongs to the human reviewer; execution remains a separate gate.
+ * Invalid/incomplete drafts remain saveable.
  */
 export function requirementDiagnostics(text) {
   if (!text.trim()) return [{ line: 1, message: '請產生或填寫下方 Gherkin 後再確認需求。' }];
@@ -81,8 +99,7 @@ export function requirementDiagnostics(text) {
   if (featureCount !== 1) add(1, '一份需求需要且只能包含一個 Feature。');
   if (!scenarios.length) add(1, '請至少加入一個 Scenario。');
   for (const s of scenarios) {
-    if (!s.steps.some(x => /^(Then|那麼|那么)\s/.test(x))) add(s.line, '每個 Scenario 需要 Then 預期結果。');
-    if (!s.steps.some(x => /^(When|當)\s/.test(x))) add(s.line, '每個 Scenario 需要 When 操作。');
+    if (!s.steps.length) add(s.line, '此 Scenario 尚無步驟，請在下方加入至少一個步驟；草稿仍可儲存。');
     if (s.outline && !s.examples) add(s.line, 'Scenario Outline 需要 Examples。');
   }
   if (docString) add(rows.length, 'Doc String 尚未關閉。');
@@ -98,7 +115,7 @@ export async function readComposer(root, requirementId, featureId) {
   // Existing hand-authored files are untouched; never synthesize a source description.
   const description = source.description ?? '';
   return { requirementId, featureId, key: p.key, description, gherkin,
-    token: identity({ description, gherkin }), diagnostics: requirementDiagnostics(gherkin) };
+    token: identity({ description, gherkin }), diagnostics: requirementDiagnostics(gherkin), suggestions: requirementSuggestions(gherkin) };
 }
 export async function saveComposer(root, input) {
   const description = requirementText(input.description, '需求描述'), gherkin = requirementText(input.gherkin, 'Gherkin');

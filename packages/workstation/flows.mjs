@@ -7,6 +7,7 @@ import { configuration, scan, reviewState, confirm } from '../spec-toolkit/index
 import { installDependencies, checkTests } from './repository-actions.mjs';
 import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { reindexReports } from './reports.mjs';
+import { requirementDiagnostics } from './requirements.mjs';
 
 export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.draft', 'workflow.requirement.save', 'workflow.review', 'workflow.verify', 'repository.prepare'];
 
@@ -105,7 +106,8 @@ export async function advanceWorkflow(context) {
     invariant(['gherkin', 'sd', 'tests'].includes(input.stage), 'INVALID_STAGE', '只需確認需求、設計與驗收測試。');
     if (input.stage === 'gherkin') {
       const content = await readFile(await safePath(root, `spec/${key}/${id(input.featureId)}.feature`), 'utf8');
-      invariant(!content.includes('Then 請補充可驗收的結果'), 'ACCEPTANCE_REQUIRED', '請先填寫可驗收的結果，再確認需求。');
+      const diagnostics = requirementDiagnostics(content);
+      invariant(!diagnostics.length, 'GHERKIN_INVALID', diagnostics.map(d => `第 ${d.line} 行：${d.message}`).join(' '));
     }
     // Check the human-reviewed source before installation; dependency resolution may
     // create the lockfile, but must never silently change the authored test code.
