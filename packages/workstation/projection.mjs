@@ -108,6 +108,18 @@ export async function captureExecutionFiles(context,snapshot) {
 
 /** A newly bound, existing Spec repo is imported without replacing authored local drafts. */
 export async function importBoundRepository(context,snapshot) {
+  // Binding and local saves intentionally run concurrently. A different SQL
+  // revision is not itself a content conflict: re-read and repeat the merge
+  // checks against the new snapshot before retrying the compare-and-swap.
+  for(let attempt=0;attempt<4;attempt++) {
+    try { return await importBoundSnapshot(context,snapshot); }
+    catch(error) {
+      if(error.code!=='DRAFT_REVISION_CHANGED'||attempt===3)throw error;
+      snapshot=context.store.draft(context.request.repositoryId);
+    }
+  }
+}
+async function importBoundSnapshot(context,snapshot) {
   const {root,store,request,git}=context,repositoryId=request.repositoryId;
   const config=await configuration(root),incoming=await sourceFiles(root),seed=store.draftSeed(repositoryId);
   const settings={...snapshot.settings,projects:[...(snapshot.settings.projects??[])]};
