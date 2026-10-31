@@ -30,7 +30,8 @@ async function api(route,method='GET',body) {
 const feature=()=>state.detail?.spec?.features.find(f=>f.key===state.featureKey);
 const guidedInput=()=>({title:$('#guided-title').value.trim(),goal:$('#guided-goal').value.trim(),acceptance:$('#guided-acceptance').value.trim()});
 const guidedDirty=()=>Boolean(state.guided&&!$('#gherkin-guided').hidden&&JSON.stringify(guidedInput())!==JSON.stringify(state.guided));
-const dirty=()=>state.formDirty||guidedDirty()||Boolean(state.editor&&$('#source-editor').value!==state.editor.content||state.product&&$('#project-editor').value!==state.product.content);
+const quickDraft=()=>!$('#feature-empty').hidden&&Boolean($('#quick-feature-title').value.trim()||$('#quick-feature-acceptance').value.trim());
+const dirty=()=>state.formDirty||guidedDirty()||quickDraft()||Boolean(state.editor&&$('#source-editor').value!==state.editor.content||state.product&&$('#project-editor').value!==state.product.content);
 function block() {
   const value=state.busy||state.loading;
   $('#content').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
@@ -303,6 +304,7 @@ $('#form-dialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog()
 on('#cancel-job','click',()=>state.jobId&&api(`/operations/${state.jobId}/cancel`,'POST',{}));
 on('#sync','click',()=>{if(dirty())throw new Error('請先儲存畫面中的草稿，遠端同步只處理已儲存內容。');return executeJob('repository.sync',{});});
 on('#new-feature','click',createFeature);
+on('#quick-feature-form','input',block);
 on('#quick-feature-form','submit',()=>createFeatureWith({title:$('#quick-feature-title').value,goal:'',acceptance:$('#quick-feature-acceptance').value}));
 on('#guided-form','submit',saveGuided);
 for(const selector of ['#guided-title','#guided-goal','#guided-acceptance'])on(selector,'input',()=>{$('#guided-state').textContent=guidedDirty()?'尚未儲存':'已儲存';renderGuidedPreview();block();});

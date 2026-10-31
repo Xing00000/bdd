@@ -128,11 +128,16 @@ const server=http.createServer((request,response)=>{
   await page.reload();await ready();await expect(page.locator('#run-list')).toContainText('已同步至遠端');await tab('需求流程');await expect(page.locator('#feature-status')).toHaveText('VERIFIED');
   await click('開啟規格庫 Beta 規格庫');await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();assert.equal(await page.getByRole('button',{name:'開啟產品 product',exact:true}).count(),0);await tab('驗收紀錄');await expect(page.locator('#run-list')).toContainText('尚無驗收紀錄');await expect(page.locator('#report-view')).not.toBeVisible();
   await tab('需求流程');await expect(page.locator('#feature-empty')).toBeVisible();
-  await page.getByLabel('功能名稱',{exact:true}).fill('獨立規格庫查詢');
-  await page.getByLabel('怎樣才算成功？',{exact:true}).fill('可以找到符合關鍵字的資料');
+  const quick=page.locator('#quick-feature-form');
+  await quick.getByLabel('功能名稱',{exact:true}).fill('獨立規格庫查詢');
+  await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');
+  await d.getByRole('button',{name:'取消',exact:true}).click();
+  await expect(quick.getByLabel('功能名稱',{exact:true})).toHaveValue('獨立規格庫查詢');
+  await quick.getByLabel('怎樣才算成功？',{exact:true}).fill('可以找到符合關鍵字的資料');
   await job(page.getByRole('button',{name:'建立需求草稿',exact:true}),'workflow.create');
   await expect(page.locator('#gherkin-guided')).toBeVisible();
   await expect(page.locator('#guided-acceptance')).toHaveValue('可以找到符合關鍵字的資料');
+  await page.screenshot({path:path.join(artifacts,'05-guided-requirement.png'),fullPage:true});
   await page.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('能找到符合關鍵字的資料\n查不到時顯示空結果');
   await job(page.getByRole('button',{name:'儲存需求',exact:true}),'workflow.draft');
   const betaRoot=path.join(home,'repositories',beta,'repo');
