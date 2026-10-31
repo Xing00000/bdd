@@ -57,7 +57,7 @@ export async function ensureDraft({ root, options, store, repositoryId }) {
     }
     const settings={...prior,schemaVersion:1,reviewer:prior?.reviewer??'',configured:Boolean(prior?.configured),projects,
       ...(config?.execution?.service ? {execution:{projectId:config.execution.service.projectId,baseUrl:config.execution.environment?.WB_TARGET_BASE_URL,healthUrl:config.execution.service.healthUrl,command:config.execution.service.command}} : {})};
-    try { store.saveDraft(repositoryId,{expectedRevision:null,settings,files,operationId:'sqlite-bootstrap-v5',request:{bootstrap:5},result:{imported:true}}); }
+    try { store.saveDraft(repositoryId,{expectedRevision:null,settings,files,operationId:'sqlite-bootstrap-v5',request:{bootstrap:5},result:{imported:true,previousSettingsToken:identity(prior)}}); }
     catch(error) { if(error.code!=='DRAFT_REVISION_CHANGED'&&error.code!=='OPERATION_ID_CONFLICT')throw error; }
     return store.draft(repositoryId);
   } finally { await rm(temporary,{recursive:true,force:true}); }
@@ -120,7 +120,10 @@ export async function editDraft(context) {
     if(request.operation==='repository.setup') {
       invariant(typeof input.reviewer==='string'&&input.reviewer.trim()&&input.reviewer.length<=120,'REVIEWER_REQUIRED','請填寫需求確認者。');
       invariant(Array.isArray(input.projects??[])&&(input.projects??[]).length<=20,'INVALID_PROJECTS','最多可綁定 20 個產品。');
-      if(input.expectedSettings!==undefined)invariant(identity(settings)===input.expectedSettings,'SETTINGS_CHANGED','設定已由另一個操作更新，請重新開啟。',409);
+      if(input.expectedSettings!==undefined) {
+        const bootstrap=snapshot.revision===1 ? store.draftReceipt(repositoryId,'sqlite-bootstrap-v5',{bootstrap:5}) : null;
+        invariant(identity(settings)===input.expectedSettings||bootstrap?.previousSettingsToken===input.expectedSettings,'SETTINGS_CHANGED','設定已由另一個操作更新，請重新開啟。',409);
+      }
       const projects=[...(settings.projects??[])];
       for(const p of input.projects??[]){id(p.id);remoteUrl(p.url,options);const previous=projects.find(x=>x.id===p.id);invariant(!previous||previous.url===p.url,'PROJECT_SOURCE_CHANGED','不能默默替換既有產品的來源。',409);if(!previous)projects.push({id:p.id,url:p.url});}
       invariant(new Set((input.projects??[]).map(p=>p.id)).size===(input.projects??[]).length,'DUPLICATE_PROJECT','產品代號不能重複。');

@@ -110,3 +110,18 @@ test('restart recovers a committed SQLite save receipt even when the job complet
   const snap=store.draft('SPEC-sql');const receipt=store.saveDraft('SPEC-sql',{expectedRevision:snap.revision,files:[{target:'spec',path:'tests/crash.txt',content:'committed'}],operationId:request.operationId,request});store.close();
   await f.restart();assert.equal(f.service.operation(request.operationId).status,'SUCCEEDED');assert.deepEqual(f.service.operation(request.operationId).result,receipt);
 });
+
+test('the first upgraded settings save accepts the token of the form actually shown before SQLite import',async t=>{
+  const f=await scenario(t,{existing:true});
+  const store=openStore(f.home);store.setPreferences('SPEC-sql',{reviewer:'Previous',configured:true,schemaVersion:1});store.close();
+  const shown=await f.service.detail('SPEC-sql');
+  const saved=await f.job('repository.setup',{...input,expectedSettings:shown.settingsToken});
+  assert.equal(saved.result.storage,'sqlite');assert.equal((await f.service.detail('SPEC-sql')).preferences.reviewer,'Xing');
+  const stale=await f.job('repository.setup',{...input,reviewer:'Stale',expectedSettings:shown.settingsToken},true);
+  assert.equal(stale.error.code,'SETTINGS_CHANGED');assert.equal((await f.service.detail('SPEC-sql')).preferences.reviewer,'Xing');
+});
+test('an unconfigured legacy checkout can save its first SQLite settings from the existing form',async t=>{
+  const f=await scenario(t,{existing:true}),shown=await f.service.detail('SPEC-sql');
+  await f.job('repository.setup',{...input,expectedSettings:shown.settingsToken});
+  assert.equal((await f.service.detail('SPEC-sql')).preferences.configured,true);
+});
