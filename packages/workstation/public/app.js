@@ -40,7 +40,10 @@ function ask(title,description,submit='確認') { return new Promise(resolve=>{d
 async function guardDraft() { if(!dirty())return true; if(!await ask('有尚未保存的編輯','離開會捨棄目前文件或表單中的未保存內容；已寫入 Repo 的內容不受影響。','捨棄編輯並離開'))return false; state.editor=null;state.projectEditor=null;state.formDirty=false;return true; }
 async function navigate(patch,{replace=false,guard=true}={}) {
   if(guard&&!await guardDraft())return;
-  Object.assign(state,patch); state.editor=null;state.projectEditor=null;state.formDirty=false;
+  const previousRepository=state.repositoryId;
+  Object.assign(state,patch); state.editor=null;state.projectEditor=null;state.formDirty=false;state.git=null;state.projectState=null;state.config=null;state.scope=null;
+  $('#push-receipt').textContent='';
+  if(previousRepository!==state.repositoryId){state.detail=null;upgradePlan=null;legacyPlan=null;$('#report-view').hidden=true;$('#report-view').replaceChildren();$('#maintenance-plan').textContent='';}
   const url=new URL(location.href);url.pathname='/';url.search='';
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);if(state.stage)url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);if(state.gitTarget)url.searchParams.set('target',state.gitTarget);}
   history[replace?'replaceState':'pushState']({},'',url);$('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');await refresh();
@@ -66,7 +69,9 @@ async function operation(name,input={},options={}) {
   }
 }
 async function refresh() {
-  const epoch=++state.epoch; const list=await api('/spec-repositories'); if(epoch!==state.epoch)return;state.repositories=list;
+  const epoch=++state.epoch; $('#repository-view').inert=true;
+  try {
+  const list=await api('/spec-repositories'); if(epoch!==state.epoch)return;state.repositories=list;
   if(state.repositoryId){const detail=await api(`/spec-repositories/${state.repositoryId}`);if(epoch!==state.epoch)return;state.detail=detail;}
   else state.detail=null;
   renderNavigation();$('#home-view').hidden=Boolean(state.detail);$('#repository-view').hidden=!state.detail;
@@ -84,6 +89,7 @@ async function refresh() {
   if(state.view==='reports')renderRuns();
   if(state.view==='maintenance')renderMaintenance();
   if(epoch===state.epoch&&state.busy)applyBusy();
+  } finally { if(epoch===state.epoch)$('#repository-view').inert=false; }
 }
 function renderNavigation() {
   $('#repository-list').replaceChildren();
@@ -94,7 +100,7 @@ function renderHome() {
   $('#breadcrumbs').textContent='工作台';$('#repo-count').textContent=state.repositories.length;$('#empty-state').hidden=state.repositories.length>0;$('#repository-cards').replaceChildren();
   for(const r of state.repositories){const c=element('article',undefined,'card');c.append(element('p','SPEC REPOSITORY','eyebrow'),element('h3',r.title),element('p',r.remoteUrl,'mono muted'),button('進入規格庫',()=>navigate({repositoryId:r.id,view:'overview',featureKey:null,projectId:null,gitTarget:''}),{primary:true}));$('#repository-cards').append(c);}
 }
-function bindRepository() { formDialog('綁定 Spec Repo','工作台可連結多個規格庫。請提供已建立的 remote；不會在工作台直接建立全域 Project。',[
+async function bindRepository() { if(!await guardDraft())return; formDialog('綁定 Spec Repo','工作台可連結多個規格庫。請提供已建立的 remote；不會在工作台直接建立全域 Project。',[
   field('規格庫名稱','title',''),field('Git remote URL','remoteUrl','',{placeholder:'git@github.com:Xing00000/bdd-spec.git'}),field('預設分支（空 Repo 請留白）','branch','',{required:false,placeholder:'遠端預設分支'})
 ],'綁定規格庫',async form=>{const input=Object.fromEntries(form);if(!input.branch)delete input.branch;const r=await api('/spec-repositories','POST',input);await navigate({repositoryId:r.id,view:'overview',featureKey:null,projectId:null,gitTarget:''},{guard:false});note('Spec Repo 已綁定。接著取得遠端內容。');}); }
 async function renderOverview(epoch) {
@@ -233,7 +239,8 @@ function renderRuns(){
   for(const r of d.reports??[]){const c=element('article',undefined,'card');c.append(element('h3',r.key),badge(r.invalidReason??'GIT_INDEXED'),element('p',`${r.ref} · ${r.reportCommit}`,'mono muted'));if(!r.invalidReason)c.append(button('檢視 Git 證據',()=>showReport(r.runId,r.key)));$('#run-list').append(c);}
 }
 async function showReport(runId,key){
-  const response=await fetch(artifactUrl(runId,'manifest.json',key)),m=await response.json();if(!response.ok)throw new Error(m.message);const panel=$('#report-view');panel.hidden=false;panel.replaceChildren(element('p','EXECUTION EVIDENCE','eyebrow'),element('h2',`${m.requirementId} / ${m.featureId}`),badge(m.testOutcome),document.createTextNode(' '),badge(m.verification),element('p',`受測 ${m.testedSpecCommit}`,'mono muted'));
+  const repositoryId=state.repositoryId,epoch=state.epoch;
+  const response=await fetch(artifactUrl(runId,'manifest.json',key)),m=await response.json();if(!response.ok)throw new Error(m.message);if(repositoryId!==state.repositoryId||epoch!==state.epoch)return;const panel=$('#report-view');panel.hidden=false;panel.replaceChildren(element('p','EXECUTION EVIDENCE','eyebrow'),element('h2',`${m.requirementId} / ${m.featureId}`),badge(m.testOutcome),document.createTextNode(' '),badge(m.verification),element('p',`受測 ${m.testedSpecCommit}`,'mono muted'));
   const table=element('table',undefined,'report-table'),head=element('tr');['案例','瀏覽器','結果','斷言'].forEach(x=>head.append(element('th',x)));table.append(head);for(const c of m.cases??[]){const row=element('tr');[c.caseId,c.profile,c.status,String(c.assertions)].forEach(x=>row.append(element('td',x)));table.append(row);}panel.append(table);
   const gallery=element('div',undefined,'gallery');for(const a of m.artifacts.filter(a=>a.path.startsWith('screenshots/'))){const figure=element('figure'),link=element('a'),img=document.createElement('img');link.href=artifactUrl(runId,a.path,key);link.target='_blank';link.rel='noopener';img.src=link.href;img.alt=a.path;img.loading='lazy';link.append(img);figure.append(link,element('figcaption',a.path));gallery.append(figure);}panel.append(gallery);
   const downloads=element('div',undefined,'toolbar');for(const a of m.artifacts.filter(a=>a.path==='report.html'||a.path.startsWith('traces/')||a.path.startsWith('logs/'))){const link=element('a',a.path);link.href=artifactUrl(runId,a.path,key);link.download=a.path.split('/').at(-1);downloads.append(link);}panel.append(downloads);
