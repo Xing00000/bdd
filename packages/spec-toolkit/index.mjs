@@ -52,6 +52,37 @@ export async function initialize(root, { specRepositoryId, templateRoot = path.j
   return { schemaVersion: 1, files: [...files, ...snapshot.files.map(x => `.workbench-tools/${x.path}`), '.workbench-tools/manifest.json'], requiresDependencyLock: true };
 }
 
+const singleLine = (value, limit = 260) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, limit);
+export function buildGuidedFeature(input) {
+  const title = singleLine(input.title, 160);
+  invariant(title.length > 0, 'INVALID_TITLE', '請先寫下需求名稱。');
+  const goal = singleLine(input.goal, 500);
+  const raw = String(input.acceptance ?? '');
+  invariant(raw.length <= 4000, 'ACCEPTANCE_TOO_LONG', '驗收結果最多 4000 字。');
+  const acceptance = raw.split(/\r?\n/).map(x => singleLine(x.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, ''), 220)).filter(Boolean);
+  invariant(acceptance.length <= 12, 'TOO_MANY_CASES', '每個功能最多 12 項驗收結果，請先拆成多個功能。');
+  const criteria = acceptance.length ? acceptance : ['請補充可驗收的結果'];
+  const lines = ['# BDD-WORKBENCH-GUIDED-V1', `Feature: ${title}`];
+  if (goal) lines.push(`  目標：${goal}`);
+  for (const [index, item] of criteria.entries()) {
+    const number = String(index + 1).padStart(3, '0');
+    lines.push('', `  @case:CASE-${number}`, `  Scenario: ${item}`,
+      `    Given 系統已準備好讓使用者操作 ${title}`,
+      `    When 使用者嘗試完成 ${title}`,
+      `    Then ${item}`);
+  }
+  return { title, goal, acceptance: criteria.join('\n'), caseIds: criteria.map((_, i) => `CASE-${String(i + 1).padStart(3, '0')}`), featureText: lines.join('\n') + '\n' };
+}
+export function parseGuidedFeature(text) {
+  if (typeof text !== 'string' || !text.startsWith('# BDD-WORKBENCH-GUIDED-V1\n')) return null;
+  const title = /^Feature: (.+)$/m.exec(text)?.[1];
+  const goal = /^  目標：(.+)$/m.exec(text)?.[1] ?? '';
+  const acceptance = [...text.matchAll(/^    Then (.+)$/gm)].map(match => match[1]).join('\n');
+  if (!title || !acceptance) return null;
+  const draft = buildGuidedFeature({ title, goal, acceptance });
+  return draft.featureText === text ? { title: draft.title, goal: draft.goal, acceptance: draft.acceptance } : null;
+}
+
 export async function createFeature(root, input) {
   const key = featureKey(input.requirementId, input.featureId), config = await configuration(root);
   invariant(typeof input.title === 'string' && input.title.trim() && input.title.length <= 300 && !/[\r\n]/.test(input.title), 'INVALID_TITLE', 'A one-line title is required');
@@ -61,12 +92,13 @@ export async function createFeature(root, input) {
   invariant(!await exists(directory), 'FEATURE_EXISTS', 'Feature already exists', 409);
   const requirementPath = await safePath(root, `spec/${input.requirementId}/requirement.yaml`);
   const requirement = await exists(requirementPath) ? version(await readJson(requirementPath))
-    : { schemaVersion: 1, id: input.requirementId, title: input.requirementId, features: [] };
+    : { schemaVersion: 1, id: input.requirementId, title: input.title, features: [] };
   invariant(requirement.id === input.requirementId && Array.isArray(requirement.features) && !requirement.features.includes(input.featureId), 'INVALID_REQUIREMENT', 'Requirement metadata does not match its directory');
+  const draft = input.guided ? buildGuidedFeature(input) : null;
   const caseId = 'CASE-001';
   const files = {
-    [`spec/${key}/feature.yaml`]: json({ schemaVersion: 1, id: input.featureId, requirementId: input.requirementId, title: input.title, projectIds, caseIds: [caseId], profiles: ['chromium'] }),
-    [`spec/${key}/${input.featureId}.feature`]: `Feature: ${input.title}\n\n  @case:${caseId}\n  Scenario: Define acceptance behaviour\n    Given the acceptance steps have not been implemented\n`,
+    [`spec/${key}/feature.yaml`]: json({ schemaVersion: 1, id: input.featureId, requirementId: input.requirementId, title: input.title, projectIds, caseIds: draft?.caseIds ?? [caseId], profiles: ['chromium'] }),
+    [`spec/${key}/${input.featureId}.feature`]: draft?.featureText ?? `Feature: ${input.title}\n\n  @case:${caseId}\n  Scenario: Define acceptance behaviour\n    Given the acceptance steps have not been implemented\n`,
     [`spec/${key}/${input.featureId}.sd.md`]: `# ${input.title}\n\nStatus: DRAFT\n\n## Scope\n\n## Architecture\n\n## Data and migrations\n\n## Test and deployment contract\n`,
     [`tests/${key}/${input.featureId}.steps.ts`]: `import { Given } from '../../_shared/bdd';\n\nGiven('the acceptance steps have not been implemented', async () => {\n  throw new Error('UNIMPLEMENTED_ACCEPTANCE_STEP: replace this scaffold with real operations and assertions');\n});\n`,
     [`tests/${key}/${input.featureId}.hooks.ts`]: `import { AfterStep } from '../../_shared/bdd';\n\nAfterStep(async ({ page, $testInfo, $step }) => {\n  await $testInfo.attach('step-' + $step.title, {\n    contentType: 'image/png', body: await page.screenshot(),\n  });\n});\n`,

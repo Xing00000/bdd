@@ -111,59 +111,129 @@ test('review progresses only on human content confirmation; execution remains op
   await assert.rejects(ensureInstallation({root:f.root,options:{home:f.home,enableExecution:false},request:{input:{}},git}),{code:'EXECUTION_DISABLED'});
 });
 
+// Regression: ordinary setup is allowed while other source files are still drafts.
 test('reconfigure after editing unrelated files keeps staged and unstaged work intact', async t => {
-  const f=await setup(t);
-  await writeFile(path.join(f.root,'draft.txt'),'my ongoing draft');
-  await writeFile(path.join(f.root,'staged.txt'),'already staged');
-  await git.command(f.root,['add','--','staged.txt']);
-  const before=await git.inspect(f.root);
-  const r=await f.job('repository.setup',{...f.setupInput,reviewer:'Changed Reviewer'});
-  assert.equal(r.result.ready,true);
-  assert.deepEqual((await git.inspect(f.root)).changes,before.changes);
-  assert.equal(await readFile(path.join(f.root,'draft.txt'),'utf8'),'my ongoing draft');
-  assert.equal((await git.command(f.root,['show',':staged.txt'])).stdout,'already staged');
-  assert.equal((await f.service.detail('SPEC-flow')).preferences.reviewer,'Changed Reviewer');
+  const f = await setup(t);
+  await writeFile(path.join(f.root, 'draft.txt'), 'my ongoing draft');
+  await writeFile(path.join(f.root, 'staged.txt'), 'already staged');
+  await git.command(f.root, ['add', '--', 'staged.txt']);
+  const before = await git.inspect(f.root);
+  const result = await f.job('repository.setup', { ...f.setupInput, reviewer: 'Changed Reviewer' });
+  assert.equal(result.result.ready, true);
+  const after = await git.inspect(f.root);
+  assert.deepEqual(after.changes, before.changes);
+  assert.equal(await readFile(path.join(f.root, 'draft.txt'), 'utf8'), 'my ongoing draft');
+  assert.equal((await git.command(f.root, ['show', ':staged.txt'])).stdout, 'already staged');
+  assert.equal((await f.service.detail('SPEC-flow')).preferences.reviewer, 'Changed Reviewer');
 });
-test('adding a product with unrelated drafts retains staged and unstaged content',async t=>{
-  const f=await setup(t,{product:false}),productRoot=path.join(f.base,'new-product'),url=path.join(f.base,'new-product.git');
-  await repository(productRoot,{'src/feature.ts':'export const ready = true;\n'});
-  await git.command(undefined,['init','--bare','--initial-branch','main',url]);
-  await git.command(productRoot,['remote','add','origin',url]);await git.push(productRoot,{},await git.inspect(productRoot));
-  await writeFile(path.join(f.root,'draft.md'),'human draft');
-  await writeFile(path.join(f.root,'staged.md'),'preexisting staged');await git.command(f.root,['add','--','staged.md']);
-  const r=await f.job('repository.setup',{reviewer:'Human',projects:[{id:'myproduct',url}]});
-  assert.equal(r.result.ready,true);assert.equal((await git.modules(f.root))[0].id,'myproduct');
-  assert.deepEqual((await git.inspect(f.root)).changes.map(x=>x.path).sort(),['draft.md','staged.md']);
-  assert.equal((await git.command(f.root,['show','HEAD:staged.md'],{allowFailure:true})).exitCode,128);
-  assert.equal((await git.command(f.root,['show',':staged.md'])).stdout,'preexisting staged');
+
+test('adding a product after starting work does not discard unrelated drafts or staged changes', async t => {
+  const f = await setup(t, { product: false });
+  const productRoot = path.join(f.base, 'new-product'), url = path.join(f.base, 'new-product.git');
+  await repository(productRoot, { 'src/feature.ts': 'export const ready = true;\n' });
+  await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', url]);
+  await git.command(productRoot, ['remote', 'add', 'origin', url]);
+  await git.push(productRoot, {}, await git.inspect(productRoot));
+  await writeFile(path.join(f.root, 'draft.md'), 'human draft');
+  await writeFile(path.join(f.root, 'staged.md'), 'preexisting staged');
+  await git.command(f.root, ['add', '--', 'staged.md']);
+  const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{id:'myproduct', url}] });
+  assert.equal(result.result.ready, true);
+  assert.equal((await git.modules(f.root))[0].id, 'myproduct');
+  const after = await git.inspect(f.root);
+  assert.deepEqual(after.changes.map(x => x.path).sort(), ['draft.md', 'staged.md']);
+  assert.equal((await git.command(f.root, ['show', 'HEAD:staged.md'], {allowFailure:true})).exitCode, 128);
+  assert.equal((await git.command(f.root, ['show', ':staged.md'])).stdout, 'preexisting staged');
 });
-test('reviewer-only setup preserves edited configuration',async t=>{
-  const f=await setup(t,{product:false}),file=path.join(f.root,'workbench.yaml'),before=await readFile(file,'utf8');
-  const draft=before.replace('"timeoutMs": 180000','"timeoutMs": 190000');
-  await writeFile(file,draft);const state=await git.inspect(f.root);
-  await f.job('repository.setup',{reviewer:'Updated Reviewer',projects:[]});
-  assert.deepEqual((await git.inspect(f.root)).changes,state.changes);
-  assert.equal(await readFile(file,'utf8'),draft);
-  assert.equal((await f.service.detail('SPEC-flow')).preferences.reviewer,'Updated Reviewer');
+
+test('reviewer-only settings do not modify or commit an unrelated configuration draft', async t => {
+  const f = await setup(t, { product: false });
+  const file = path.join(f.root, 'workbench.yaml');
+  const before = await readFile(file, 'utf8');
+  // A manual edit in the config must remain a draft when only the reviewer changes.
+  await writeFile(file, before.replace('"timeoutMs": 180000', '"timeoutMs": 190000'));
+  const local = await git.inspect(f.root);
+  await f.job('repository.setup', { reviewer: 'New reviewer', projects: [] });
+  assert.deepEqual((await git.inspect(f.root)).changes, local.changes);
+  assert.equal(await readFile(file, 'utf8'), before.replace('"timeoutMs": 180000', '"timeoutMs": 190000'));
+  assert.equal((await f.service.detail('SPEC-flow')).preferences.reviewer, 'New reviewer');
 });
-test('setup detects overlapping config edits and preserves them',async t=>{
-  const f=await setup(t,{product:false}),file=path.join(f.root,'workbench.yaml'),before=await readFile(file,'utf8');
-  const draft=before.replace('"timeoutMs": 180000','"timeoutMs": 210000');await writeFile(file,draft);
-  const productRoot=path.join(f.base,'new-product'),url=path.join(f.base,'new-product.git');
-  await repository(productRoot,{'README.md':'product'});
-  await git.command(undefined,['init','--bare','--initial-branch','main',url]);
-  await git.command(productRoot,['remote','add','origin',url]);await git.push(productRoot,{},await git.inspect(productRoot));
-  const r=await f.job('repository.setup',{reviewer:'Human',projects:[{id:'target',url}]},{fail:true});
-  assert.equal(r.error.code,'SETTINGS_DRAFT_CONFLICT');assert.equal((await git.modules(f.root)).length,0);
-  assert.equal(await readFile(file,'utf8'),draft);
+
+test('setup refuses overlapping config drafts without overwriting or silently committing them', async t => {
+  const f = await setup(t, { product: false });
+  const file = path.join(f.root, 'workbench.yaml'), before = await readFile(file, 'utf8');
+  await writeFile(file, before.replace('"timeoutMs": 180000', '"timeoutMs": 210000'));
+  const productRoot = path.join(f.base, 'target'), url = path.join(f.base, 'target.git');
+  await repository(productRoot, { 'src/main.js': 'console.log("hi")\n' });
+  await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', url]);
+  await git.command(productRoot, ['remote', 'add', 'origin', url]);
+  await git.push(productRoot, {}, await git.inspect(productRoot));
+  const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'target', url }] }, { fail: true });
+  assert.equal(result.error.code, 'SETTINGS_DRAFT_CONFLICT');
+  assert.equal((await git.modules(f.root)).length, 0);
+  assert.equal(await readFile(file, 'utf8'), before.replace('"timeoutMs": 180000', '"timeoutMs": 210000'));
 });
-test('adding a submodule rejects a dirty gitmodules without erasing it',async t=>{
+
+test('submodule registration respects an externally edited gitmodules file without clobbering it', async t => {
+  const f = await setup(t, { product: false });
+  await writeFile(path.join(f.root, '.gitmodules'), '# pending external edit\n');
+  const target = path.join(f.base, 'product-extra');
+  const head = await repository(target, { 'README.md': 'sample' });
+  const before = await git.inspect(f.root);
+  const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'extra', url: target }] }, { fail: true });
+  assert.equal(result.error.code, 'SUBMODULE_SETTINGS_CONFLICT');
+  assert.deepEqual(await git.inspect(f.root), before);
+  assert.equal(await readFile(path.join(f.root, '.gitmodules'), 'utf8'), '# pending external edit\n');
+});
+
+test('plain-language requirement creates stable IDs and multiple Gherkin cases without requiring technical fields', async t => {
   const f=await setup(t,{product:false});
-  await writeFile(path.join(f.root,'.gitmodules'),'# existing unfinished mapping\n');
-  const target=path.join(f.base,'other-product');await repository(target,{'README.md':'product'});
-  const before=await git.inspect(f.root);
-  const r=await f.job('repository.setup',{reviewer:'Human',projects:[{id:'other',url:target}]},{fail:true});
-  assert.equal(r.error.code,'SUBMODULE_SETTINGS_CONFLICT');
-  assert.deepEqual(await git.inspect(f.root),before);
-  assert.equal(await readFile(path.join(f.root,'.gitmodules'),'utf8'),'# existing unfinished mapping\n');
+  const result=(await f.job('workflow.create',{title:'使用者登入',goal:'已有帳號的人希望登入',acceptance:'輸入正確密碼，能看到個人頁面\n- 密碼錯誤時顯示提示',guided:true})).result;
+  assert.equal(result.key,'REQ-001/feature');
+  const file=await readFile(path.join(f.root,'spec/REQ-001/feature/feature.feature'),'utf8');
+  assert.match(file,/Feature: 使用者登入/);assert.match(file,/目標：已有帳號的人希望登入/);
+  assert.match(file,/@case:CASE-001/);assert.match(file,/@case:CASE-002/);
+  assert.match(file,/Then 輸入正確密碼，能看到個人頁面/);
+  assert.match(file,/Then 密碼錯誤時顯示提示/);
+  const metadata=await readJson(path.join(f.root,'spec/REQ-001/feature/feature.yaml'));
+  assert.deepEqual(metadata.caseIds,['CASE-001','CASE-002']);
+  const requirement=await readJson(path.join(f.root,'spec/REQ-001/requirement.yaml'));
+  assert.equal(requirement.title,'使用者登入');
+  const next=(await f.job('workflow.create',{title:'退出登入',acceptance:'按下退出後進入未登入狀態',guided:true})).result;
+  assert.equal(next.key,'REQ-002/feature');
+  assert.equal((await git.inspect(f.root)).clean,true);
+});
+
+test('guided requirement revisions are saved locally and remain editable without Git knowledge', async t => {
+  const f=await setup(t,{product:false});
+  await f.job('workflow.create',{title:'會員登入',acceptance:'能顯示登入頁',guided:true});
+  const pathname='spec/REQ-001/feature/feature.feature';
+  const before=await readFile(path.join(f.root,pathname));
+  const review=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'會員登入',goal:'使用者想登入',acceptance:'能進入首頁\n錯誤密碼顯示原因',expectedHash:digest(before)});
+  assert.equal(review.result.saved,true);
+  const meta=await readJson(path.join(f.root,'spec/REQ-001/feature/feature.yaml'));
+  assert.deepEqual(meta.caseIds,['CASE-001','CASE-002']);
+  assert.match(await readFile(path.join(f.root,pathname),'utf8'),/Given 系統已準備好讓使用者操作 會員登入/);
+  assert.equal((await git.inspect(f.root)).clean,true);
+  assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
+  const stale=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'衝突覆寫',acceptance:'覆寫',expectedHash:digest(before)},{fail:true});
+  assert.equal(stale.error.code,'CONTENT_CHANGED');
+});
+
+test('incomplete plain-language acceptance stays a draft and cannot be approved',async t=>{
+  const f=await setup(t,{product:false});
+  await f.job('workflow.create',{title:'搜尋',guided:true});
+  const d=await f.service.detail('SPEC-flow'),feature=d.spec.features[0];
+  const approved=await f.job('workflow.review',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin},{fail:true});
+  assert.equal(approved.error.code,'ACCEPTANCE_REQUIRED');
+  assert.equal((await f.service.detail('SPEC-flow')).spec.features[0].review.confirmed.gherkin,false);
+});
+
+test('editing a real Gherkin file disables guided overwrite protection',async t=>{
+  const f=await setup(t,{product:false});await f.job('workflow.create',{title:'會員登入',acceptance:'能顯示登入頁',guided:true});
+  const pathname='spec/REQ-001/feature/feature.feature';let old=await readFile(path.join(f.root,pathname));
+  await f.job('repository.save',{kind:'source',path:pathname,content:'Feature: customized\n  Scenario: custom\n    Given I wrote my own steps\n',expectedHash:digest(old)});
+  const result=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'不能覆蓋',acceptance:'xxx',expectedHash:digest(await readFile(path.join(f.root,pathname)))},{fail:true});
+  assert.equal(result.error.code,'ADVANCED_GHERKIN');
+  assert.match(await readFile(path.join(f.root,pathname),'utf8'),/customized/);
 });

@@ -62,10 +62,18 @@ const server=http.createServer((request,response)=>{
   async function tab(name){await click(name);await expect(page.locator(`[data-view="${({'需求流程':'features','產品':'projects','驗收紀錄':'reports','設定':'settings'})[name]}"]`)).toHaveAttribute('aria-current','page');await ready();}
   async function bind(title,url,withProduct=false) {
     await page.locator('#bind-sidebar').click();const d=page.getByRole('dialog');
-    await d.getByLabel('規格庫名稱',{exact:true}).fill(title);await d.getByLabel('規格庫網址',{exact:true}).fill(url);
-    if(withProduct){await d.getByLabel('確認者名稱',{exact:true}).fill('UI Acceptance Reviewer');await d.getByLabel('產品名稱',{exact:true}).fill('product');await d.getByLabel('產品來源網址',{exact:true}).fill(remotes.product);await d.getByLabel('產品網址',{exact:true}).fill(target);await d.getByLabel('啟動程式',{exact:true}).fill(process.execPath);await d.getByLabel('啟動參數（每行一個）',{exact:true}).fill(`server.mjs\n${productPort}`);}
-    else await expect(d.getByLabel('確認者名稱',{exact:true})).toHaveValue('UI Acceptance Reviewer');
-    await job(d.getByRole('button',{name:'完成設定',exact:true}),'repository.setup');await expect(d).not.toBeVisible();await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();return new URL(page.url()).searchParams.get('repo');
+    await d.getByLabel('顯示名稱（選填，自動從網址帶入）',{exact:true}).fill(title);await d.getByLabel('Spec Repo Git 網址',{exact:true}).fill(url);
+    if(withProduct){
+      await d.getByLabel('需求確認者',{exact:true}).fill('UI Acceptance Reviewer');
+      await d.getByText('有產品原始碼嗎？可以現在加入，也可以稍後設定').click();
+      await d.getByLabel('產品原始碼 Git 網址',{exact:true}).fill(remotes.product);
+      await d.getByText('進階：產品要怎麼啟動？需要測試時才設定').click();
+      await d.getByLabel('產品服務網址',{exact:true}).fill(target);
+      await d.getByLabel('啟動程式',{exact:true}).fill(process.execPath);
+      await d.getByLabel('啟動參數（每行一個）',{exact:true}).fill(`server.mjs\n${productPort}`);
+    }
+    else await expect(d.getByLabel('需求確認者',{exact:true})).toHaveValue('UI Acceptance Reviewer');
+    await job(d.getByRole('button',{name:'開始使用',exact:true}),'repository.setup');await expect(d).not.toBeVisible();await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();return new URL(page.url()).searchParams.get('repo');
   }
   async function editSource(content){await ready();await page.getByRole('textbox',{name:'規格測試原始碼',exact:true}).fill(content);await job(page.getByRole('button',{name:'儲存',exact:true}),'repository.save');}
   // Every workstation write below is an actual UI event. Git is used only to
@@ -76,13 +84,14 @@ const server=http.createServer((request,response)=>{
   await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();
   await click('開啟規格庫 Alpha 規格庫');
   assert.equal(await page.getByRole('button',{name:/Commit|Push|Clone|安裝 Chromium|檢查測試接線|準備驗收候選/}).count(),0);
-  await click('＋ 建立需求功能');let d=page.getByRole('dialog');await d.getByLabel('需求 ID',{exact:true}).fill('REQ-001');await d.getByLabel('功能 ID',{exact:true}).fill('login');await d.getByLabel('功能標題',{exact:true}).fill('真正產品登入');await job(d.getByRole('button',{name:'建立功能',exact:true}),'workflow.create');await expect(d).not.toBeVisible();
+  await click('＋ 新增需求');let d=page.getByRole('dialog');await d.getByLabel('這個功能要做到什麼？',{exact:true}).fill('真正產品登入');await d.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('點擊登入按鈕，出現已登入訊息');await d.getByText('進階：自訂需求編號和功能代號（一般不需要）').click();await d.getByLabel('需求 ID',{exact:true}).fill('REQ-001');await d.getByLabel('功能 ID',{exact:true}).fill('login');await job(d.getByRole('button',{name:'建立需求草稿',exact:true}),'workflow.create');await expect(d).not.toBeVisible();await expect(page.locator('#gherkin-guided')).toBeVisible();await page.getByRole('button',{name:'直接編輯 Gherkin（進階）',exact:true}).click();
   await editSource(`Feature: Sign in to the actual product\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`);
   const savedRoot=path.join(home,'repositories',alpha,'repo');assert.equal((await git.inspect(savedRoot)).clean,true);
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
-  // Regression fixture: an externally staged draft must not block centralized
-  // settings or be accidentally included in a system-managed local revision.
-  const pending=path.join(savedRoot,'unrelated-local-draft.txt');
+  // Real-world regression: users may have pre-existing staged or unsaved files
+  // when they revisit centralized settings. The fixture adds external drafts;
+  // the settings change itself is performed exclusively through the UI.
+  const pending = path.join(savedRoot,'unrelated-local-draft.txt');
   await writeFile(pending,'keep my other work');await git.command(savedRoot,['add','--','unrelated-local-draft.txt']);
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
   await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.setup');
@@ -118,8 +127,21 @@ const server=http.createServer((request,response)=>{
   await writeJson(path.join(artifacts,'ui-flow-receipt.json'),{repositoryIds:{alpha,beta},failedRunId,passedRunId,initialProduct:initialProduct.commit,fixedProduct:productHead,testedSpecCommit:tested,reportCommit,localVerificationBeforeSync:true,oneInstallationConsent:installs.length,uiOperations:operations.map(x=>x.operation),noGitControls:true});
   await page.reload();await ready();await expect(page.locator('#run-list')).toContainText('已同步至遠端');await tab('需求流程');await expect(page.locator('#feature-status')).toHaveText('VERIFIED');
   await click('開啟規格庫 Beta 規格庫');await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();assert.equal(await page.getByRole('button',{name:'開啟產品 product',exact:true}).count(),0);await tab('驗收紀錄');await expect(page.locator('#run-list')).toContainText('尚無驗收紀錄');await expect(page.locator('#report-view')).not.toBeVisible();
-  await tab('需求流程');await click('＋ 建立需求功能');d=page.getByRole('dialog');await d.getByLabel('功能 ID',{exact:true}).fill('login');await d.getByLabel('功能標題',{exact:true}).fill('Independent feature');await job(d.getByRole('button',{name:'建立功能',exact:true}),'workflow.create');await expect(d).not.toBeVisible();
-  await page.getByRole('textbox',{name:'規格測試原始碼',exact:true}).fill('unsaved draft');await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(page.getByRole('textbox',{name:'規格測試原始碼',exact:true})).toHaveValue('unsaved draft');
+  await tab('需求流程');await expect(page.locator('#feature-empty')).toBeVisible();
+  await page.getByLabel('功能名稱',{exact:true}).fill('獨立規格庫查詢');
+  await page.getByLabel('怎樣才算成功？',{exact:true}).fill('可以找到符合關鍵字的資料');
+  await job(page.getByRole('button',{name:'建立需求草稿',exact:true}),'workflow.create');
+  await expect(page.locator('#gherkin-guided')).toBeVisible();
+  await expect(page.locator('#guided-acceptance')).toHaveValue('可以找到符合關鍵字的資料');
+  await page.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('能找到符合關鍵字的資料\n查不到時顯示空結果');
+  await job(page.getByRole('button',{name:'儲存需求',exact:true}),'workflow.draft');
+  const betaRoot=path.join(home,'repositories',beta,'repo');
+  const betaFeature=(await git.command(betaRoot,['show','HEAD:spec/REQ-001/feature/feature.feature'])).stdout;
+  assert.match(betaFeature,/@case:CASE-002/);
+  await page.getByLabel('使用情境（選填）',{exact:true}).fill('尚未儲存的草稿');
+  await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');
+  await d.getByRole('button',{name:'取消',exact:true}).click();
+  await expect(page.getByLabel('使用情境（選填）',{exact:true})).toHaveValue('尚未儲存的草稿');
   await page.getByRole('button',{name:'開啟規格庫 Alpha 規格庫',exact:true}).click();await d.getByRole('button',{name:'捨棄草稿並離開',exact:true}).click();await ready();await expect(page.getByRole('heading',{name:'Alpha 規格庫',exact:true})).toBeVisible();
   await page.setViewportSize({width:390,height:844});await tab('驗收紀錄');await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'04-simple-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));
   await page.getByRole('button',{name:'展開導覽',exact:true}).click();await expect(page.getByRole('button',{name:'開啟規格庫 Beta 規格庫',exact:true})).toBeVisible();await click('開啟規格庫 Beta 規格庫');await expect(page.locator('#sidebar')).not.toBeVisible();assert.deepEqual(browserErrors,[]);

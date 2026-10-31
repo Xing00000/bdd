@@ -1,14 +1,14 @@
 /** User-facing transactions. Git plumbing stays behind save/sync, not in the UI. */
 import path from 'node:path';
 import { mkdir, readFile } from 'node:fs/promises';
-import { WorkstationError, invariant, id, safePath, exists, readJson, writeJson, digest, identity } from '../contracts/index.mjs';
+import { WorkstationError, invariant, id, safePath, exists, readJson, writeJson, atomicWrite, digest, identity } from '../contracts/index.mjs';
 import { branchName, remoteUrl, execute, processEnvironment } from '../git-core/index.mjs';
-import { initialize, configuration, createFeature, scan, saveFile, reviewState, confirm } from '../spec-toolkit/index.mjs';
+import { initialize, configuration, createFeature, buildGuidedFeature, parseGuidedFeature, scan, saveFile, reviewState, confirm } from '../spec-toolkit/index.mjs';
 import { projectRoot, saveProjectFile, configureExecution, configureFeature, installDependencies, checkTests } from './repository-actions.mjs';
 import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { reindexReports } from './reports.mjs';
 
-export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.review', 'workflow.verify'];
+export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.draft', 'workflow.review', 'workflow.verify'];
 
 async function attached(root, git, repositoryId) {
   const state = await git.inspect(root);
@@ -74,9 +74,9 @@ export async function setupRepository({ root, options, store, request, git }) {
     await initialize(root, { specRepositoryId: record.id, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
     await savePaths(root, await changedPaths(root, git), git, record.id, 'Initialize specification repository');
   }
-  // A user may revisit setup while other specification drafts are in progress.
-  // Preserve unrelated staged/unstaged changes. Only overlapping configuration
-  // changes require an explicit conflict instead of a silent overwrite.
+  // Setup may run after a human has started editing the specification.
+  // Scope all writes to setup-owned files; leave other staged/unstaged drafts alone.
+  // A concurrent edit of the configuration itself is an actual conflict.
   const setupState = await git.inspect(root);
   const installedModules = await git.modules(root);
   const modifiesConfig = Boolean(input.execution) || projects.some(p => !installedModules.some(m => m.id === p.id));
@@ -191,16 +191,51 @@ export async function advanceWorkflow(context) {
   await git.expect(root, request.expected);
   const input = request.input;
   if (request.operation === 'workflow.create') {
-    const result = await createFeature(root, input);
-    await savePaths(root, [...result.files, `spec/${input.requirementId}/requirement.yaml`, `spec/${input.requirementId}/review.json`], git, request.repositoryId, `Create ${result.key}`);
+    const existing = (await scan(root)).features;
+    const requirements = new Set(existing.map(f => f.requirementId));
+    let requirementId = input.requirementId?.trim();
+    if (!requirementId) { let i = 1; while (requirements.has(`REQ-${String(i).padStart(3, '0')}`)) i++; requirementId = `REQ-${String(i).padStart(3, '0')}`; }
+    id(requirementId);
+    let featureId = input.featureId?.trim();
+    if (!featureId) {
+      const slug = String(input.title ?? '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 45);
+      const prefix = slug || 'feature'; let index = 1; featureId = prefix;
+      while (existing.some(f => f.requirementId === requirementId && f.id === featureId)) featureId = `${prefix}-${String(++index).padStart(3, '0')}`;
+    }
+    id(featureId);
+    const guided = Boolean(input.guided || input.goal || input.acceptance);
+    const result = await createFeature(root, { ...input, requirementId, featureId, guided });
+    await savePaths(root, [...result.files, `spec/${requirementId}/requirement.yaml`, `spec/${requirementId}/review.json`], git, request.repositoryId, `Create ${result.key}`);
     return { ...result, saved: true };
   }
   const key = `${id(input.requirementId)}/${id(input.featureId)}`;
   const data = await scan(root), feature = data.features.find(x => x.key === key);
   invariant(feature, 'FEATURE_NOT_FOUND', '找不到此功能。', 404);
+  if (request.operation === 'workflow.draft') {
+    const filename = `spec/${key}/${id(input.featureId)}.feature`;
+    const file = await safePath(root, filename, { missing: false });
+    const old = await readFile(file, 'utf8');
+    invariant(digest(old) === input.expectedHash, 'CONTENT_CHANGED', '草稿已由其他操作修改；已保留你的編輯，請重新讀取。', 409);
+    invariant(parseGuidedFeature(old), 'ADVANCED_GHERKIN', '此需求已直接編輯 Gherkin；為保護情境，請使用進階編輯器修改。', 409);
+    const draft = buildGuidedFeature(input);
+    const metadataPath = `spec/${key}/feature.yaml`;
+    const metadata = await readJson(await safePath(root, metadataPath, { missing: false }));
+    invariant(digest(JSON.stringify(metadata)) === input.expectedMetadataHash || !input.expectedMetadataHash,
+      'CONTENT_CHANGED', '驗收範圍已被修改，請先重新讀取。', 409);
+    metadata.title = draft.title;
+    metadata.caseIds = draft.caseIds;
+    await atomicWrite(file, draft.featureText);
+    await writeJson(await safePath(root, metadataPath), metadata);
+    await savePaths(root, [filename, metadataPath], git, request.repositoryId, `Save guided requirement ${key}`);
+    return { saved: true, key, sha256: digest(draft.featureText) };
+  }
   let review = await reviewState(root, input.requirementId, input.featureId);
   if (request.operation === 'workflow.review') {
     invariant(['gherkin', 'sd', 'tests'].includes(input.stage), 'INVALID_STAGE', '只需確認需求、設計與驗收測試。');
+    if (input.stage === 'gherkin') {
+      const content = await readFile(await safePath(root, `spec/${key}/${id(input.featureId)}.feature`), 'utf8');
+      invariant(!content.includes('Then 請補充可驗收的結果'), 'ACCEPTANCE_REQUIRED', '請先填寫可驗收的結果，再確認需求。');
+    }
     // Check the human-reviewed source before installation; dependency resolution may
     // create the lockfile, but must never silently change the authored test code.
     invariant(review.hashes[input.stage] === input.expectedDigest, 'CONTENT_CHANGED', '內容已改變，請重新審閱。', 409);
