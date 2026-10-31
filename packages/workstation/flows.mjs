@@ -74,8 +74,15 @@ export async function setupRepository({ root, options, store, request, git }) {
     await initialize(root, { specRepositoryId: record.id, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
     await savePaths(root, await changedPaths(root, git), git, record.id, 'Initialize specification repository');
   }
-  // Never incorporate unrelated externally-edited files in a setup transaction.
-  await git.expect(root, await git.inspect(root), { clean: true });
+  // A user may revisit setup while other specification drafts are in progress.
+  // Preserve unrelated staged/unstaged changes. Only overlapping configuration
+  // changes require an explicit conflict instead of a silent overwrite.
+  const setupState = await git.inspect(root);
+  const installedModules = await git.modules(root);
+  const modifiesConfig = Boolean(input.execution) || projects.some(p => !installedModules.some(m => m.id === p.id));
+  if (modifiesConfig && setupState.changes.some(change => change.path === 'workbench.yaml'))
+    throw new WorkstationError('SETTINGS_DRAFT_CONFLICT',
+      '規格庫設定檔有尚未儲存的修改。系統已保留內容；請先儲存該設定，再重新執行設定。', 409);
   let config = await configuration(root);
   if ((await git.modules(root)).some(p => !p.actual)) await git.restore(root, await git.inspect(root));
   const destinations = [];

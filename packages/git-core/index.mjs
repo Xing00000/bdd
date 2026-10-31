@@ -276,8 +276,12 @@ export function createGit(policy = {}) {
     },
     async addModule(directory, input, expected) {
       id(input.projectId, 'projectId'); remoteUrl(input.url, settings); commitId(input.commit);
-      await expect(directory, expected, { clean: true, attached: true });
+      const current = await expect(directory, expected, { attached: true });
       const relative = `projects/${input.projectId}`;
+      // Submodule registration changes only .gitmodules and this exact path.
+      // Unrelated local edits and staged files are not a reason to block setup.
+      invariant(!current.changes.some(change => change.path === '.gitmodules' || change.path === relative || change.path.startsWith(relative + '/')),
+        'SUBMODULE_SETTINGS_CONFLICT', '產品連結設定有尚未儲存的修改。系統已保留內容；請先儲存後再加入產品。', 409);
       invariant(!await exists(await safePath(directory, relative)), 'DESTINATION_EXISTS', relative, 409);
       await command(directory, ['submodule', 'add', '--name', input.projectId, '--', input.url, relative]);
       const target = await safePath(directory, relative);

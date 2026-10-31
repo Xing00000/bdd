@@ -110,3 +110,60 @@ test('review progresses only on human content confirmation; execution remains op
   const result=await f.job('workflow.verify',{requirementId:'REQ-001',featureId:'login'}, {fail:true});assert.equal(result.error.code,'REVIEWS_REQUIRED');
   await assert.rejects(ensureInstallation({root:f.root,options:{home:f.home,enableExecution:false},request:{input:{}},git}),{code:'EXECUTION_DISABLED'});
 });
+
+test('reconfigure after editing unrelated files keeps staged and unstaged work intact', async t => {
+  const f=await setup(t);
+  await writeFile(path.join(f.root,'draft.txt'),'my ongoing draft');
+  await writeFile(path.join(f.root,'staged.txt'),'already staged');
+  await git.command(f.root,['add','--','staged.txt']);
+  const before=await git.inspect(f.root);
+  const r=await f.job('repository.setup',{...f.setupInput,reviewer:'Changed Reviewer'});
+  assert.equal(r.result.ready,true);
+  assert.deepEqual((await git.inspect(f.root)).changes,before.changes);
+  assert.equal(await readFile(path.join(f.root,'draft.txt'),'utf8'),'my ongoing draft');
+  assert.equal((await git.command(f.root,['show',':staged.txt'])).stdout,'already staged');
+  assert.equal((await f.service.detail('SPEC-flow')).preferences.reviewer,'Changed Reviewer');
+});
+test('adding a product with unrelated drafts retains staged and unstaged content',async t=>{
+  const f=await setup(t,{product:false}),productRoot=path.join(f.base,'new-product'),url=path.join(f.base,'new-product.git');
+  await repository(productRoot,{'src/feature.ts':'export const ready = true;\n'});
+  await git.command(undefined,['init','--bare','--initial-branch','main',url]);
+  await git.command(productRoot,['remote','add','origin',url]);await git.push(productRoot,{},await git.inspect(productRoot));
+  await writeFile(path.join(f.root,'draft.md'),'human draft');
+  await writeFile(path.join(f.root,'staged.md'),'preexisting staged');await git.command(f.root,['add','--','staged.md']);
+  const r=await f.job('repository.setup',{reviewer:'Human',projects:[{id:'myproduct',url}]});
+  assert.equal(r.result.ready,true);assert.equal((await git.modules(f.root))[0].id,'myproduct');
+  assert.deepEqual((await git.inspect(f.root)).changes.map(x=>x.path).sort(),['draft.md','staged.md']);
+  assert.equal((await git.command(f.root,['show','HEAD:staged.md'],{allowFailure:true})).exitCode,128);
+  assert.equal((await git.command(f.root,['show',':staged.md'])).stdout,'preexisting staged');
+});
+test('reviewer-only setup preserves edited configuration',async t=>{
+  const f=await setup(t,{product:false}),file=path.join(f.root,'workbench.yaml'),before=await readFile(file,'utf8');
+  const draft=before.replace('"timeoutMs": 180000','"timeoutMs": 190000');
+  await writeFile(file,draft);const state=await git.inspect(f.root);
+  await f.job('repository.setup',{reviewer:'Updated Reviewer',projects:[]});
+  assert.deepEqual((await git.inspect(f.root)).changes,state.changes);
+  assert.equal(await readFile(file,'utf8'),draft);
+  assert.equal((await f.service.detail('SPEC-flow')).preferences.reviewer,'Updated Reviewer');
+});
+test('setup detects overlapping config edits and preserves them',async t=>{
+  const f=await setup(t,{product:false}),file=path.join(f.root,'workbench.yaml'),before=await readFile(file,'utf8');
+  const draft=before.replace('"timeoutMs": 180000','"timeoutMs": 210000');await writeFile(file,draft);
+  const productRoot=path.join(f.base,'new-product'),url=path.join(f.base,'new-product.git');
+  await repository(productRoot,{'README.md':'product'});
+  await git.command(undefined,['init','--bare','--initial-branch','main',url]);
+  await git.command(productRoot,['remote','add','origin',url]);await git.push(productRoot,{},await git.inspect(productRoot));
+  const r=await f.job('repository.setup',{reviewer:'Human',projects:[{id:'target',url}]},{fail:true});
+  assert.equal(r.error.code,'SETTINGS_DRAFT_CONFLICT');assert.equal((await git.modules(f.root)).length,0);
+  assert.equal(await readFile(file,'utf8'),draft);
+});
+test('adding a submodule rejects a dirty gitmodules without erasing it',async t=>{
+  const f=await setup(t,{product:false});
+  await writeFile(path.join(f.root,'.gitmodules'),'# existing unfinished mapping\n');
+  const target=path.join(f.base,'other-product');await repository(target,{'README.md':'product'});
+  const before=await git.inspect(f.root);
+  const r=await f.job('repository.setup',{reviewer:'Human',projects:[{id:'other',url:target}]},{fail:true});
+  assert.equal(r.error.code,'SUBMODULE_SETTINGS_CONFLICT');
+  assert.deepEqual(await git.inspect(f.root),before);
+  assert.equal(await readFile(path.join(f.root,'.gitmodules'),'utf8'),'# existing unfinished mapping\n');
+});

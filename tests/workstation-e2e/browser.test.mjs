@@ -80,6 +80,17 @@ const server=http.createServer((request,response)=>{
   await editSource(`Feature: Sign in to the actual product\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`);
   const savedRoot=path.join(home,'repositories',alpha,'repo');assert.equal((await git.inspect(savedRoot)).clean,true);
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
+  // Regression fixture: an externally staged draft must not block centralized
+  // settings or be accidentally included in a system-managed local revision.
+  const pending=path.join(savedRoot,'unrelated-local-draft.txt');
+  await writeFile(pending,'keep my other work');await git.command(savedRoot,['add','--','unrelated-local-draft.txt']);
+  await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
+  await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.setup');
+  assert.equal((await git.command(savedRoot,['show',':unrelated-local-draft.txt'])).stdout,'keep my other work');
+  assert.equal((await git.command(savedRoot,['cat-file','-e','HEAD:unrelated-local-draft.txt'],{allowFailure:true})).exitCode,128);
+  await git.command(savedRoot,['reset','--','unrelated-local-draft.txt']);await rm(pending);
+  await tab('需求流程');await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
+
   await job(page.getByRole('button',{name:'確認需求並繼續',exact:true}),'workflow.review');await expect(page.getByRole('dialog')).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
   await editSource('# Sign-in design\n\nThe versioned product must display Signed in after clicking its sign-in button. Use the pinned source health identity and a screenshot for each real BDD step.\n');
   await job(page.getByRole('button',{name:'確認設計並繼續',exact:true}),'workflow.review');await expect(page.locator('#phase-title')).toHaveText('確認真正的操作與斷言');
