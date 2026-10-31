@@ -64,7 +64,7 @@ jobs:
           WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e
         run: |
           mkdir -p "$WB_E2E_ARTIFACTS"
-          node --test tests/workstation-e2e/*.test.mjs 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
+          node --test --test-concurrency=1 tests/workstation-e2e/*.test.mjs 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
       - name: Preserve browser evidence and dependency receipts
         if: always()
         uses: actions/upload-artifact@v4

@@ -8,6 +8,7 @@ import { initialize, scan } from '../spec-toolkit/index.mjs';
 import { ensureDraft } from './authoring.mjs';
 import { importBoundRepository, prepareProjection } from './projection.mjs';
 import { reindexReports } from './reports.mjs';
+import { savePaths } from './flows.mjs';
 
 export async function revisionOptions(root, git) {
   const raw = (await git.command(root, ['for-each-ref', '--format=%(refname)\t%(objectname)', 'refs/remotes/origin/', 'refs/tags/'])).stdout;
@@ -95,7 +96,12 @@ export async function acquireRepository(context) {
     }
     let state = await git.inspect(root);
     if (!state.head && !await exists(path.join(root, 'workbench.yaml'))) {
-      await initialize(root, { specRepositoryId: repositoryId, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
+      const initialized = await initialize(root, { specRepositoryId: repositoryId, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
+      // Initialization owns these exact new template files. Record the local baseline
+      // here, not during SQLite saves, so our own empty .gitmodules is not mistaken
+      // for a user's conflicting external edit on the first product preparation.
+      await savePaths(root, initialized.files, git, repositoryId, 'Initialize bound specification repository');
+      state = await git.inspect(root);
     }
     let draft = await ensureDraft({ ...context, repositoryId });
     if(!state.head && draft.settings.configured && draft.settings.projects?.length) {draft=await prepareProjection(context);state=await git.inspect(root);}

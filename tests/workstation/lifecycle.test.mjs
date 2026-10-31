@@ -39,7 +39,8 @@ test('CLI and thin Git scripts share persisted state and structured output', asy
     assert.equal(result.exitCode, 0, result.stderr + result.stdout); return JSON.parse(result.stdout);
   }
   await cli('scripts/workstation.mjs', ['register'], { id: 'WS-cli', title: 'CLI fixture', remoteUrl: f.remote });
-  const inspected = await cli('scripts/git/inspect.mjs', [], { repositoryId: 'WS-cli' }); assert.equal(inspected.state.head, null);
+  const inspected = await cli('scripts/git/inspect.mjs', [], { repositoryId: 'WS-cli' }); assert.match(inspected.state.head, /^[a-f0-9]{40,64}$/); assert.equal(inspected.state.clean, true);
+  assert.equal((await git.command(undefined, ['--git-dir', f.remote, 'show-ref'], { allowFailure: true })).exitCode, 1, 'Binding must not upload');
   // Registration now creates the local checkout and initializes the empty specification.
   const detail = await cli('scripts/workstation.mjs', ['detail'], { repositoryId: 'WS-cli' }); assert.equal(detail.initialized, true);
 });

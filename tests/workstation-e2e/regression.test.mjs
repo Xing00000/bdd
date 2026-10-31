@@ -87,7 +87,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   let savedDuringRun;
   await startAndWait(()=>page.getByRole('button',{name:'執行全部回歸測試',exact:true}).click(),'PASSED',{during:async()=>{
     await tab('需求流程');const lower=page.getByRole('textbox',{name:'Gherkin',exact:true});savedDuringRun=(await lower.inputValue())+'# saved while a frozen regression runs\n';await lower.fill(savedDuringRun);
-    await page.locator('#save-requirement').click();await expect(page.locator('#requirement-state')).toHaveText('已儲存');await ready();
+    await page.locator('#save-requirement').click();await expect(page.locator('#requirement-state')).toHaveText('已儲存至 SQLite');await ready();
     await tab('版本與回歸');
   }});
   latest=page.locator('.regression-card').first();await expect(latest).toContainText('通過 3 / 全部 3');await expect(latest).toContainText(p2);await expect(latest).toContainText(s2);

@@ -51,7 +51,7 @@ test('binding restores the declared submodule version instead of its newer defau
 });
 test('an empty bound remote is initialized without uploading or requiring separate clone/init buttons',async t=>{
   const f=await bound(t,{empty:true});assert.equal(await exists(path.join(f.root,'workbench.yaml')),true);
-  assert.equal((await git.inspect(f.root)).head,null);assert.equal((await f.service.detail('SPEC-bound')).spec.features.length,0);
+  assert.ok((await git.inspect(f.root)).head);assert.equal((await git.inspect(f.root)).clean,true);assert.equal((await f.service.detail('SPEC-bound')).spec.features.length,0);
   assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
 });
 test('unreachable binding is visibly failed but its local directory, settings and SQLite authoring survive',async t=>{
@@ -124,4 +124,13 @@ test('real HTTP exposes auto acquisition status and read-only version catalog wi
   const r=await fetch(origin+'/repository-api/v1/spec-repositories',{method:'POST',headers:{'content-type':'application/json','x-workbench-request':'1'},body:JSON.stringify({title:'Catalog',remoteUrl:source})});assert.equal(r.status,201);
   const record=await r.json();assert.equal((await app.service.wait(record.connection.operationId)).status,'SUCCEEDED');
   const list=await (await fetch(`${origin}/repository-api/v1/spec-repositories/${record.id}/versions?ref=main`)).json();assert.equal(list.spec.features.length,1);
+});
+
+test('an automatically initialized empty binding can later prepare its saved product without a false gitmodules conflict',async t=>{
+  const f=await bound(t,{empty:true}),target=path.join(f.base,'later-product');
+  await repository(target,{'src/example.ts':'export const ready = true;\n'});
+  const saved=await job(f,'repository.setup',{reviewer:'Human',projects:[{id:'product',url:target}]});assert.equal(saved.status,'SUCCEEDED',JSON.stringify(saved.error));
+  const prepared=await job(f,'repository.prepare');assert.equal(prepared.status,'SUCCEEDED',JSON.stringify(prepared.error));
+  assert.equal((await git.modules(f.root))[0].actual,await git.resolve(target));
+  assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1,'Preparing never uploads');
 });
