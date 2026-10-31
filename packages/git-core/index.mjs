@@ -117,7 +117,7 @@ export function createGit(policy = {}) {
     const state = await inspect(directory);
     invariant(state.head === expected.head && (expected.branch === undefined || state.branch === expected.branch), 'HEAD_MISMATCH', 'Repository changed; inspect and retry', 409);
     if (expected.fingerprint) invariant(state.fingerprint === expected.fingerprint, 'REPOSITORY_CHANGED', 'Files changed since preview', 409);
-    if (clean) invariant(state.clean, 'DIRTY_WORKSPACE', 'Commit or preserve changes before this operation', 409);
+    if (clean) invariant(state.clean, 'DIRTY_WORKSPACE', '目前還有其他未儲存的內容，系統已保留草稿；請先在工作台儲存相關檔案，再重試這項操作。', 409);
     if (attached) invariant(state.branch, 'DETACHED_HEAD', 'Create a development branch before committing', 409);
     return state;
   }
