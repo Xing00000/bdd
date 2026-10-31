@@ -195,7 +195,8 @@ async function createFeatureWith(values) {
 async function renderWorkflow(epoch) {
   const d=state.detail,features=d.spec?.features??[];$('#new-feature').disabled=!d.preferences?.configured;
   if(!features.some(f=>f.key===state.featureKey))state.featureKey=features[0]?.key??null;
-  $('#feature-select').replaceChildren(...features.map(f=>new Option(`${f.key} · ${f.title}`,f.key)));$('#feature-select').value=state.featureKey??'';
+  const titleCounts=new Map();for(const item of features)titleCounts.set(item.title,(titleCounts.get(item.title)??0)+1);
+  $('#feature-select').replaceChildren(...features.map(f=>new Option(titleCounts.get(f.title)>1?`${f.title} (${f.requirementId})`:f.title,f.key)));$('#feature-select').value=state.featureKey??'';
   const f=feature();$('#workflow').hidden=!f;$('#feature-empty').hidden=Boolean(f);if(!f)return;
   if(!stages.some(x=>x[0]===state.stage))state.stage='GHERKIN';$('#stage-nav').replaceChildren();
   stages.forEach(([key,title],i)=>{const n=button('',()=>navigate({stage:key}));n.setAttribute('aria-label',`${i+1} ${title}`);n.setAttribute('aria-current',key===state.stage?'step':'false');const done=i<3?f.review.confirmed[['gherkin','sd','tests'][i]]:i===4&&f.verification.status==='VERIFIED';n.classList.toggle('complete',Boolean(done));n.append(el('span',done?'✓':String(i+1),'step-number'),el('span',title));$('#stage-nav').append(n);});

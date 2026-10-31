@@ -137,6 +137,7 @@ const server=http.createServer((request,response)=>{
   await job(page.getByRole('button',{name:'建立需求草稿',exact:true}),'workflow.create');
   await expect(page.locator('#gherkin-guided')).toBeVisible();
   await expect(page.locator('#guided-acceptance')).toHaveValue('可以找到符合關鍵字的資料');
+  await expect(page.locator('#feature-select option:checked')).toHaveText('獨立規格庫查詢');
   await page.screenshot({path:path.join(artifacts,'05-guided-requirement.png'),fullPage:true});
   await page.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('能找到符合關鍵字的資料\n查不到時顯示空結果');
   await job(page.getByRole('button',{name:'儲存需求',exact:true}),'workflow.draft');
