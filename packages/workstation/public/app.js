@@ -9,7 +9,7 @@ const stages = [
   ['VERIFICATION','驗收','執行固定版本，保留實際證據','完整執行後才能判斷驗收；失敗也會保留報告，不會被下一次執行覆蓋。']
 ];
 const labels = { 'repository.clone':'取得 Spec Repo', 'repository.initialize':'初始化結構', 'repository.validate':'檢查結構', 'repository.dependencies.install':'安裝測試依賴', 'repository.browsers.install':'安裝 Chromium', 'spec.feature.create':'建立需求功能', 'spec.file.save':'保存文件', 'project.file.save':'保存產品檔案', 'spec.review.confirm':'確認階段', 'spec.tests.check':'檢查測試接線', 'spec.feature.configure':'保存案例範圍', 'spec.execution.configure':'保存驗收環境', 'git.commit':'提交選取檔案', 'git.push':'Push', 'git.branch':'建立開發分支', 'git.fetch':'Fetch', 'git.remote':'更新 Remote', 'submodule.add':'加入 Project', 'submodule.pin':'固定產品版本', 'run.prepare':'準備驗收候選', 'run.execute':'執行驗收', 'run.publish':'發布報告', 'reports.reindex':'重建報告索引' };
-const state = { repositories: [], repositoryId: null, detail: null, view:'overview', stage:'GHERKIN', featureKey:null, projectId:null, gitTarget:'', editor:null, projectEditor:null, git:null, capabilities:null, busy:null, epoch:0, config:null, scope:null, formDirty:false };
+const state = { repositories: [], repositoryId: null, detail: null, view:'overview', stage:'GHERKIN', featureKey:null, projectId:null, gitTarget:'', editor:null, projectEditor:null, git:null, capabilities:null, busy:null, epoch:0, config:null, scope:null, formDirty:false, sourceRead:0, projectRead:0, sourceLoading:false, projectLoading:false };
 let upgradePlan, legacyPlan, dialogResolve;
 function element(tag, text, className) { const n = document.createElement(tag); if(text!==undefined) n.textContent=text; if(className) n.className=className; return n; }
 function button(text, action, {primary=false,disabled=false,mutate=false}={}) { const n=element('button',text,primary?'primary':undefined); n.type='button'; n.disabled=disabled; if(mutate)n.dataset.mutate=''; n.onclick=()=>safe(action); return n; }
@@ -41,7 +41,7 @@ async function guardDraft() { if(!dirty())return true; if(!await ask('有尚未�
 async function navigate(patch,{replace=false,guard=true}={}) {
   if(guard&&!await guardDraft())return;
   const previousRepository=state.repositoryId;
-  Object.assign(state,patch); state.editor=null;state.projectEditor=null;state.formDirty=false;state.git=null;state.projectState=null;state.config=null;state.scope=null;
+  Object.assign(state,patch); state.editor=null;state.projectEditor=null;state.formDirty=false;state.git=null;state.projectState=null;state.config=null;state.scope=null;state.sourceRead++;state.projectRead++;state.sourceLoading=false;state.projectLoading=false;
   $('#push-receipt').textContent='';
   if(previousRepository!==state.repositoryId){state.detail=null;upgradePlan=null;legacyPlan=null;$('#report-view').hidden=true;$('#report-view').replaceChildren();$('#maintenance-plan').textContent='';}
   const url=new URL(location.href);url.pathname='/';url.search='';
@@ -49,7 +49,8 @@ async function navigate(patch,{replace=false,guard=true}={}) {
   history[replace?'replaceState':'pushState']({},'',url);$('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');await refresh();
 }
 async function readRoute() { const q=new URLSearchParams(location.search);await navigate({repositoryId:q.get('repo'),view:q.get('view')??'overview',featureKey:q.get('feature'),stage:q.get('stage')??'GHERKIN',projectId:q.get('project'),gitTarget:q.get('target')??''},{replace:true,guard:false}); }
-function applyBusy() { const busy=Boolean(state.busy);all('[data-mutate]').forEach(n=>{if(busy){n.dataset.wasDisabled=String(n.disabled);n.disabled=true;}else if(n.dataset.wasDisabled!==undefined){n.disabled=n.dataset.wasDisabled==='true';delete n.dataset.wasDisabled;}});$('#source-editor').readOnly=busy;$('#project-editor').readOnly=busy;$('#job-progress').hidden=!busy;if(busy){$('#job-title').textContent=labels[state.busy.name]??state.busy.name;$('#job-id').textContent=`${state.busy.repositoryTitle} · ${state.busy.id}`;} }
+function syncEditorReadOnly() { const blocked=Boolean(state.busy)||$('#repository-view').inert;$('#source-editor').readOnly=blocked||state.sourceLoading;$('#project-editor').readOnly=blocked||state.projectLoading||!state.projectState?.branch; }
+function applyBusy() { const busy=Boolean(state.busy);all('[data-mutate]').forEach(n=>{if(busy){n.dataset.wasDisabled=String(n.disabled);n.disabled=true;}else if(n.dataset.wasDisabled!==undefined){n.disabled=n.dataset.wasDisabled==='true';delete n.dataset.wasDisabled;}});syncEditorReadOnly();$('#job-progress').hidden=!busy;if(busy){$('#job-title').textContent=labels[state.busy.name]??state.busy.name;$('#job-id').textContent=`${state.busy.repositoryTitle} · ${state.busy.id}`;} }
 async function operation(name,input={},options={}) {
   if(state.busy)throw new Error('已有作業執行中；可查看進度或取消，不會重複送出。');
   if(dirty()&&!options.allowDraft)throw new Error('請先保存目前的編輯，再執行此操作。');
@@ -69,7 +70,7 @@ async function operation(name,input={},options={}) {
   }
 }
 async function refresh() {
-  const epoch=++state.epoch; $('#repository-view').inert=true;$('#repository-view').setAttribute('aria-busy','true');
+  const epoch=++state.epoch; $('#repository-view').inert=true;$('#repository-view').setAttribute('aria-busy','true');syncEditorReadOnly();
   try {
   const list=await api('/spec-repositories'); if(epoch!==state.epoch)return;state.repositories=list;
   if(state.repositoryId){const detail=await api(`/spec-repositories/${state.repositoryId}`);if(epoch!==state.epoch)return;state.detail=detail;}
@@ -89,7 +90,7 @@ async function refresh() {
   if(state.view==='reports')renderRuns();
   if(state.view==='maintenance')renderMaintenance();
   if(epoch===state.epoch&&state.busy)applyBusy();
-  } finally { if(epoch===state.epoch){$('#repository-view').inert=false;$('#repository-view').setAttribute('aria-busy','false');} }
+  } finally { if(epoch===state.epoch){$('#repository-view').inert=false;$('#repository-view').setAttribute('aria-busy','false');syncEditorReadOnly();} }
 }
 function renderNavigation() {
   $('#repository-list').replaceChildren();
@@ -161,8 +162,12 @@ function renderNextAction() {
 }
 async function openSource(relative,epoch=state.epoch) {
   if(state.editor?.repositoryId===state.repositoryId&&state.editor.path===relative&&$('#source-editor').value!==state.editor.content)return;
-  const repositoryId=state.repositoryId,file=await api(`/spec-repositories/${repositoryId}/file?path=${encodeURIComponent(relative)}`);if(epoch!==state.epoch||repositoryId!==state.repositoryId)return;
-  state.editor={...file,repositoryId};$('#source-editor').value=file.content;$('#source-path').textContent=relative;$('#source-hash').textContent=file.sha256.slice(0,16);$('#editor-state').textContent='已保存';
+  const repositoryId=state.repositoryId,request=++state.sourceRead;state.sourceLoading=true;syncEditorReadOnly();$('#editor-state').textContent='讀取中…';
+  try {
+    const file=await api(`/spec-repositories/${repositoryId}/file?path=${encodeURIComponent(relative)}`);
+    if(request!==state.sourceRead||epoch!==state.epoch||repositoryId!==state.repositoryId)return;
+    state.editor={...file,repositoryId};$('#source-editor').value=file.content;$('#source-path').textContent=relative;$('#source-hash').textContent=file.sha256.slice(0,16);$('#editor-state').textContent='已保存';
+  } finally { if(request===state.sourceRead){state.sourceLoading=false;syncEditorReadOnly();} }
 }
 async function saveSource() {
   if(!state.editor)return;const content=$('#source-editor').value,original=state.editor;
@@ -198,8 +203,12 @@ async function renderProjects(epoch) {
 }
 async function openProjectFile(relative,epoch=state.epoch) {
   if(state.projectEditor?.repositoryId===state.repositoryId&&state.projectEditor?.projectId===state.projectId&&state.projectEditor?.path===relative&&$('#project-editor').value!==state.projectEditor.content)return;
-  const repositoryId=state.repositoryId,projectId=state.projectId,file=await api(`/spec-repositories/${repositoryId}/projects/${projectId}/file?path=${encodeURIComponent(relative)}`);if(epoch!==state.epoch)return;
-  state.projectEditor={...file,repositoryId};$('#project-editor').value=file.content;$('#project-file-path').textContent=`projects/${projectId}/${relative}`;
+  const repositoryId=state.repositoryId,projectId=state.projectId,request=++state.projectRead;state.projectLoading=true;syncEditorReadOnly();
+  try {
+    const file=await api(`/spec-repositories/${repositoryId}/projects/${projectId}/file?path=${encodeURIComponent(relative)}`);
+    if(request!==state.projectRead||epoch!==state.epoch||repositoryId!==state.repositoryId||projectId!==state.projectId)return;
+    state.projectEditor={...file,repositoryId};$('#project-editor').value=file.content;$('#project-file-path').textContent=`projects/${projectId}/${relative}`;
+  } finally { if(request===state.projectRead){state.projectLoading=false;syncEditorReadOnly();} }
 }
 async function saveProduct() {
   const original=state.projectEditor;if(!original)return;const content=$('#project-editor').value;
