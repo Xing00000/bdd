@@ -6,6 +6,7 @@ import { verifyBundle } from '../spec-toolkit/engine.mjs';
 
 const prefix = '/repository-api/v1';
 const assets = new Map([
+  ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/repositories', ['index.html', 'text/html; charset=utf-8']],
   ['/repositories/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/repositories/style.css', ['style.css', 'text/css; charset=utf-8']],
@@ -33,19 +34,24 @@ export async function dispatch(service, request) {
     invariant(Buffer.byteLength(JSON.stringify(input)) <= 2 * 1024 * 1024, 'REQUEST_TOO_LARGE', 'Request exceeds 2 MiB', 413);
   }
   let result, status = 200;
-  if (method === 'GET' && parts.join('/') === 'capabilities') result = { schemaVersion: 1, executionEnabled: service.options.enableExecution, configFormat: 'JSON-compatible YAML', nestedSubmodules: false, authentication: 'private-loopback deployment', toolkitUpgrade: true, reportReindex: true, legacyImport: Boolean(service.options.legacyFile) };
-  else if (parts[0] === 'workspaces' && parts.length === 1) {
+  if (method === 'GET' && parts.join('/') === 'workbench') result = { id: 'local', title: 'BDD 工作台', model: 'workbench/spec-repositories/projects', repositories: service.list().length };
+  else if (method === 'GET' && parts.join('/') === 'capabilities') result = { schemaVersion: 1, executionEnabled: service.options.enableExecution, configFormat: 'JSON-compatible YAML', nestedSubmodules: false, authentication: 'private-loopback deployment', toolkitUpgrade: true, reportReindex: true, legacyImport: Boolean(service.options.legacyFile) };
+  else if (parts[0] === 'spec-repositories' && parts.length === 1) {
     if (method === 'GET') result = service.list();
     else if (method === 'POST') { result = service.register(input); status = 201; }
-  } else if (parts[0] === 'workspaces' && parts.length === 2 && method === 'GET') result = await service.detail(id(parts[1]));
-  else if (parts[0] === 'workspaces' && parts[2] === 'git' && parts.length === 3 && method === 'GET') result = await service.inspect(id(parts[1]), url.searchParams.get('projectId') || undefined);
-  else if (parts[0] === 'workspaces' && parts[2] === 'file' && parts.length === 3 && method === 'GET') result = await service.readFile(id(parts[1]), url.searchParams.get('path'));
+  } else if (parts[0] === 'spec-repositories' && parts.length === 2 && method === 'GET') result = await service.detail(id(parts[1]));
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'git' && parts.length === 3 && method === 'GET') result = await service.inspect(id(parts[1]), url.searchParams.get('projectId') || undefined);
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'file' && parts.length === 3 && method === 'GET') result = await service.readFile(id(parts[1]), url.searchParams.get('path'));
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'projects' && parts.length === 5 && method === 'GET') {
+    if (parts[4] === 'files') result = await service.projectFiles(id(parts[1]), id(parts[3]));
+    else if (parts[4] === 'file') result = await service.readProjectFile(id(parts[1]), id(parts[3]), url.searchParams.get('path'));
+  }
   else if (parts[0] === 'operations' && parts.length === 1 && method === 'POST') { result = service.enqueue(input); status = 202; }
   else if (parts[0] === 'operations' && parts.length === 2 && method === 'GET') result = service.operation(id(parts[1]));
   else if (parts[0] === 'operations' && parts[2] === 'cancel' && parts.length === 3 && method === 'POST') result = service.cancel(id(parts[1]));
-  else if (parts[0] === 'workspaces' && parts[2] === 'runs' && parts[4] === 'artifact' && parts.length === 5 && method === 'GET') {
-    const workspaceId = id(parts[1]), runId = id(parts[3]), relative = url.searchParams.get('path');
-    const evidence = await service.artifactDirectory(workspaceId, runId, url.searchParams.get('reportKey'));
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'runs' && parts[4] === 'artifact' && parts.length === 5 && method === 'GET') {
+    const repositoryId = id(parts[1]), runId = id(parts[3]), relative = url.searchParams.get('path');
+    const evidence = await service.artifactDirectory(repositoryId, runId, url.searchParams.get('reportKey'));
     const manifest = await verifyBundle(evidence);
     invariant(['manifest.json', 'seal.json'].includes(relative) || manifest.artifacts.some(x => x.path === relative), 'ARTIFACT_NOT_FOUND', 'Unknown artifact', 404);
     const body = await readFile(await safePath(evidence, relative, { missing: false }));
@@ -77,7 +83,7 @@ export async function registerRepositoryRoutes(app, options) {
 export async function createStandaloneServer(options) {
   const service = await createWorkstation(options);
   const server = createServer(async (request, response) => {
-    if (request.url === '/') { response.writeHead(302, { location: '/repositories' }); response.end(); return; }
+
     let bytes = 0, chunks = [];
     try {
       for await (const chunk of request) { bytes += chunk.length; invariant(bytes <= 2 * 1024 * 1024, 'REQUEST_TOO_LARGE', 'Request exceeds 2 MiB', 413); chunks.push(chunk); }

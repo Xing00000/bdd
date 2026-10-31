@@ -26,7 +26,7 @@ export async function inputSnapshot(root, git) {
   }
   return identity(snapshots.sort((a, b) => a[0].localeCompare(b[0])));
 }
-export async function prepareRun({ root, home, workspaceId, input, git }) {
+export async function prepareRun({ root, home, repositoryId, input, git }) {
   const state = await git.expect(root, input.expected, { clean: true });
   invariant(state.head, 'EMPTY_REPOSITORY', 'Commit the specification first');
   const verified = await validate(root, git, { pinned: true });
@@ -46,7 +46,7 @@ export async function prepareRun({ root, home, workspaceId, input, git }) {
   await validate(repository, git, { pinned: true });
   const pinnedReview = await reviewState(repository, input.requirementId, input.featureId);
   invariant(Object.values(pinnedReview.confirmed).every(Boolean) && identity(pinnedReview.hashes) === identity(review.hashes), 'REVIEW_BASELINE_MISMATCH', 'Committed review differs from working tree');
-  const plan = { schemaVersion: 1, specRepositoryId: verified.config.specRepositoryId, runId, workspaceId, requirementId: input.requirementId, featureId: input.featureId,
+  const plan = { schemaVersion: 1, specRepositoryId: verified.config.specRepositoryId, runId, repositoryId, requirementId: input.requirementId, featureId: input.featureId,
     testedSpecCommit: state.head, projects: verified.modules.map(x => ({ id: x.id, path: x.path, commit: x.commit })),
     caseIds: selection ?? feature.caseIds, allCaseIds: feature.caseIds, profiles: feature.profiles, requiredProjectIds: feature.projectIds,
     scope: selection ? 'SELECTED_CASES' : 'ALL_CASES', baseline: review.hashes.tests,
@@ -175,10 +175,10 @@ export async function verifyBundle(directory) {
   }
   return manifest;
 }
-export async function executeRun({ home, runId, workspaceId, git, enabled = false }) {
+export async function executeRun({ home, runId, repositoryId, git, enabled = false }) {
   invariant(enabled, 'EXECUTION_DISABLED', 'Set WB_ENABLE_TRUSTED_EXECUTION=1 only in a trusted, isolated worker environment', 403);
   const directory = await safePath(home, `executions/${id(runId)}`), plan = version(await readJson(path.join(directory, 'plan.json')));
-  invariant(plan.workspaceId === workspaceId, 'RUN_WORKSPACE_MISMATCH', 'Run belongs to another workspace', 403);
+  invariant((plan.repositoryId ?? plan.workspaceId) === repositoryId, 'RUN_REPOSITORY_MISMATCH', 'Run belongs to another workspace', 403);
   const evidence = path.join(directory, 'evidence');
   if (await exists(evidence)) return verifyBundle(evidence);
   invariant(plan.state === 'PREPARED', 'RUN_ALREADY_STARTED', 'Interrupted or failed execution needs a new run ID, not silent reuse', 409);
@@ -247,9 +247,9 @@ export async function executeRun({ home, runId, workspaceId, git, enabled = fals
   plan.state = 'SEALED'; await writeJson(path.join(directory, 'plan.json'), plan);
   return manifest;
 }
-export async function publishRun({ root, home, workspaceId, runId, git, push = false }) {
+export async function publishRun({ root, home, repositoryId, runId, git, push = false }) {
   const directory = await safePath(home, `executions/${id(runId)}`), plan = version(await readJson(path.join(directory, 'plan.json')));
-  invariant(plan.workspaceId === workspaceId, 'RUN_WORKSPACE_MISMATCH', 'Run belongs to another workspace', 403);
+  invariant((plan.repositoryId ?? plan.workspaceId) === repositoryId, 'RUN_REPOSITORY_MISMATCH', 'Run belongs to another workspace', 403);
   const evidence = path.join(directory, 'evidence'), manifest = await verifyBundle(evidence);
   invariant(manifest.testedSpecCommit === plan.testedSpecCommit && manifest.runId === plan.runId, 'RUN_ID_MISMATCH', 'Sealed evidence belongs to another run');
   const publicationFile = path.join(directory, 'publication.json'), publisher = await safePath(home, `publishers/${runId}/repo`);

@@ -9,7 +9,7 @@ function reportIdentity(manifest, requirementId, featureId, runId) {
   invariant(manifest.requirementId === requirementId && manifest.featureId === featureId && manifest.runId === runId,
     'REPORT_ID_MISMATCH', 'Manifest identity differs from its directory');
 }
-export async function reindexReports({ root, home, workspaceId, git, store, refs }) {
+export async function reindexReports({ root, home, repositoryId, git, store, refs }) {
   const config = await configuration(root);
   if (refs === undefined) {
     const branches = (await git.command(root, ['for-each-ref', '--format=%(refname)', 'refs/remotes/origin/evidence/', 'refs/heads/evidence/'])).stdout.trim().split('\n').filter(Boolean);
@@ -36,7 +36,7 @@ export async function reindexReports({ root, home, workspaceId, git, store, refs
         const prefix = `reports/${requirementId}/${featureId}/${runId}/`, files = entries.filter(x => x.path.startsWith(prefix));
         invariant(files.length <= 10000 && files.every(x => x.type === 'blob' && x.mode === '100644' && x.size <= 32 * 1024 * 1024)
           && files.reduce((sum, x) => sum + x.size, 0) <= 256 * 1024 * 1024, 'REPORT_IMPORT_LIMIT', 'Invalid, executable, symlink or oversized report entry');
-        const cacheKey = identity({ workspaceId, commit, prefix }), cache = await safePath(home, `report-cache/${cacheKey}`);
+        const cacheKey = identity({ repositoryId, commit, prefix }), cache = await safePath(home, `report-cache/${cacheKey}`);
         if (!await exists(cache)) {
           staging = await safePath(home, `report-cache/pending-${randomUUID()}`); await mkdir(staging, { recursive: true, mode: 0o700 });
           for (const file of files) await atomicWrite(await safePath(staging, file.path.slice(prefix.length)), await git.blob(root, file.sha));
@@ -52,7 +52,7 @@ export async function reindexReports({ root, home, workspaceId, git, store, refs
         invariant(!manifest.specRepositoryId || manifest.specRepositoryId === config.specRepositoryId, 'REPORT_REPOSITORY_MISMATCH', 'Report belongs to a different Spec repository');
         const key = `${requirementId}/${featureId}/${runId}`;
         const entry = { key, runId, requirementId, featureId, cacheKey, ref, reportCommit: commit, manifestHash: digest(await readFile(path.join(cache, 'manifest.json'))), manifest };
-        store.indexReport(workspaceId, entry); indexed.push({ key, ref, reportCommit: commit });
+        store.indexReport(repositoryId, entry); indexed.push({ key, ref, reportCommit: commit });
       } catch (error) { errors.push({ ref, path: candidate.path, ...errorResult(error) }); }
       finally { if (staging) await rm(staging, { recursive: true, force: true }); }
     }
@@ -72,20 +72,20 @@ export function currentVerification(feature, modules, reports) {
   if (applicable) return { status: 'VERIFIED', runId: applicable.manifest.runId, testedSpecCommit: applicable.manifest.testedSpecCommit };
   return { status: candidates.length ? 'STALE' : matching.length ? 'NOT_VERIFIED' : 'NOT_RUN' };
 }
-export async function artifactDirectory({ home, store, workspaceId, runId, reportKey }) {
-  id(workspaceId); id(runId);
+export async function artifactDirectory({ home, store, repositoryId, runId, reportKey }) {
+  id(repositoryId); id(runId);
   if (reportKey) {
-    const entry = store.reports(workspaceId).find(x => x.key === reportKey && x.runId === runId);
+    const entry = store.reports(repositoryId).find(x => x.key === reportKey && x.runId === runId);
     invariant(entry && !entry.invalidReason, 'REPORT_NOT_FOUND', 'Report not indexed or conflicting', 404);
     return safePath(home, `report-cache/${entry.cacheKey}`, { missing: false });
   }
   const directory = await safePath(home, `executions/${runId}`);
   if (await exists(path.join(directory, 'plan.json'))) {
     const plan = JSON.parse(await readFile(path.join(directory, 'plan.json'), 'utf8'));
-    invariant(plan.workspaceId === workspaceId, 'RUN_WORKSPACE_MISMATCH', 'Run belongs to another workspace', 403);
+    invariant((plan.repositoryId ?? plan.workspaceId) === repositoryId, 'RUN_REPOSITORY_MISMATCH', 'Run belongs to another workspace', 403);
     return safePath(directory, 'evidence', { missing: false });
   }
-  const matches = store.reports(workspaceId).filter(x => x.runId === runId && !x.invalidReason);
+  const matches = store.reports(repositoryId).filter(x => x.runId === runId && !x.invalidReason);
   invariant(matches.length === 1, 'REPORT_NOT_FOUND', 'Supply reportKey for a missing or ambiguous run', 404);
   return safePath(home, `report-cache/${matches[0].cacheKey}`, { missing: false });
 }

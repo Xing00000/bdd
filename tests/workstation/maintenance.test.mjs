@@ -73,12 +73,12 @@ test('upgrade preview is deterministic and preserves authored configuration/test
   const f = await base(t);
   const unchanged = await planUpgrade(f.repo, toolkitRoot); assert.equal(unchanged.files.length, 0);
   const oldManifest = await readJson(path.join(f.repo, '.workbench-tools/manifest.json')); oldManifest.version = '1.0.0'; await writeJson(path.join(f.repo, '.workbench-tools/manifest.json'), oldManifest); await commitAll(f.repo);
-  const plan = await planUpgrade(f.repo, toolkitRoot); assert.equal(plan.files.length, 1); assert.equal(plan.metadata.toVersion, '1.1.0');
+  const plan = await planUpgrade(f.repo, toolkitRoot); assert.equal(plan.files.length, 1); assert.equal(plan.metadata.toVersion, '1.2.0');
   assert.deepEqual(publicPlan(plan), publicPlan(await planUpgrade(f.repo, toolkitRoot))); assert.equal(publicPlan(plan).files[0].content, undefined);
   const authored = await readFile(path.join(f.repo, 'bdd.config.ts'));
-  const result = await applyPlan({ root: f.repo, home: f.home, workspaceId: 'WS-one', transactionId: 'TX-upgrade', plan, expectedDigest: plan.digest, sourceHead: await git.resolve(f.repo) });
+  const result = await applyPlan({ root: f.repo, home: f.home, repositoryId: 'WS-one', transactionId: 'TX-upgrade', plan, expectedDigest: plan.digest, sourceHead: await git.resolve(f.repo) });
   assert.equal(result.committed, false); assert.equal(result.status, 'APPLIED'); assert.deepEqual(await readFile(path.join(f.repo, 'bdd.config.ts')), authored);
-  assert.equal((await readJson(path.join(f.repo, '.workbench-tools/manifest.json'))).version, '1.1.0');
+  assert.equal((await readJson(path.join(f.repo, '.workbench-tools/manifest.json'))).version, '1.2.0');
 });
 test('upgrade refuses modified or untracked toolkit files', async t => {
   const f = await base(t); await writeFile(path.join(f.repo, '.workbench-tools/unmanaged.mjs'), 'custom');
@@ -89,12 +89,12 @@ test('upgrade refuses modified or untracked toolkit files', async t => {
 });
 test('stale preview is rejected before any target files are written', async t => {
   const f = await base(t), plan = await planFiles(f.repo, [{ path: 'tests/new.txt', content: 'new' }], { kind: 'fixture' });
-  await assert.rejects(applyPlan({ root: f.repo, home: f.home, workspaceId: 'WS-one', transactionId: 'TX-stale', plan, expectedDigest: 'wrong', sourceHead: await git.resolve(f.repo) }), { code: 'PLAN_CHANGED' });
+  await assert.rejects(applyPlan({ root: f.repo, home: f.home, repositoryId: 'WS-one', transactionId: 'TX-stale', plan, expectedDigest: 'wrong', sourceHead: await git.resolve(f.repo) }), { code: 'PLAN_CHANGED' });
   assert.equal(await exists(path.join(f.repo, 'tests/new.txt')), false);
 });
 test('interrupted file plans resume without duplicating or discarding earlier writes', async t => {
   const f = await base(t), plan = await planFiles(f.repo, [{ path: 'tests/first.txt', content: 'first' }, { path: 'tests/second.txt', content: 'second' }], { kind: 'fixture' });
-  const options = { root: f.repo, home: f.home, workspaceId: 'WS-one', transactionId: 'TX-resume', sourceHead: await git.resolve(f.repo) };
+  const options = { root: f.repo, home: f.home, repositoryId: 'WS-one', transactionId: 'TX-resume', sourceHead: await git.resolve(f.repo) };
   await assert.rejects(applyPlan({ ...options, plan, expectedDigest: plan.digest, afterWrite: () => { throw new Error('power interruption'); } }), /power interruption/);
   assert.equal(await readFile(path.join(f.repo, 'tests/first.txt'), 'utf8'), 'first');
   assert.equal((await resumePlan(options)).status, 'APPLIED'); assert.equal(await readFile(path.join(f.repo, 'tests/second.txt'), 'utf8'), 'second');
@@ -102,7 +102,7 @@ test('interrupted file plans resume without duplicating or discarding earlier wr
 });
 test('transaction recovery refuses changed HEAD or a post-interruption human edit', async t => {
   const f = await base(t), plan = await planFiles(f.repo, [{ path: 'tests/first.txt', content: 'first' }, { path: 'tests/second.txt', content: 'second' }], { kind: 'fixture' });
-  const options = { root: f.repo, home: f.home, workspaceId: 'WS-one', transactionId: 'TX-conflict', sourceHead: await git.resolve(f.repo) };
+  const options = { root: f.repo, home: f.home, repositoryId: 'WS-one', transactionId: 'TX-conflict', sourceHead: await git.resolve(f.repo) };
   await assert.rejects(applyPlan({ ...options, plan, expectedDigest: plan.digest, afterWrite: () => { throw new Error('stop'); } }));
   await assert.rejects(resumePlan({ ...options, sourceHead: 'f'.repeat(40) }), { code: 'HEAD_MISMATCH' });
   await writeFile(path.join(f.repo, 'tests/first.txt'), 'human draft');
@@ -119,7 +119,7 @@ test('legacy import preserves exact source, history and screenshots without carr
   assert.equal(plan.metadata.mapping[0].requirementId, 'REQ-OLD'); assert.equal(snapshot.versions.length, 3);
   assert.ok(!JSON.stringify(snapshot).includes('DO-NOT-EXPORT'));
   await backupLegacySelection(f.home, snapshot);
-  await applyPlan({ root: f.repo, home: f.home, workspaceId: 'WS-one', transactionId: 'TX-legacy', plan, expectedDigest: plan.digest, sourceHead: await git.resolve(f.repo) });
+  await applyPlan({ root: f.repo, home: f.home, repositoryId: 'WS-one', transactionId: 'TX-legacy', plan, expectedDigest: plan.digest, sourceHead: await git.resolve(f.repo) });
   assert.equal(await readFile(path.join(f.repo, 'spec/REQ-OLD/login/login.feature'), 'utf8'), old.texts[0]);
   assert.deepEqual(await readJson(path.join(f.repo, 'spec/REQ-OLD/review.json')), { schemaVersion: 1, features: {} });
   assert.match(await readFile(path.join(f.repo, 'tests/REQ-OLD/login/login.steps.ts'), 'utf8'), /MIGRATION_REQUIRES_REVIEW/);
@@ -160,9 +160,9 @@ test('legacy artifact traversal is refused without reading outside the configure
 test('Git report reindex preserves binary bytes and never switches the dirty developer checkout', async t => {
   const f = await base(t), published = await publishedFixture(f, { screenshot: true }), store = storeFor(t, f);
   await writeFile(path.join(f.repo, 'spec/REQ-001/login/login.sd.md'), 'developer draft'); const before = await git.inspect(f.repo);
-  const result = await reindexReports({ root: f.repo, home: f.home, workspaceId: 'WS-one', git, store });
+  const result = await reindexReports({ root: f.repo, home: f.home, repositoryId: 'WS-one', git, store });
   assert.equal(result.errors.length, 0); assert.equal(result.indexed.length, 1); assert.deepEqual(await git.inspect(f.repo), before);
-  const entry = store.reports('WS-one')[0], directory = await artifactDirectory({ home: f.home, store, workspaceId: 'WS-one', runId: entry.runId, reportKey: entry.key });
+  const entry = store.reports('WS-one')[0], directory = await artifactDirectory({ home: f.home, store, repositoryId: 'WS-one', runId: entry.runId, reportKey: entry.key });
   assert.deepEqual(await readFile(path.join(directory, 'screenshots/binary.png')), published.bytes); assert.equal(entry.reportCommit, published.reportCommit);
 });
 test('a fresh clone indexes an evidence branch without a local execution database', async t => {
@@ -170,23 +170,23 @@ test('a fresh clone indexes an evidence branch without a local execution databas
   await git.branch(f.repo, { name: 'evidence/RUN-index', create: true }, await git.inspect(f.repo)); await publishedFixture(f);
   await git.branch(f.repo, { name: 'main', create: false }, await git.inspect(f.repo)); assert.equal(await git.resolve(f.repo), baseCommit);
   const other = path.join(f.base, 'other'); await git.clone(f.repo, other);
-  const store = storeFor(t, f), result = await reindexReports({ root: other, home: f.home, workspaceId: 'WS-one', git, store });
+  const store = storeFor(t, f), result = await reindexReports({ root: other, home: f.home, repositoryId: 'WS-one', git, store });
   assert.equal(result.errors.length, 0); assert.equal(result.indexed.length, 1); assert.equal(store.runs('WS-one').length, 0);
   assert.match(store.reports('WS-one')[0].ref, /origin\/evidence\//);
 });
 test('Git report index rejects tampered artifacts and mismatched identities', async t => {
   const f = await base(t), published = await publishedFixture(f), store = storeFor(t, f);
   await writeFile(path.join(published.folder, 'report.json'), 'tampered'); await commitAll(f.repo);
-  const result = await reindexReports({ root: f.repo, home: f.home, workspaceId: 'WS-one', git, store });
+  const result = await reindexReports({ root: f.repo, home: f.home, repositoryId: 'WS-one', git, store });
   assert.equal(result.indexed.length, 0); assert.equal(result.errors[0].code, 'EVIDENCE_HASH_MISMATCH'); assert.equal(store.reports('WS-one').length, 0);
 });
 test('conflicting immutable run IDs are quarantined rather than silently replacing prior evidence', async t => {
   const f = await base(t), first = await publishedFixture(f), store = storeFor(t, f);
-  await reindexReports({ root: f.repo, home: f.home, workspaceId: 'WS-one', git, store });
+  await reindexReports({ root: f.repo, home: f.home, repositoryId: 'WS-one', git, store });
   await rm(first.folder, { recursive: true }); await publishedFixture(f, { modified: true });
-  const result = await reindexReports({ root: f.repo, home: f.home, workspaceId: 'WS-one', git, store });
+  const result = await reindexReports({ root: f.repo, home: f.home, repositoryId: 'WS-one', git, store });
   assert.ok(result.errors.some(x => x.code === 'REPORT_ID_CONFLICT')); assert.equal(store.reports('WS-one')[0].invalidReason, 'REPORT_ID_CONFLICT');
-  await assert.rejects(artifactDirectory({ home: f.home, store, workspaceId: 'WS-one', runId: 'RUN-index', reportKey: 'REQ-001/login/RUN-index' }), { code: 'REPORT_NOT_FOUND' });
+  await assert.rejects(artifactDirectory({ home: f.home, store, repositoryId: 'WS-one', runId: 'RUN-index', reportKey: 'REQ-001/login/RUN-index' }), { code: 'REPORT_NOT_FOUND' });
 });
 test('current verification distinguishes a valid baseline from stale, partial and conflicting history', () => {
   const feature = { requirementId: 'REQ-001', id: 'login', review: { confirmed: { gherkin: true, sd: true, tests: true }, hashes: { tests: 'baseline' } } };
@@ -203,16 +203,16 @@ test('workspace schema upgrades preserve existing operation and registry records
   store.register({ id: 'WS-one', title: 'Before migration', remoteUrl: f.repo }); store.close();
   const db = new DatabaseSync(path.join(f.home, 'metadata.sqlite')); db.exec('DROP TABLE report_index; PRAGMA user_version=1;'); db.close();
   const upgraded = openStore(f.home); t.after(() => upgraded.close());
-  assert.equal(upgraded.workspace('WS-one').title, 'Before migration'); assert.deepEqual(upgraded.reports('WS-one'), []);
+  assert.equal(upgraded.repository('WS-one').title, 'Before migration'); assert.deepEqual(upgraded.reports('WS-one'), []);
 });
 test('imported Git reports are served through the real API on a new workstation', async t => {
   const f = await base(t), published = await publishedFixture(f, { screenshot: true });
-  const target = path.join(f.home, 'workspaces/WS-one/repo'); await mkdir(path.dirname(target), { recursive: true }); await git.clone(f.repo, target);
+  const target = path.join(f.home, 'repositories/WS-one/repo'); await mkdir(path.dirname(target), { recursive: true }); await git.clone(f.repo, target);
   const app = await createStandaloneServer({ home: f.home, toolkitRoot, allowLocal: true }); t.after(() => app.close()); app.service.register({ id: 'WS-one', title: 'New machine', remoteUrl: f.repo });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${app.server.address().port}`;
-  app.service.enqueue({ schemaVersion: 1, operationId: 'OP-index', workspaceId: 'WS-one', operation: 'reports.reindex', input: {} });
+  app.service.enqueue({ schemaVersion: 1, operationId: 'OP-index', repositoryId: 'WS-one', operation: 'reports.reindex', input: {} });
   const result = await app.service.wait('OP-index'); assert.equal(result.status, 'SUCCEEDED', JSON.stringify(result.error));
   const detail = await app.service.detail('WS-one'); assert.equal(detail.reports.length, 1);
-  const response = await fetch(`${origin}/repository-api/v1/workspaces/WS-one/runs/RUN-index/artifact?path=screenshots%2Fbinary.png&reportKey=REQ-001%2Flogin%2FRUN-index`);
+  const response = await fetch(`${origin}/repository-api/v1/spec-repositories/WS-one/runs/RUN-index/artifact?path=screenshots%2Fbinary.png&reportKey=REQ-001%2Flogin%2FRUN-index`);
   assert.equal(response.status, 200); assert.equal(response.headers.get('content-type'), 'image/png'); assert.deepEqual(Buffer.from(await response.arrayBuffer()), published.bytes);
 });

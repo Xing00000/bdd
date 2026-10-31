@@ -6,7 +6,7 @@ import { fixture, git, specRepository, approve, sealedBundle } from './helpers.m
 import { writeJson } from '../../packages/contracts/index.mjs';
 import { prepareRun, assessEvidence, executeRun, verifyBundle, publishRun } from '../../packages/spec-toolkit/engine.mjs';
 
-const plan = { schemaVersion: 1, runId: 'RUN-fixture', workspaceId: 'WS-fixture', requirementId: 'REQ-001', featureId: 'login', allCaseIds: ['CASE-001'], caseIds: ['CASE-001'], profiles: ['chromium'], testedSpecCommit: 'a'.repeat(40), scope: 'ALL_CASES' };
+const plan = { schemaVersion: 1, runId: 'RUN-fixture', repositoryId: 'WS-fixture', requirementId: 'REQ-001', featureId: 'login', allCaseIds: ['CASE-001'], caseIds: ['CASE-001'], profiles: ['chromium'], testedSpecCommit: 'a'.repeat(40), scope: 'ALL_CASES' };
 function receipt() {
   return { schemaVersion: 1, requirementId: 'REQ-001', featureId: 'login', definitions: [{ caseId: 'CASE-001', profile: 'chromium' }], errors: [], status: 'passed',
     cases: [{ caseId: 'CASE-001', profile: 'chromium', retry: 0, status: 'passed', expectedStatus: 'passed', assertions: 1, steps: [{ title: 'Then expected result', category: 'test.step' }], attachments: [{ path: 'screenshots/case/image.png', name: 'step-Then expected result' }] }] };
@@ -15,10 +15,10 @@ const passed = { exitCode: 0, timedOut: false, overflow: false };
 
 test('candidate preparation requires a clean, committed, confirmed baseline', async t => {
   const f = await fixture(t); await mkdir(f.home); await specRepository(f.repo);
-  await assert.rejects(prepareRun({ root: f.repo, home: f.home, workspaceId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: await git.inspect(f.repo) }, git }), { code: 'REVIEWS_REQUIRED' });
+  await assert.rejects(prepareRun({ root: f.repo, home: f.home, repositoryId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: await git.inspect(f.repo) }, git }), { code: 'REVIEWS_REQUIRED' });
   await approve(f.repo);
   const state = await git.inspect(f.repo);
-  const result = await prepareRun({ root: f.repo, home: f.home, workspaceId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: state }, git });
+  const result = await prepareRun({ root: f.repo, home: f.home, repositoryId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: state }, git });
   assert.equal(result.testedSpecCommit, state.head); assert.equal(result.state, 'PREPARED');
   assert.equal(await git.resolve(path.join(f.home, 'executions', result.runId, 'repo')), state.head);
 });
@@ -48,9 +48,9 @@ test('protocol-level complete receipts satisfy the policy (not a product E2E cla
 });
 test('execution is opt-in and a mismatched workspace cannot access a run', async t => {
   const f = await fixture(t); await mkdir(f.home); await specRepository(f.repo); await approve(f.repo);
-  const candidate = await prepareRun({ root: f.repo, home: f.home, workspaceId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: await git.inspect(f.repo) }, git });
-  await assert.rejects(executeRun({ home: f.home, workspaceId: 'WS-one', runId: candidate.runId, git }), { code: 'EXECUTION_DISABLED' });
-  await assert.rejects(executeRun({ home: f.home, workspaceId: 'WS-other', runId: candidate.runId, git, enabled: true }), { code: 'RUN_WORKSPACE_MISMATCH' });
+  const candidate = await prepareRun({ root: f.repo, home: f.home, repositoryId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: await git.inspect(f.repo) }, git });
+  await assert.rejects(executeRun({ home: f.home, repositoryId: 'WS-one', runId: candidate.runId, git }), { code: 'EXECUTION_DISABLED' });
+  await assert.rejects(executeRun({ home: f.home, repositoryId: 'WS-other', runId: candidate.runId, git, enabled: true }), { code: 'RUN_REPOSITORY_MISMATCH' });
 });
 test('sealed bundles reject changed bytes and unexpected extra files', async t => {
   const f = await fixture(t), directory = path.join(f.base, 'bundle'); await sealedBundle(directory, plan);
@@ -66,14 +66,14 @@ test('report commit R records tested S and does not disturb the developer worksp
   await sealedBundle(path.join(directory, 'evidence'), runPlan);
   const file = path.join(f.repo, 'spec/REQ-001/login/login.sd.md'); await writeFile(file, 'uncommitted development draft');
   const before = await git.inspect(f.repo);
-  const publication = await publishRun({ root: f.repo, home: f.home, workspaceId: plan.workspaceId, runId: plan.runId, git });
+  const publication = await publishRun({ root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git });
   assert.notEqual(publication.reportCommit, testedSpecCommit); assert.equal(publication.testedSpecCommit, testedSpecCommit);
   assert.deepEqual(await git.inspect(f.repo), before); assert.equal(await readFile(file, 'utf8'), 'uncommitted development draft');
   const publisher = path.join(f.home, 'publishers', plan.runId, 'repo');
   assert.equal((await git.command(publisher, ['rev-parse', 'HEAD^'])).stdout.trim(), testedSpecCommit);
   const paths = (await git.command(publisher, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])).stdout.trim().split('\n');
   assert.ok(paths.every(p => p.startsWith('reports/')));
-  const again = await publishRun({ root: f.repo, home: f.home, workspaceId: plan.workspaceId, runId: plan.runId, git });
+  const again = await publishRun({ root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git });
   assert.equal(again.reportCommit, publication.reportCommit);
 });
 test('report push is explicit, uses an evidence branch and is independently retryable', async t => {
@@ -82,8 +82,8 @@ test('report push is explicit, uses an evidence branch and is independently retr
   await git.push(f.repo, { branch: 'main' }, await git.inspect(f.repo)); const testedSpecCommit = await git.resolve(f.repo);
   const directory = path.join(f.home, 'executions', plan.runId); await mkdir(directory, { recursive: true });
   const runPlan = { ...plan, testedSpecCommit, state: 'SEALED' }; await writeJson(path.join(directory, 'plan.json'), runPlan); await sealedBundle(path.join(directory, 'evidence'), runPlan);
-  const local = await publishRun({ root: f.repo, home: f.home, workspaceId: plan.workspaceId, runId: plan.runId, git }); assert.equal(local.status, 'LOCAL_COMMIT');
-  const pushed = await publishRun({ root: f.repo, home: f.home, workspaceId: plan.workspaceId, runId: plan.runId, git, push: true }); assert.equal(pushed.status, 'PUBLISHED'); assert.equal(pushed.reportCommit, local.reportCommit);
+  const local = await publishRun({ root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git }); assert.equal(local.status, 'LOCAL_COMMIT');
+  const pushed = await publishRun({ root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git, push: true }); assert.equal(pushed.status, 'PUBLISHED'); assert.equal(pushed.reportCommit, local.reportCommit);
   assert.equal((await git.command(undefined, ['--git-dir', f.remote, 'rev-parse', 'refs/heads/main'])).stdout.trim(), testedSpecCommit);
 });
 

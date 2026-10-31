@@ -25,10 +25,10 @@ export const schemas = Object.freeze({
     profiles: array({ enum: ['chromium', 'firefox', 'webkit'] }, { minItems: 1, uniqueItems: true }) })),
   review: root(object({ schemaVersion: { const: 1 }, features: { type: 'object', propertyNames: identifier,
     additionalProperties: object({ gherkin: reviewRecord, sd: reviewRecord, tests: reviewRecord }, []) } })),
-  operation: root(object({ schemaVersion: { const: 1 }, operationId: identifier, workspaceId: identifier, operation: text,
+  operation: root(object({ schemaVersion: { const: 1 }, operationId: identifier, repositoryId: identifier, operation: text,
     expected: { type: 'object', properties: { head: { anyOf: [commit, { type: 'null' }] }, branch: { anyOf: [text, { type: 'null' }] }, fingerprint: hash } },
     input: { type: 'object' }, target: object({ kind: { enum: ['spec', 'project'] }, projectId: identifier }, ['kind'])
-  }, ['schemaVersion', 'operationId', 'workspaceId', 'operation', 'input'])),
+  }, ['schemaVersion', 'operationId', 'repositoryId', 'operation', 'input'])),
   manifest: root(object({ schemaVersion: { const: 1 }, runId: identifier, requirementId: identifier, featureId: identifier, testedSpecCommit: commit,
     artifacts: array(object({ path: text, size: { type: 'integer', minimum: 0 }, sha256: hash }))
   }, undefined, { additionalProperties: true }))

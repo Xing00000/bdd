@@ -44,7 +44,7 @@ test('commit-selected supports literal filenames and never runs shell metacharac
 test('HEAD and content fingerprints prevent stale writes', async t => {
   const f = await fixture(t); await repository(f.repo); const initial = await git.inspect(f.repo);
   await writeFile(path.join(f.repo, 'readme.txt'), 'changed');
-  await assert.rejects(git.commitSelected(f.repo, { paths: ['readme.txt'], message: 'stale' }, initial), { code: 'WORKSPACE_CHANGED' });
+  await assert.rejects(git.commitSelected(f.repo, { paths: ['readme.txt'], message: 'stale' }, initial), { code: 'REPOSITORY_CHANGED' });
   await commitAll(f.repo);
   await assert.rejects(git.branch(f.repo, { name: 'new', create: true }, { head: initial.head }), { code: 'HEAD_MISMATCH' });
 });

@@ -12,6 +12,10 @@ export function trackChild(child) { activeChildren.add(child); child.once('close
 
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 export function commitId(value) { invariant(typeof value === 'string' && shaPattern.test(value), 'INVALID_COMMIT', 'Expected a full Git commit SHA'); return value; }
+export function remoteName(value) {
+  invariant(typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value), 'INVALID_REMOTE_NAME', 'Remote name must be a simple identifier');
+  return value;
+}
 export function branchName(value) {
   invariant(typeof value === 'string' && value.length <= 180 && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value)
     && !value.includes('..') && !value.includes('//') && !value.endsWith('/')
@@ -112,7 +116,7 @@ export function createGit(policy = {}) {
     invariant(expected && Object.hasOwn(expected, 'head'), 'EXPECTED_HEAD_REQUIRED', 'Supply the inspected expected.head (null for unborn HEAD)', 400);
     const state = await inspect(directory);
     invariant(state.head === expected.head && (expected.branch === undefined || state.branch === expected.branch), 'HEAD_MISMATCH', 'Repository changed; inspect and retry', 409);
-    if (expected.fingerprint) invariant(state.fingerprint === expected.fingerprint, 'WORKSPACE_CHANGED', 'Files changed since preview', 409);
+    if (expected.fingerprint) invariant(state.fingerprint === expected.fingerprint, 'REPOSITORY_CHANGED', 'Files changed since preview', 409);
     if (clean) invariant(state.clean, 'DIRTY_WORKSPACE', 'Commit or preserve changes before this operation', 409);
     if (attached) invariant(state.branch, 'DETACHED_HEAD', 'Create a development branch before committing', 409);
     return state;
@@ -162,7 +166,49 @@ export function createGit(policy = {}) {
     }
     return modules(directory);
   }
+  async function remotes(directory) {
+    const names = (await command(directory, ['remote'])).stdout.trim().split('\n').filter(Boolean);
+    const result = [];
+    for (const name of names) {
+      remoteName(name);
+      const urls = (await command(directory, ['remote', 'get-url', '--all', name])).stdout.trim().split('\n');
+      const pushUrls = (await command(directory, ['remote', 'get-url', '--push', '--all', name])).stdout.trim().split('\n');
+      result.push({ name, url: urls[0], pushUrl: pushUrls[0], urls, pushUrls });
+    }
+    return result;
+  }
+  async function selectedRemote(directory, name, push = false) {
+    const item = (await remotes(directory)).find(x => x.name === remoteName(name));
+    invariant(item, 'REMOTE_NOT_FOUND', 'Select an existing Git remote');
+    invariant(item.urls.length === 1 && item.pushUrls.length === 1, 'MULTIPLE_REMOTE_URLS_UNSUPPORTED', 'Multiple URLs per remote require explicit manual review');
+    remoteUrl(push ? item.pushUrl : item.url, settings);
+    return item;
+  }
   return {
+    async remoteHead(url, ref = 'main') {
+      remoteUrl(url, settings); branchName(ref);
+      const output = (await command(undefined, ['ls-remote', '--exit-code', '--heads', url, `refs/heads/${ref}`])).stdout.trim();
+      invariant(output.split('\n').length === 1 && output.endsWith(`\trefs/heads/${ref}`), 'REMOTE_BRANCH_NOT_FOUND', 'Selected branch does not resolve uniquely');
+      return commitId(output.split('\t')[0]);
+    },
+    remotes,
+    async configureRemote(directory, input, expected) {
+      await expect(directory, expected); const name = remoteName(input.name);
+      const previous = (await remotes(directory)).find(x => x.name === name);
+      invariant(['add', 'update', 'remove'].includes(input.action), 'INVALID_REMOTE_ACTION', 'Choose add, update or remove');
+      if (input.action === 'add') invariant(!previous, 'REMOTE_EXISTS', name, 409);
+      else {
+        invariant(previous && identity(previous) === identity(input.previous), 'REMOTE_CHANGED', 'Remote configuration changed since inspection', 409);
+        invariant(!(input.action === 'remove' && name === 'origin'), 'ORIGIN_REQUIRED', 'origin is the repository binding; edit its URL rather than removing it');
+      }
+      if (input.action === 'remove') await command(directory, ['remote', 'remove', name]);
+      else {
+        remoteUrl(input.url, settings); remoteUrl(input.pushUrl ?? input.url, settings);
+        await command(directory, input.action === 'add' ? ['remote', 'add', name, input.url] : ['remote', 'set-url', name, input.url]);
+        await command(directory, ['remote', 'set-url', '--push', name, input.pushUrl ?? input.url]);
+      }
+      return remotes(directory);
+    },
     command, root, resolve, inspect, expect, modules, restore, policy: settings,
     async blob(directory, sha, maxBytes = 32 * 1024 * 1024) { return (await command(directory, ['cat-file', 'blob', commitId(sha)], { binaryOutput: true, maxBytes })).stdout; },
     async init(directory, branch = 'main') { branchName(branch); await mkdir(directory, { recursive: true }); await command(directory, ['init', '--initial-branch', branch]); return inspect(directory); },
@@ -182,9 +228,9 @@ export function createGit(policy = {}) {
       invariant(await resolve(directory) === commit, 'HEAD_MISMATCH', 'Candidate clone mismatch');
       return inspect(directory);
     },
-    async fetch(directory) {
-      const url = (await command(directory, ['remote', 'get-url', 'origin'])).stdout.trim(); remoteUrl(url, settings);
-      await command(directory, ['fetch', '--no-recurse-submodules', 'origin']); return inspect(directory);
+    async fetch(directory, input = {}) {
+      const name = input.remote ?? 'origin'; await selectedRemote(directory, name);
+      await command(directory, ['fetch', '--no-recurse-submodules', name]); return inspect(directory);
     },
     async branch(directory, input, expected) {
       branchName(input.name); await expect(directory, expected, { clean: true });
@@ -222,11 +268,11 @@ export function createGit(policy = {}) {
     async push(directory, input, expected) {
       const state = await expect(directory, expected, { attached: true });
       const branch = branchName(input.branch ?? state.branch);
-      const url = (await command(directory, ['remote', 'get-url', '--push', 'origin'])).stdout.trim(); remoteUrl(url, settings);
-      await command(directory, ['push', '--porcelain', '--recurse-submodules=check', 'origin', `HEAD:refs/heads/${branch}`]);
-      const remote = (await command(directory, ['ls-remote', '--heads', 'origin', `refs/heads/${branch}`])).stdout.split(/\s/)[0];
-      invariant(remote === state.head, 'REMOTE_VERIFY_FAILED', 'Push returned but remote head does not match');
-      return { localCommit: state.head, remoteCommit: remote, branch };
+      const name = input.remote ?? 'origin', remote = await selectedRemote(directory, name, true);
+      await command(directory, ['push', '--porcelain', '--recurse-submodules=check', name, `HEAD:refs/heads/${branch}`]);
+      const remoteCommit = (await command(directory, ['ls-remote', '--heads', remote.pushUrl, `refs/heads/${branch}`])).stdout.split(/\s/)[0];
+      invariant(remoteCommit === state.head, 'REMOTE_VERIFY_FAILED', 'Push returned but remote head does not match');
+      return { localCommit: state.head, remoteCommit, branch, remote: name, remoteUrl: remote.pushUrl };
     },
     async addModule(directory, input, expected) {
       id(input.projectId, 'projectId'); remoteUrl(input.url, settings); commitId(input.commit);

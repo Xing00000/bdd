@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createGit } from '../git-core/index.mjs';
 import { id, version, invariant, safePath, exists, writeJson, digest } from '../contracts/index.mjs';
 import { initialize, createFeature, validate, configuration, confirm, saveFile, scan, reviewState } from '../spec-toolkit/index.mjs';
+import { projectRoot, saveProjectFile, configureFeature, configureExecution, installDependencies, installBrowsers, checkTests } from './repository-actions.mjs';
 import { planUpgrade } from './upgrades.mjs';
 import { planLegacyImport, backupLegacySelection } from './legacy.mjs';
 import { publicPlan, applyPlan, resumePlan } from './transactions.mjs';
@@ -12,19 +13,20 @@ import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { validateContract } from '../contracts/schemas.mjs';
 
 export const operationNames = Object.freeze([
-  'workspace.clone', 'workspace.initialize', 'workspace.validate',
-  'workspace.upgrade.preview', 'workspace.upgrade.apply', 'workspace.transaction.resume',
+  'repository.clone', 'repository.initialize', 'repository.validate',
+  'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
-  'spec.feature.create', 'spec.file.save', 'spec.review.confirm',
+  'spec.feature.create', 'spec.feature.configure', 'spec.execution.configure', 'spec.file.save', 'spec.review.confirm',
+  'repository.dependencies.install', 'repository.browsers.install', 'spec.tests.check', 'project.file.save', 'git.remote',
   'git.fetch', 'git.branch', 'git.commit', 'git.push',
   'submodule.add', 'submodule.restore', 'submodule.pin', 'submodule.remove',
   'run.prepare', 'run.execute', 'run.publish'
 ]);
 export function validateRequest(request) {
-  version(request); id(request.operationId, 'operationId'); id(request.workspaceId, 'workspaceId');
+  version(request); id(request.operationId, 'operationId'); id(request.repositoryId, 'repositoryId');
   invariant(operationNames.includes(request.operation), 'OPERATION_NOT_ALLOWED', 'Choose a documented workstation operation', 400);
   invariant(request.input && typeof request.input === 'object' && !Array.isArray(request.input), 'INVALID_INPUT', 'input must be an object', 400);
-  invariant(!Object.keys(request).some(k => !['schemaVersion', 'operationId', 'workspaceId', 'operation', 'expected', 'input', 'target'].includes(k)), 'UNKNOWN_REQUEST_FIELD', 'Unknown operation request field', 400);
+  invariant(!Object.keys(request).some(k => !['schemaVersion', 'operationId', 'repositoryId', 'operation', 'expected', 'input', 'target'].includes(k)), 'UNKNOWN_REQUEST_FIELD', 'Unknown operation request field', 400);
   if (request.target) {
     invariant(['spec', 'project'].includes(request.target.kind), 'INVALID_TARGET', 'Target kind must be spec or project');
     if (request.target.kind === 'project') id(request.target.projectId);
@@ -32,14 +34,15 @@ export function validateRequest(request) {
   validateContract('operation', request);
   return request;
 }
-export async function repositoryPath(home, workspaceId) { return safePath(home, `workspaces/${id(workspaceId)}/repo`); }
+export async function repositoryPath(home, repositoryId) { return safePath(home, `repositories/${id(repositoryId)}/repo`); }
 export async function executeOperation(options, store, request) {
   validateRequest(request);
   const { home, toolkitRoot, allowLocal = false, hosts = ['github.com'], enableExecution = false } = options;
-  const workspace = store.workspace(request.workspaceId), root = await repositoryPath(home, workspace.id);
+  const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id);
   const git = createGit({ allowLocal, hosts }), input = request.input;
-  if (request.operation === 'workspace.clone') return git.clone(workspace.remoteUrl, root, workspace.branch ?? undefined);
+  if (request.operation === 'repository.clone') return git.clone(workspace.remoteUrl, root, workspace.branch ?? undefined);
   await git.root(root);
+  if (request.operation === 'project.file.save') return saveProjectFile(root, input, git, request.expected);
   let target = root;
   if (request.target?.kind === 'project') {
     const config = await configuration(root), project = config.projects.find(x => x.id === request.target.projectId);
@@ -47,17 +50,17 @@ export async function executeOperation(options, store, request) {
     target = await safePath(root, project.path);
     invariant(request.operation.startsWith('git.'), 'TARGET_NOT_ALLOWED', 'Project targets only accept Git operations');
   }
-  if (!['workspace.validate', 'run.execute', 'run.publish', 'reports.reindex', 'workspace.upgrade.preview', 'legacy.preview'].includes(request.operation)) await git.expect(target, request.expected);
+  if (!['repository.validate', 'run.execute', 'run.publish', 'reports.reindex', 'repository.upgrade.preview', 'legacy.preview'].includes(request.operation)) await git.expect(target, request.expected);
   switch (request.operation) {
-    case 'workspace.upgrade.preview': return publicPlan(await planUpgrade(root, toolkitRoot));
-    case 'workspace.upgrade.apply': {
+    case 'repository.upgrade.preview': return publicPlan(await planUpgrade(root, toolkitRoot));
+    case 'repository.upgrade.apply': {
       const state = await git.expect(root, request.expected, { clean: true });
       const plan = await planUpgrade(root, toolkitRoot);
-      return applyPlan({ root, home, workspaceId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
+      return applyPlan({ root, home, repositoryId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
     }
-    case 'workspace.transaction.resume': {
+    case 'repository.transaction.resume': {
       const state = await git.inspect(root);
-      return resumePlan({ root, home, workspaceId: workspace.id, transactionId: input.transactionId, sourceHead: state.head });
+      return resumePlan({ root, home, repositoryId: workspace.id, transactionId: input.transactionId, sourceHead: state.head });
     }
     case 'legacy.preview': return publicPlan((await planLegacyImport(root, options, input.requirementIds)).plan);
     case 'legacy.import': {
@@ -66,17 +69,34 @@ export async function executeOperation(options, store, request) {
       const { plan, snapshot } = await planLegacyImport(root, options, input.requirementIds);
       invariant(plan.digest === input.planDigest, 'PLAN_CHANGED', 'Legacy source or destination changed after preview', 409);
       await backupLegacySelection(home, snapshot);
-      return applyPlan({ root, home, workspaceId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
+      return applyPlan({ root, home, repositoryId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
     }
-    case 'reports.reindex': return reindexReports({ root, home, workspaceId: workspace.id, git, store, refs: input.refs });
-    case 'workspace.initialize':
+    case 'reports.reindex': return reindexReports({ root, home, repositoryId: workspace.id, git, store, refs: input.refs });
+    case 'repository.initialize':
       return initialize(root, { specRepositoryId: input.specRepositoryId ?? workspace.id,
         toolkitRoot: path.join(toolkitRoot, 'packages'), templateRoot: path.join(toolkitRoot, 'templates/spec-repo/v1') });
-    case 'workspace.validate': return validate(root, git, { pinned: Boolean(input.pinned) });
+    case 'repository.validate': return validate(root, git, { pinned: Boolean(input.pinned) });
+    case 'repository.browsers.install': return installBrowsers(root, enableExecution, options.browserRoot ?? process.env.PLAYWRIGHT_BROWSERS_PATH);
+    case 'repository.dependencies.install': return installDependencies(root, enableExecution);
+    case 'spec.tests.check': return checkTests(root, input, store, workspace.id, enableExecution);
+    case 'spec.feature.configure': return configureFeature(root, input);
+    case 'spec.execution.configure': return configureExecution(root, input);
     case 'spec.feature.create': return createFeature(root, input);
     case 'spec.file.save': return saveFile(root, input);
-    case 'spec.review.confirm': return confirm(root, input);
-    case 'git.fetch': return git.fetch(target);
+    case 'spec.review.confirm': {
+      if (input.stage === 'tests') {
+        const review = await reviewState(root, input.requirementId, input.featureId);
+        const check = store.check(workspace.id, `${input.requirementId}/${input.featureId}`);
+        invariant(check?.status === 'CHECKED' && check.digest === review.hashes.tests, 'TEST_CHECK_REQUIRED', 'Run test discovery for the current inputs before confirming tests', 409);
+      }
+      return confirm(root, input);
+    }
+    case 'git.remote': {
+      const result = await git.configureRemote(target, input, request.expected);
+      if (target === root && input.name === 'origin' && input.action !== 'remove') store.updateOrigin(workspace.id, input.url);
+      return result;
+    }
+    case 'git.fetch': return git.fetch(target, input);
     case 'git.branch': return git.branch(target, input, request.expected);
     case 'git.commit': return git.commitSelected(target, input, request.expected);
     case 'git.push': return git.push(target, input, request.expected);
@@ -84,12 +104,16 @@ export async function executeOperation(options, store, request) {
     case 'submodule.add': {
       const config = await configuration(root);
       invariant(!config.projects.some(x => x.id === input.projectId), 'PROJECT_EXISTS', 'Project already exists', 409);
-      const modules = await git.addModule(root, input, request.expected);
+      const commit = input.commit || await git.remoteHead(input.url, input.ref ?? 'main');
+      const modules = await git.addModule(root, { ...input, commit }, request.expected);
       config.projects.push({ id: input.projectId, path: `projects/${input.projectId}` });
       await writeJson(await safePath(root, 'workbench.yaml'), config);
       return { modules, committed: false, paths: ['.gitmodules', 'workbench.yaml', `projects/${input.projectId}`] };
     }
-    case 'submodule.pin': return git.pin(root, input, request.expected);
+    case 'submodule.pin': {
+      const commit = input.commit || await git.resolve(await projectRoot(root, input.projectId, git));
+      return git.pin(root, { ...input, commit }, request.expected);
+    }
     case 'submodule.remove': {
       const projectId = id(input.projectId), data = await scan(root);
       invariant(!data.features.some(f => f.projectIds.includes(projectId)), 'PROJECT_IN_USE', 'A feature still references this project', 409);
@@ -103,25 +127,25 @@ export async function executeOperation(options, store, request) {
       return { removed: projectId, committed: false, remoteDeleted: false };
     }
     case 'run.prepare': {
-      const result = await prepareRun({ root, home, workspaceId: workspace.id, input: { ...input, expected: request.expected }, git });
+      const result = await prepareRun({ root, home, repositoryId: workspace.id, input: { ...input, expected: request.expected }, git });
       store.recordRun(workspace.id, result, 'PREPARED'); return result;
     }
     case 'run.execute': {
-      const result = await executeRun({ home, workspaceId: workspace.id, runId: input.runId, git, enabled: enableExecution });
+      const result = await executeRun({ home, repositoryId: workspace.id, runId: input.runId, git, enabled: enableExecution });
       store.recordRun(workspace.id, result, 'SEALED'); return result;
     }
     case 'run.publish': {
       invariant(input.push === undefined || typeof input.push === 'boolean', 'INVALID_PUSH', 'push must be boolean');
-      const result = await publishRun({ root, home, workspaceId: workspace.id, runId: input.runId, git, push: input.push === true });
+      const result = await publishRun({ root, home, repositoryId: workspace.id, runId: input.runId, git, push: input.push === true });
       return result;
     }
   }
 }
-export async function workspaceDetail(options, workspace) {
+export async function repositoryDetail(options, workspace) {
   const root = await repositoryPath(options.home, workspace.id), git = createGit(options);
   if (!await exists(root)) return { ...workspace, state: 'NOT_CLONED', initialized: false };
-  const state = await git.inspect(root);
-  if (!await exists(await safePath(root, 'workbench.yaml'))) return { ...workspace, state, initialized: false };
+  const state = await git.inspect(root), remotes = await git.remotes(root);
+  if (!await exists(await safePath(root, 'workbench.yaml'))) return { ...workspace, state, remotes, initialized: false };
   let spec, specError;
   try {
     spec = await scan(root);
@@ -129,11 +153,11 @@ export async function workspaceDetail(options, workspace) {
   } catch (error) { specError = { code: error.code, message: error.message }; }
   let modules = [], moduleError;
   try { modules = await git.modules(root); } catch (error) { moduleError = { code: error.code, message: error.message }; }
-  return { ...workspace, state, initialized: true, spec, specError, modules, moduleError };
+  return { ...workspace, state, remotes, initialized: true, spec, specError, modules, moduleError, dependencies: { installed: await exists(path.join(root, 'node_modules/.bin/bddgen')), locked: await exists(path.join(root, 'package-lock.json')) } };
 }
-export async function readWorkspaceFile(home, workspaceId, relative) {
+export async function readRepositoryFile(home, repositoryId, relative) {
   invariant(/^(spec|tests)\//.test(relative) || ['workbench.yaml', 'bdd.config.ts', 'playwright.config.ts', 'package.json', 'package-lock.json'].includes(relative), 'FILE_NOT_READABLE', 'Only source/configuration files are exposed', 403);
-  const root = await repositoryPath(home, workspaceId), file = await safePath(root, relative, { missing: false }), bytes = await readFile(file);
+  const root = await repositoryPath(home, repositoryId), file = await safePath(root, relative, { missing: false }), bytes = await readFile(file);
   invariant(bytes.length <= 2 * 1024 * 1024, 'FILE_TOO_LARGE', 'Editor limit is 2 MiB');
   return { path: relative, content: bytes.toString('utf8'), sha256: digest(bytes) };
 }

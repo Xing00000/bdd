@@ -9,6 +9,7 @@ import { invariant, errorResult } from '../contracts/index.mjs';
 export function environmentOptions() {
   return {
     home: path.resolve(process.env.WB_HOME ?? path.join(os.homedir(), '.bdd-workstation')),
+    browserRoot: process.env.PLAYWRIGHT_BROWSERS_PATH ?? path.resolve(process.env.WB_HOME ?? path.join(os.homedir(), '.bdd-workstation'), 'browsers'),
     toolkitRoot: fileURLToPath(new URL('../../', import.meta.url)),
     allowLocal: process.env.WB_ALLOW_LOCAL_GIT === '1',
     legacyFile: process.env.WB_LEGACY_DB ? path.resolve(process.env.WB_LEGACY_DB) : undefined,
@@ -26,15 +27,15 @@ export async function main(command = process.argv[2]) {
   let service;
   try {
     if (!command || command === 'help') {
-      process.stdout.write('BDD workstation CLI\n  serve | register | list | detail | inspect | wait | cancel\n  workspace.clone | workspace.initialize | workspace.validate\n  spec.feature.create | spec.file.save | spec.review.confirm\n  git.fetch | git.branch | git.commit | git.push\n  submodule.add | submodule.restore | submodule.pin | submodule.remove\n  run.prepare | run.execute | run.publish\n  workspace.upgrade.preview | workspace.upgrade.apply | workspace.transaction.resume\n  legacy.preview | legacy.import | reports.reindex\nRead JSON from stdin. WB_HOME selects persistent state. Mutations require inspected expected.head.\n'); return;
+      process.stdout.write('BDD workstation CLI\n  serve | register | list | detail | inspect | wait | cancel\n  repository.clone | repository.initialize | repository.validate\n  spec.feature.create | spec.file.save | spec.review.confirm\n  git.fetch | git.branch | git.commit | git.push\n  submodule.add | submodule.restore | submodule.pin | submodule.remove\n  run.prepare | run.execute | run.publish\n  repository.upgrade.preview | repository.upgrade.apply | repository.transaction.resume\n  legacy.preview | legacy.import | reports.reindex\nRead JSON from stdin. WB_HOME selects persistent state. Mutations require inspected expected.head.\n'); return;
     }
     const options = environmentOptions();
     if (command === 'serve') {
-      const port = Number(process.env.WB_REPOSITORY_PORT ?? 4180);
+      const port = Number(process.env.WB_PORT ?? process.env.WB_REPOSITORY_PORT ?? 4173);
       invariant(Number.isInteger(port) && port >= 1 && port <= 65535, 'INVALID_PORT', 'Invalid listen port');
       const app = await createStandaloneServer(options);
       await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(port, '127.0.0.1', resolve); });
-      process.stderr.write(`Git workstation: http://127.0.0.1:${port}/repositories\n`);
+      process.stderr.write(`BDD workstation: http://127.0.0.1:${port}/\n`);
       let closing = false;
       for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { if (!closing) { closing = true; void app.close().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; }); } });
       return;
@@ -43,8 +44,8 @@ export async function main(command = process.argv[2]) {
     let result;
     if (command === 'register') result = service.register(input);
     else if (command === 'list') result = service.list();
-    else if (command === 'detail') result = await service.detail(input.workspaceId);
-    else if (command === 'inspect') result = await service.inspect(input.workspaceId, input.projectId);
+    else if (command === 'detail') result = await service.detail(input.repositoryId);
+    else if (command === 'inspect') result = await service.inspect(input.repositoryId, input.projectId);
     else if (command === 'wait') result = await service.wait(input.operationId, 1800000);
     else if (command === 'cancel') result = service.cancel(input.operationId);
     else {

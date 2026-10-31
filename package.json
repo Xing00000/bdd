@@ -11,7 +11,7 @@
     "build": "node tools/build.mjs",
     "deploy": "npm run build && node tools/deploy.mjs",
     "check": "tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p ui/tsconfig.json",
-    "start": "node dist/src/main.js",
+    "start": "node scripts/workstation.mjs serve",
     "init-fixtures": "node tools/init-fixtures.mjs",
     "serve-fixtures": "node tools/serve-fixtures.mjs",
     "verify": "node tools/verify-app.mjs",

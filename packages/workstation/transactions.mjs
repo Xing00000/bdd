@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { readFile, realpath, readdir } from 'node:fs/promises';
 import { id, invariant, safePath, exists, digest, identity, writeJson, readJson, atomicWrite } from '../contracts/index.mjs';
 
@@ -28,22 +29,22 @@ function validatePlan(plan) {
   invariant(Array.isArray(plan.files) && new Set(plan.files.map(x => x.path)).size === plan.files.length, 'INVALID_FILE_PLAN', 'Duplicate file plan');
   for (const item of plan.files) invariant(allowed(item.path) && digest(Buffer.from(item.content, 'base64')) === item.after, 'PLAN_CHANGED', 'Saved file content changed');
 }
-async function journalPath(home, workspaceId, transactionId) {
-  return safePath(home, `transactions/${id(workspaceId)}/${id(transactionId)}.json`);
+async function journalPath(home, repositoryId, transactionId) {
+  return safePath(home, `transactions/${id(repositoryId)}/${id(transactionId)}.json`);
 }
-export async function applyPlan({ root, home, workspaceId, transactionId, plan, expectedDigest, sourceHead, afterWrite }) {
+export async function applyPlan({ root, home, repositoryId, transactionId, plan, expectedDigest, sourceHead, afterWrite }) {
   validatePlan(plan);
   invariant(expectedDigest === plan.digest, 'PLAN_CHANGED', 'Preview changed; review the new file plan before applying', 409);
-  const file = await journalPath(home, workspaceId, transactionId);
+  const file = await journalPath(home, repositoryId, transactionId);
   invariant(!await exists(file), 'TRANSACTION_EXISTS', 'Use the explicit resume operation for an existing transaction', 409);
-  const journal = { schemaVersion: 1, transactionId, workspaceId, root: await realpath(root), sourceHead, plan, status: 'PREPARED', createdAt: new Date().toISOString() };
+  const journal = { schemaVersion: 1, transactionId, repositoryId, root: await realpath(root), sourceHead, plan, status: 'PREPARED', createdAt: new Date().toISOString() };
   // Persist all original/desired hashes before the first working-tree write.
   await writeJson(file, journal);
-  return resumePlan({ root, home, workspaceId, transactionId, sourceHead, afterWrite });
+  return resumePlan({ root, home, repositoryId, transactionId, sourceHead, afterWrite });
 }
-export async function resumePlan({ root, home, workspaceId, transactionId, sourceHead, afterWrite }) {
-  const file = await journalPath(home, workspaceId, transactionId), journal = await readJson(file, { maxBytes: 128 * 1024 * 1024 });
-  invariant(journal.workspaceId === workspaceId && journal.root === await realpath(root), 'TRANSACTION_WORKSPACE_MISMATCH', 'Transaction belongs to another checkout', 403);
+export async function resumePlan({ root, home, repositoryId, transactionId, sourceHead, afterWrite }) {
+  const file = await journalPath(home, repositoryId, transactionId), journal = await readJson(file, { maxBytes: 128 * 1024 * 1024 });
+  invariant((journal.repositoryId ?? journal.workspaceId) === repositoryId && [await realpath(root), path.join(home, 'workspaces', repositoryId, 'repo')].includes(journal.root), 'TRANSACTION_REPOSITORY_MISMATCH', 'Transaction belongs to another checkout', 403);
   invariant(sourceHead === journal.sourceHead, 'HEAD_MISMATCH', 'Checkout HEAD changed since migration began', 409);
   validatePlan(journal.plan);
   const check = async item => {
@@ -61,8 +62,8 @@ export async function resumePlan({ root, home, workspaceId, transactionId, sourc
   journal.status = 'APPLIED'; journal.finishedAt = new Date().toISOString(); await writeJson(file, journal);
   return { transactionId, status: journal.status, ...publicPlan(journal.plan), committed: false };
 }
-export async function listTransactions(home, workspaceId) {
-  const directory = await safePath(home, `transactions/${id(workspaceId)}`);
+export async function listTransactions(home, repositoryId) {
+  const directory = await safePath(home, `transactions/${id(repositoryId)}`);
   if (!await exists(directory)) return [];
   const result = [];
   for (const name of await readdir(directory)) if (name.endsWith('.json')) {

@@ -15,7 +15,7 @@ async function eventually(check, timeout = 10000) {
 }
 async function executionFixture(t, command) {
   const f = await fixture(t); await mkdir(f.home);
-  const repo = path.join(f.home, 'workspaces/WS-one/repo'); await specRepository(repo);
+  const repo = path.join(f.home, 'repositories/WS-one/repo'); await specRepository(repo);
   const config = JSON.parse(await readFile(path.join(repo, 'workbench.yaml'), 'utf8'));
   config.execution.install = command; await writeJson(path.join(repo, 'workbench.yaml'), config); await approve(repo);
   return { ...f, repo };
@@ -39,32 +39,32 @@ test('CLI and thin Git scripts share persisted state and structured output', asy
     assert.equal(result.exitCode, 0, result.stderr + result.stdout); return JSON.parse(result.stdout);
   }
   await cli('scripts/workstation.mjs', ['register'], { id: 'WS-cli', title: 'CLI fixture', remoteUrl: f.remote });
-  const clone = await cli('scripts/git/clone.mjs', [], { workspaceId: 'WS-cli', operationId: 'OP-cli-clone' }); assert.equal(clone.status, 'SUCCEEDED');
-  const init = await cli('scripts/spec/init.mjs', [], { workspaceId: 'WS-cli', operationId: 'OP-cli-init', expected: { head: null } }); assert.equal(init.status, 'SUCCEEDED');
-  const detail = await cli('scripts/workstation.mjs', ['detail'], { workspaceId: 'WS-cli' }); assert.equal(detail.initialized, true);
+  const clone = await cli('scripts/git/clone.mjs', [], { repositoryId: 'WS-cli', operationId: 'OP-cli-clone' }); assert.equal(clone.status, 'SUCCEEDED');
+  const init = await cli('scripts/spec/init.mjs', [], { repositoryId: 'WS-cli', operationId: 'OP-cli-init', expected: { head: null } }); assert.equal(init.status, 'SUCCEEDED');
+  const detail = await cli('scripts/workstation.mjs', ['detail'], { repositoryId: 'WS-cli' }); assert.equal(detail.initialized, true);
 });
 test('a real failed preparation command seals NOT_RUN evidence without reporting product success', async t => {
   const f = await executionFixture(t, [process.execPath, '-e', "console.error('intentional fixture failure'); process.exit(3)"]);
-  const plan = await prepareRun({ root: f.repo, home: f.home, workspaceId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: await git.inspect(f.repo) }, git });
-  const result = await executeRun({ home: f.home, runId: plan.runId, workspaceId: 'WS-one', git, enabled: true });
+  const plan = await prepareRun({ root: f.repo, home: f.home, repositoryId: 'WS-one', input: { requirementId: 'REQ-001', featureId: 'login', expected: await git.inspect(f.repo) }, git });
+  const result = await executeRun({ home: f.home, runId: plan.runId, repositoryId: 'WS-one', git, enabled: true });
   assert.equal(result.testOutcome, 'NOT_RUN'); assert.equal(result.verification, 'NOT_VERIFIED'); assert.equal(result.failure.code, 'EXECUTION_COMMAND_FAILED');
   assert.ok(result.artifacts.some(x => x.path === 'logs/1.json'));
   const verified = await verifyBundle(path.join(f.home, 'executions', plan.runId, 'evidence')); assert.equal(verified.testedSpecCommit, plan.testedSpecCommit);
-  assert.deepEqual(await executeRun({ home: f.home, runId: plan.runId, workspaceId: 'WS-one', git, enabled: true }), result);
+  assert.deepEqual(await executeRun({ home: f.home, runId: plan.runId, repositoryId: 'WS-one', git, enabled: true }), result);
 });
 test('cancellation holds the workspace lock until the real worker and child stop', async t => {
   const f = await executionFixture(t, [process.execPath, '-e', "require('node:fs').writeFileSync('install.pid',String(process.pid)); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"]);
   const service = await createWorkstation({ home: f.home, toolkitRoot, allowLocal: true, enableExecution: true }); t.after(() => service.close());
   service.register({ id: 'WS-one', title: 'Cancellation fixture', remoteUrl: f.remote });
-  const request = (operationId, operation, input, expected) => ({ schemaVersion: 1, operationId, workspaceId: 'WS-one', operation, input, ...(expected ? { expected } : {}) });
+  const request = (operationId, operation, input, expected) => ({ schemaVersion: 1, operationId, repositoryId: 'WS-one', operation, input, ...(expected ? { expected } : {}) });
   service.enqueue(request('OP-prepare', 'run.prepare', { requirementId: 'REQ-001', featureId: 'login' }, await git.inspect(f.repo)));
   const prepared = await service.wait('OP-prepare'); assert.equal(prepared.status, 'SUCCEEDED', JSON.stringify(prepared.error));
   service.enqueue(request('OP-execute', 'run.execute', { runId: prepared.result.runId }));
   const pidFile = path.join(f.home, 'executions', prepared.result.runId, 'repo/install.pid'); await eventually(() => exists(pidFile));
   const childPid = Number(await readFile(pidFile, 'utf8'));
   assert.equal(service.cancel('OP-execute').status, 'CANCELLING');
-  assert.throws(() => service.enqueue(request('OP-conflict', 'workspace.validate', {})), { code: 'WORKSPACE_BUSY' });
+  assert.throws(() => service.enqueue(request('OP-conflict', 'repository.validate', {})), { code: 'REPOSITORY_BUSY' });
   const stopped = await service.wait('OP-execute'); assert.equal(stopped.status, 'CANCELLED');
   await eventually(async () => { try { process.kill(childPid, 0); return false; } catch { return true; } });
-  service.enqueue(request('OP-after', 'workspace.validate', {})); assert.equal((await service.wait('OP-after')).status, 'SUCCEEDED');
+  service.enqueue(request('OP-after', 'repository.validate', {})); assert.equal((await service.wait('OP-after')).status, 'SUCCEEDED');
 });

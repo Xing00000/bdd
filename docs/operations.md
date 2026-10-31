@@ -1,126 +1,95 @@
-# 操作、升級與資料保護
+# 操作指南
 
-[README](../README.md) · [架構](architecture/workstation.md) · [相容邊界](compatibility.md)
+[README](../README.md) · [架構](architecture/workstation.md) · [相容](compatibility.md)
 
-## 入口與設定
+## 部署與備份
 
-| 設定 | 用途／預設 |
-|---|---|
-| `WB_HOME` | Git 工作站私有資料，預設 `~/.bdd-workstation` |
-| `WB_REPOSITORY_PORT` | 獨立站台 port，預設 4180；固定 loopback |
-| `WB_GIT_HOSTS` | 允許的遠端主機，預設 `github.com`，逗號分隔 |
-| `WB_ALLOW_LOCAL_GIT=1` | 允許本機 Repo 路徑，供可信開發／測試使用；預設關閉 |
-| `WB_ENABLE_TRUSTED_EXECUTION=1` | 允許執行 Repo 程式，僅限可信隔離環境；預設關閉 |
-| `WB_LEGACY_DB` | 舊資料唯讀匯入來源；獨立站台必須明確設定 |
-| `WB_LEGACY_ARTIFACTS` | 舊截圖允許讀取的根目錄 |
-| `PLAYWRIGHT_BROWSERS_PATH` | 已安裝、版本相符的瀏覽器位置 |
-
-整合站台沿用 `WB_ROOT`、`WB_PORT`（4173）、`WB_BASE_URL`、`WB_METADATA_DB` 與 `WB_DATA_ROOT`。整合入口預設把自己的舊 DB／artifacts 提供給唯讀遷移工具；不會自動匯入。
-
-Git 設定刻意忽略主機 global/system config。SSH 使用可信主機的 agent 與 known-host 設定；v1 尚未整合 HTTPS 私有 Token provider。不要把密碼放入 URL、Git 設定檔、截圖或 logs。
-
-## 初始化 Spec Repo
-
-登錄 Repo → Clone → 初始化範本。來源 Repo 是私有時，先在執行主機配置可用認證。空 Repo 不指定尚不存在的 branch。建立 Feature 後，三個平行目錄使用同一組 REQ／Feature ID。
-
-Repo B 自己安裝依賴與生成 lockfile，不能借用站台的 `node_modules`：
+使用 Node.js 24 與 Git。`npm start` 直接提供新工作台，不需要舊 UI build。預設網址 `http://127.0.0.1:4173/`，`WB_PORT` 可指定連接埠，`WB_HOME` 預設為 `~/.bdd-workstation`。
 
 ```sh
-# 以下在 Spec Repo 執行，不是在工作站 Repo。
-npm install
-npx playwright install chromium
-# 審查並提交真正生成的 package-lock.json。
+WB_HOME=/absolute/private/workbench \
+WB_ENABLE_TRUSTED_EXECUTION=1 \
+npm start
 ```
 
-Repo B 的 `bdd:validate`、`bdd:generate`、`bdd:list`、`bdd:test` 是 portable toolkit 預覽入口。CLI 使用形式如下；這些不是 Repo A 的 npm scripts：
+只在可信任、隔離的執行主機開啟此旗標。Git SSH agent 與 known-host 由主機設定。`WB_GIT_HOSTS` 控制允許的 Git host。`WB_ALLOW_LOCAL_GIT=1` 只供明確允許本機 Git remote 的環境，CI 使用它連接真實 bare remotes。
+
+`PLAYWRIGHT_BROWSERS_PATH` 可共用受管理 browser binaries；未設定時工作台使用 `WB_HOME/browsers`。UI 可安裝 Chromium binaries，不會用 sudo 安裝 OS 套件；系統相依套件請先準備。其他 browser profile 可以在主機安裝對應正式版本。
+
+停止舊程序及 workers，備份完整 `WB_HOME`、舊 metadata DB 與原證據，再啟動 schema 3。升級保留舊 Spec ID 與未提交 checkout 檔案；若 `workspaces/` 和 `repositories/` 同時存在，系統拒絕合併，需先保存並排除重複目錄。metadata 的升級備份不是完整工作目錄備份。
+
+## UI 完整路徑
+
+### 綁定與初始化
+
+首頁「綁定 Spec Repo」填入名稱與既有 remote。空 remote 的分支欄留白。選擇 Repo 後按「取得 Repo」「初始化 Spec 結構」，再到「Git 與 Remotes」勾選初始檔案、輸入訊息、Commit。初始化遇到非空不相容 Repo 會拒絕，不覆蓋它。
+
+第二個 Spec Repo 走相同流程，彼此的功能 ID、Projects 與執行紀錄獨立。產品不能直接加到工作台總覽。
+
+### 加入產品與 remote
+
+在 Spec Repo 的 Projects 頁按「加入 Project」，填產品 ID、產品 remote 與來源分支。來源分支解析到完整 SHA 並寫成 gitlink。回 Spec Git 頁審閱並提交 `.gitmodules`、`workbench.yaml` 與 gitlink。
+
+Git 頁可選「Spec Repo」或該 Repo 的某個 Project；每個 Git 目標有自己的 remote 清單。新增／編輯 named remote 時，fetch URL 與 push URL 可不同；「Fetch 選取 Remote」不隱含 Merge，「Push 選取目標」先列出 SHA、remote URL 與遠端分支並要求確認。產品版本請先 Push，再 Push 包含新 gitlink 的 Spec 候選。
+
+### 驗收環境與依賴
+
+總覽選服務 Project，填入 loopback 目標網址、健康檢查網址、啟動 executable 與逐行 argv。健康檢查應回傳 `{ "commit": "<WB_SOURCE_COMMIT>" }`。Runner 會從 pinned Project 啟動服務，不把既有 port 的回應當成自己部署的版本。
+
+按「安裝／更新測試依賴」：無 lockfile 使用固定的 npm install，有 lockfile 使用 npm ci，兩者皆忽略 lifecycle scripts。按「安裝 Chromium」安裝與規格庫 Playwright 版本相容的 browser binaries。設定與 lockfile 是要審閱、提交的來源。
+
+### 需求到測試
+
+建立 Requirement ID／Feature ID 與產品關聯。五階段每頁有文件、下一步及阻擋原因。依序保存及確認 Gherkin、SD，再編寫 steps／hooks。案例 ID 與 browser profile 可在「案例、瀏覽器與產品範圍」調整。
+
+檢查測試接線會執行真正生成與 discovery，必須與配置中的案例集合一致。成功後才可確認測試基線；修改檔案後必須重檢。人工確認不會自動 Commit，也不宣稱產品通過。
+
+### 產品開發與驗收
+
+在 Projects 選產品。固定版本通常是 detached HEAD，按「此 Project 的 Git」建立開發分支，再回編輯器修改 UTF-8 產品檔案。保存時檢查目前內容 hash，拒絕覆蓋其他人剛改的內容。
+
+產品 Commit → 明確 Push → Projects「固定目前產品 Commit」→ Spec Commit → Spec Push。回功能開發／驗收頁按「準備驗收候選」，在執行紀錄啟動真正測試。前置確認、dirty checkout 或產品版本不符會阻擋，畫面給出原因。
+
+失敗也封存報告。修正產品後建立新 candidate／run；不能覆寫舊 run。通過只對應當次固定輸入。上游內容或產品改變後顯示過期，不延用舊 VERIFIED。
+
+### 證據與發布
+
+「檢視證據」顯示案例、瀏覽器、結果、斷言、逐步圖片、受測版本與下載連結。「建立報告 Commit」使用獨立 clone；「Push 報告分支」明確發布到 origin 的 `evidence/<run-id>`。R 與被測 S 不同，不改動 main。
+
+其他機器先明確 Fetch，再「重建 Git 報告索引」。驗證不通過的 report 不當作有效證據。報告、截圖、logs 可能含敏感資料，Push 前需人工審閱。
+
+## API 與腳本
+
+API prefix `/repository-api/v1`。資源為 `/workbench`、`/spec-repositories`、`/spec-repositories/:id/projects/:projectId/files`、`/operations` 與各 Repo 的 run artifacts。不存在全域 Project 或舊 `/workspaces` API。
+
+寫入使用 JSON、`X-Workbench-Request: 1`；Origin 出現時必須符合站台。操作輸入：
+
+```json
+{
+  "schemaVersion": 1,
+  "operationId": "OP-unique",
+  "repositoryId": "SPEC-id",
+  "operation": "git.commit",
+  "expected": { "head": "<actual-full-sha>" },
+  "input": { "paths": ["spec/REQ-001/login/login.feature"], "message": "Define login" }
+}
+```
+
+Project Git 操作另外指定 `target: {"kind":"project","projectId":"product"}`，仍必須帶父層 repositoryId。`git.push` 可指定 `input.remote` 與 `input.branch`。所有 scripts 讀 stdin JSON、回 stdout JSON；不接受任意伺服器 cwd 或任意 shell。
+
+`repository.clone`、`repository.initialize`、`repository.validate`、`repository.dependencies.install`、`repository.browsers.install`、`spec.tests.check`、`project.file.save`、`git.remote`、`submodule.*`、`run.*` 共用後端實作。舊 request 名稱只在儲存資料升級時轉換，不是持續存在的 API alias。
+
+## 維護與相容檢查
+
+維護頁提供工具升級預覽／套用、舊 DB 唯讀匯入與中斷續做。原資料匯入不重新批准來源，也不執行被封存的舊測試；參見相容文件。
 
 ```sh
-node .workbench-tools/spec-toolkit/cli.mjs validate
-node .workbench-tools/spec-toolkit/cli.mjs generate REQ-001 login
-node .workbench-tools/spec-toolkit/cli.mjs list REQ-001 login
-node .workbench-tools/spec-toolkit/cli.mjs test REQ-001 login
+npm run check:repository
+npm run check:workstation
+npm run test:workstation
+npm run test:workstation:e2e
 ```
 
-初始化產生的步驟會明確拋錯，直到實作真實操作與斷言。預覽不是正式 VERIFIED。
+舊元件回歸使用 `npm ci`、`npm run spec:list`、`npm run check:unused`、`npm run check`、`npm run build`、`npm run test:app`。這些是相容性維護，不會啟動舊工作區作為正常入口。
 
-## CLI 與 HTTP
-
-`node scripts/workstation.mjs help` 列出支援操作。CLI 讀 stdin JSON，stdout 回傳一份 JSON；診斷放 stderr。
-
-```sh
-printf '%s' '{"id":"WS-bdd","title":"BDD Spec","remoteUrl":"git@github.com:Xing00000/bdd-spec.git"}' \
-  | node scripts/workstation.mjs register
-printf '%s' '{"workspaceId":"WS-bdd","operationId":"OP-clone-1"}' \
-  | node scripts/git/clone.mjs
-printf '%s' '{"workspaceId":"WS-bdd"}' \
-  | node scripts/git/inspect.mjs
-```
-
-後續寫入使用剛讀取的 `expected.head`，空 Repo 的 HEAD 是 null。產品 Git 操作附 `target: {"kind":"project","projectId":"bdd"}`，而非傳任意伺服器目錄。
-
-| 範圍 | 操作 |
-|---|---|
-| Workspace | clone、initialize、validate |
-| Git | fetch、branch、commit、push；不隱含 merge 或 Force Push |
-| Submodule | add、restore、pin、remove |
-| Spec | feature.create、file.save、review.confirm |
-| Run | prepare、execute、publish |
-| 維護 | upgrade.preview／apply、transaction.resume、legacy.preview／import、reports.reindex |
-
-HTTP 前綴為 `/repository-api/v1`。寫入要求 JSON、`X-Workbench-Request: 1`，有 Origin 時必須同源。長任務回 202 與 operation ID；查詢 `/operations/<id>` 取得結果。瀏覽器關閉不等於取消。
-
-## 正式驗收與報告
-
-依序確認 Gherkin、SD、Tests，提交產品與 Spec candidate，然後準備 Run。執行前開啟可信 Worker 設定。工作區必須乾淨，所有引用的 SHA 必須可取得。
-
-Run 的測試結果、驗收有效性與發布狀態分開顯示。先檢查 logs／截圖是否含機密，再明確建立報告 commit／Push evidence 分支。Git 儲存上限目前為單檔 32 MiB、整份 256 MiB，未實作 LFS 或自動秘密偵測。
-
-跨機器先明確 Fetch，再點「從已 Fetch 的 Git 版本重建報告索引」，或用 `scripts/run/reindex.mjs`。預設檢查 HEAD、local evidence refs、origin evidence refs。可傳 `input.refs` 指定既有 refs；不隱含 Fetch、不切分支、不覆寫 dirty 檔案。
-
-## 工具升級與中斷恢復
-
-先執行 `workspace.upgrade.preview`（`scripts/spec/upgrade-preview.mjs`），審查檔案與 hash，再以 `input.planDigest` 執行 `workspace.upgrade.apply`（`scripts/spec/upgrade.mjs`）。Apply 要求乾淨的 Spec checkout；只變更受管理工具，不覆寫 authored specs/tests/config/lockfile。
-
-工具有本地修改或未知檔案會阻擋。升級後 Tests 確認失效，需要重新審查。操作只保存工作區，不自動 Commit／Push。
-
-中斷後用 `workspace.transaction.resume`（`scripts/spec/resume.mjs`）及原 transaction ID。HEAD 必須相同；每個檔案只能仍是原內容或預期新內容。人類後續修改會造成衝突，不能為了完成作業將它抹掉。
-
-## 舊 DB 匯入
-
-```sh
-WB_LEGACY_DB=/absolute/path/metadata.sqlite \
-WB_LEGACY_ARTIFACTS=/absolute/path/artifacts \
-npm run start:repositories
-```
-
-先預覽所選 legacy requirement IDs，再傳 preview digest 與 `acknowledgeUnverified: true` 套用。HTTP 呼叫者不能指定任意 DB 檔案。來源 SQLite 以唯讀 transaction 讀取，不修改。
-
-Gherkin／SD heads 與文件歷史保留原文；舊測試封存為 `.ts.txt`，新的 executable steps 明確阻擋執行。Case ID、Project binding、hooks 需要人工重接。舊確認不啟用，舊 PASSED 不等於新 VERIFIED。缺少 SHA 或截圖就保留未知／警告，不補造證據。
-
-匯入前保存的是**所選資料匯出備份**，不是整個 DB 的完整備份。文件內仍可能有使用者寫入的秘密，提交前需審查。已存在的目標 Requirement 不合併或覆蓋。
-
-## 部署與資料保護
-
-`deploy/` 是舊整合站台 **metadata DB 的可重建 SQL bundle**，不是 Git 工作站 operational DB 的 schema。原始來源只有 `src/adapters/sqlite/`、`tools/deploy.mjs`、`tools/migrate.mjs` 與 `tools/dbgate.Dockerfile`。不要手改 SQL 副本或把生成結果當成另一套 schema。
-
-```sh
-# 在工作站 Repo 執行，會先 build，再生成 deploy/。
-npm run deploy
-node deploy/migrate.mjs /absolute/path/metadata.sqlite
-# 已有資料庫升級必須提供全新的備份路徑。
-node deploy/migrate.mjs /absolute/path/metadata.sqlite --backup /absolute/path/before.sqlite
-```
-
-`deploy/` 不再版本控制。要部署離線環境，先在可信的建置環境生成完整 bundle，再一同搬運 `manifest.json`、SQL、runner 與 README。Runner 在開啟 DB 前核對 SQL hashes／版本；有資料的 DB 不可省略備份。DDL／DML 是檢視檔，執行完整 migrations 才能保持交易順序；seed 由應用程式依 key 套用，不手動重跑。
-
-Git 工作站的 `WB_HOME/metadata.sqlite` 由 `packages/workstation/store.mjs` 管理 schema。目前 schema 2 additive migration 保留既有 workspace／operation／run。不要對它執行上述舊站台 deploy bundle。
-
-升級前停止相關寫入並備份兩種 DB、未提交工作區、未發布 evidence 與 transactions。不要刪除 `.workbench/`、`WB_HOME` 或 `.test-fixtures/` 來清理原始碼。
-
-## 清理與重建
-
-`npm run build` 會先移除 compiler-owned 的 `dist/src`、`dist/tests`，避免已刪除的 TS 留下可執行 JS；Vite 管理 `dist/public`。這不會清除任何 DB 或受管理 workspace。
-
-舊工作台的 generated spec 由 `npm run spec:generate` 重建；`spec:list` 與 `test:tooling` 的前置腳本也會生成。Git-backed Repo B 的 `.generated/` 則由它自己的 portable toolkit 生成。兩者不能混用。
-
-`npm run check:repository` 用 Git 的 tracked 檔案清單防止衍生物重新被提交，並驗證維護文件的相對連結及工作站 npm script 名稱。它不將「沒有靜態 import」的 Worker、reporter、CLI、MCP stdio 誤判為死碼。
+UI 驗收測試會保存真實瀏覽器 trace、手機／桌面截圖、UI 發出的寫入請求與 Git 收據。基礎設施可以預先建立 Git 服務及 browser binaries，業務流程不得透過 API 或檔案預填來跳過 UI。
