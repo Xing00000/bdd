@@ -1,8 +1,9 @@
+import { checkRepositoryIdentity } from './locations.mjs';
 /** Read-only acquisition of a bound repository. Never installs packages or discards drafts. */
 import path from 'node:path';
-import { mkdir, rename, rm, readFile } from 'node:fs/promises';
+import { mkdir, rename, rm, readFile, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { id, invariant, exists, safePath, identity, errorResult } from '../contracts/index.mjs';
+import { id, invariant, exists, safePath, identity, digest, errorResult } from '../contracts/index.mjs';
 import { remoteUrl, commitId, branchName } from '../git-core/index.mjs';
 import { initialize, scan } from '../spec-toolkit/index.mjs';
 import { ensureDraft } from './authoring.mjs';
@@ -82,19 +83,28 @@ export async function acquireRepository(context) {
   store.setConnection(repositoryId, status);
   await mkdir(path.dirname(root), { recursive: true });
   try {
-    if (!await exists(root)) {
-      const staging = `${root}.acquire-${request.operationId}`;
-      // Only remove this operation's abandoned clone, never the live checkout.
-      if (await exists(staging)) await rm(staging, { recursive: true, force: true });
-      await git.clone(record.remoteUrl, staging, record.branch ?? undefined);
-      await rename(staging, root);
+    const acquisitionWarnings=[];
+    if (!await exists(root) || (await readdir(root)).length===0) {
+      const staging = `${root}.acquire-${randomUUID()}`;
+      try {
+        await git.clone(record.remoteUrl, staging, record.branch ?? undefined);
+        invariant(!await exists(root)||(await readdir(root)).length===0,'LOCAL_PATH_NOT_EMPTY','取得內容期間目錄新增了檔案，未覆寫；請確認資料夾後重試。',409);
+        await rename(staging, root);
+      } finally { await rm(staging, {recursive:true,force:true}); }
     } else {
-      await git.root(root);
-      const origin = (await git.remotes(root)).find(x => x.name === 'origin');
-      invariant(origin?.url === record.remoteUrl, 'BINDING_REMOTE_CHANGED', '本地目錄的來源不同，未覆寫；請確認綁定。', 409);
-      await git.fetch(root);
+      await checkRepositoryIdentity(root,record,git);
+      try { await git.fetch(root); }
+      catch(error) { acquisitionWarnings.push({code:'REMOTE_UNAVAILABLE',message:'已載入本地內容，但尚未取得遠端更新：'+error.message}); }
     }
+    await checkRepositoryIdentity(root,record,git);
     let state = await git.inspect(root);
+    const sourceChanges=state.changes.filter(c=>/^(spec\/|tests\/|workbench\.yaml$|bdd\.config\.ts$|playwright\.config\.ts$|package(?:-lock)?\.json$)/.test(c.path));
+    const checkoutBases={};
+    for(const change of sourceChanges) {
+      const old=state.head?await git.command(root,['show',`${state.head}:${change.path}`],{allowFailure:true,binaryOutput:true,maxBytes:4*1024*1024}):null;
+      checkoutBases[change.path]=old?.exitCode===0?digest(old.stdout):null;
+    }
+    status.validatedPath=root;status.checkoutBases=checkoutBases;store.setConnection(repositoryId,status);
     if (!state.head && !await exists(path.join(root, 'workbench.yaml'))) {
       const initialized = await initialize(root, { specRepositoryId: repositoryId, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
       // Initialization owns these exact new template files. Record the local baseline
@@ -113,9 +123,9 @@ export async function acquireRepository(context) {
     const catalog = await scan(catalogRoot), catalogModules = await git.modules(catalogRoot);
     status.catalog = { commit: incoming, features: catalog.features, projects: catalogModules.map(({ id, path, url, commit }) => ({ id, path, url, commit })) };
     status.versions = refs;
-    const warnings = [];
+    const warnings = [...acquisitionWarnings];
     if (incoming) {
-      try { draft = await importBoundRepository({ ...context, root: catalogRoot }, draft); }
+      try { draft = await importBoundRepository({ ...context, root: sourceChanges.length?root:catalogRoot, checkoutBases:sourceChanges.length?checkoutBases:{} }, draft); }
       catch (error) { if (!['IMPORT_CONFLICT', 'BINDING_CONFLICT', 'DRAFT_REVISION_CHANGED'].includes(error.code)) throw error; warnings.push(errorResult(error)); }
     }
     try { await initializeMissingProducts(root, git); }

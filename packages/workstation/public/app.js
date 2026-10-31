@@ -8,7 +8,7 @@ const stages = [
   ['IMPLEMENTATION', '開發', '讓產品符合已確認的測試', '修改產品後按儲存，再開始驗收。不需要先遠端同步。'],
   ['VERIFICATION', '驗收', '用實際執行證明結果', '系統將已儲存內容輸出成固定版本、執行並保存報告；失敗可修正後再驗收。']
 ];
-const labels = { 'repository.acquire':'載入規格與歷史', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.verify':'執行驗收' };
+const labels = { 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.verify':'執行驗收' };
 const state = { repositories:[], repositoryId:null, detail:null, view:'features', stage:'GHERKIN', featureKey:null, projectId:null, editor:null, composer:null, composerRequest:0, transient:false, product:null, busy:false, loading:false, epoch:0, sourceRequest:0, productRequest:0, reportRequest:0, formDirty:false, capabilities:null, scope:null };
 function el(tag,text,cls) { const n=document.createElement(tag); if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n; }
 function button(text, action, cls) { const n=el('button',text,cls);n.type='button';n.onclick=()=>safe(action);return n; }
@@ -136,6 +136,8 @@ async function bindRepository() {
   if(!await guard())return;
   const fields=[
     field('Spec Repo Git 網址','remoteUrl','',{placeholder:'https://github.com/owner/spec.git'}),
+    field('Spec Repo 本地目錄','localPath','',{required:false,placeholder:'例如 ~/projects/bdd-spec；留空使用工作台資料夾'}),
+    el('p','這是執行工作台的電腦上的規格庫資料夾，不是產品 bdd 的程式目錄。空目錄會取得內容；已有相同來源的 clone 會直接使用，保留原檔。','muted'),
     field('顯示名稱（選填，自動從網址帶入）','title','',{required:false,placeholder:'不填也可以'}),
     field('需求確認者','reviewer',localStorage.getItem('bdd-reviewer')??''),
     detailGroup('有產品原始碼嗎？可以現在加入，也可以稍後設定',[productFields(),el('p','例如 https://github.com/Xing00000/bdd.git；只需貼網址。','muted')],false,'advanced-ids'),
@@ -150,7 +152,7 @@ async function bindRepository() {
     const projects=formProducts(form),baseUrl=String(form.get('baseUrl')??'').trim(),remoteUrl=String(form.get('remoteUrl')).trim();
     const title=String(form.get('title')??'').trim()||guessName(remoteUrl);
     if(!title)throw new Error('無法從網址辨識名稱，請輸入顯示名稱。');
-    if(!registered)registered=await api('/spec-repositories','POST',{title,remoteUrl});
+    if(!registered)registered=await api('/spec-repositories','POST',{title,remoteUrl,localPath:String(form.get('localPath')??'').trim()});
     state.repositoryId=registered.id;state.detail={...registered,state:'NOT_CLONED'};
     const input={reviewer:form.get('reviewer'),projects};
     if(baseUrl&&projects.length)input.execution={projectId:projects[0].id,baseUrl,healthUrl:new URL('/health',baseUrl).href,command:[form.get('program'),...form.get('args').split('\n').map(x=>x.trim()).filter(Boolean)]};
@@ -165,7 +167,7 @@ async function bindRepository() {
   });
 }
 function renderSettings() {
-  const d=state.detail,c=d.spec?.config;$('#settings-reviewer').value=d.preferences?.reviewer??localStorage.getItem('bdd-reviewer')??'';$('#settings-remote').textContent=d.remoteUrl;$('#settings-products').replaceChildren();
+  const d=state.detail,c=d.spec?.config;$('#settings-reviewer').value=d.preferences?.reviewer??localStorage.getItem('bdd-reviewer')??'';$('#settings-remote').textContent=d.remoteUrl;$('#settings-local-path').value=d.localPath??d.connection?.localPath??'';$('#settings-products').replaceChildren();
   for(const p of d.modules??[])addSettingsProduct(p);if(!d.modules?.length)addSettingsProduct();
   updateServices();$('#settings-service').value=c?.execution.service?.projectId??'';$('#settings-url').value=c?.execution.environment?.WB_TARGET_BASE_URL??'';$('#settings-health').value=c?.execution.service?.healthUrl??'';$('#settings-program').value=c?.execution.service?.command[0]??'node';$('#settings-args').value=c?.execution.service?.command.slice(1).join('\n')??'';
   $('#operation-list').replaceChildren();for(const op of d.operations??[]){const item=el('details');item.append(el('summary',`${labels[op.request.operation]??'系統操作'} · ${op.status}`));if(op.error)item.append(el('p',op.error.message??'這次操作未完成，已保留內容。','muted'));const technical=detailGroup('檢視技術細節',[el('pre',JSON.stringify({id:op.id,result:op.result,error:op.error},null,2))]);item.append(technical);$('#operation-list').append(item);}
@@ -180,9 +182,15 @@ function addSettingsProduct(p={}) {
 }
 function updateServices() { const select=$('#settings-service'),previous=select.value;select.replaceChildren(new Option('暫不設定',''));all('#settings-products .product-repo-input').forEach(row=>{const id=row.querySelector('[name=productId]').value.trim()||guessName(row.querySelector('[name=productUrl]').value);if(id)select.append(new Option(id,id));});select.value=previous; }
 async function saveSettings() {
+  const localPath=$('#settings-local-path').value.trim(),expectedLocalPath=state.detail.localPath;
   const form=new FormData($('#settings-form')),input={reviewer:$('#settings-reviewer').value,projects:formProducts(form),expectedSettings:state.detail.settingsToken};
   if($('#settings-service').value){const baseUrl=$('#settings-url').value;input.execution={projectId:$('#settings-service').value,baseUrl,healthUrl:$('#settings-health').value||new URL('/health',baseUrl).href,command:[$('#settings-program').value,...$('#settings-args').value.split('\n').map(x=>x.trim()).filter(Boolean)]};}
-  await executeJob('repository.setup',input,{refreshAfter:false});state.formDirty=false;localStorage.setItem('bdd-reviewer',input.reviewer);await refresh();
+  await executeJob('repository.setup',input,{refreshAfter:false});localStorage.setItem('bdd-reviewer',input.reviewer);
+  if(localPath!==expectedLocalPath) {
+    try { await executeJob('repository.location',{localPath,expectedLocalPath},{refreshAfter:false}); }
+    catch(error) { state.detail=await api(`/spec-repositories/${state.repositoryId}`);state.formDirty=true;renderBinding();note('其他設定已儲存至 SQLite；本地目錄尚未就緒：'+error.message,true);return; }
+  }
+  state.formDirty=false;await refresh();
 }
 async function createFeature() {
   await navigate({view:'features',featureKey:'__new__',stage:'GHERKIN'});
@@ -384,9 +392,10 @@ window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.retu
 
 function renderBinding() {
   const box=$('#binding-status'), c=state.detail?.connection; box.replaceChildren();
-  if(!c){box.append(el('span','已綁定，尚未載入既有內容。'),button('載入需求與歷史',()=>executeJob('repository.acquire',{})));return;}
+  if(!c){box.append(el('span','已綁定，尚未載入既有內容。'),el('span',state.detail.localPath??'','mono muted'),button('載入需求與歷史',()=>executeJob('repository.acquire',{})));return;}
   const label={QUEUED:'綁定已保存，等待取得內容',LOADING:'正在載入需求、產品與歷史',READY:'本地內容已就緒',READY_WITH_WARNINGS:'內容已載入，部分項目需要注意',FAILED:'綁定已保存，內容取得失敗'}[c.status]??c.status;
-  box.append(el('strong',label),el('span',c.localPath??'','mono muted'));
+  box.append(el('strong',label),el('span',state.detail.localPath??c.localPath??'','mono muted'));
+  if(state.view!=='settings')box.append(button('設定本地目錄',()=>navigate({view:'settings'})));
   if(c.error)box.append(el('p',c.error.message,'error'));
   if(c.warnings?.length)box.append(detailGroup('查看載入提醒',c.warnings.map(w=>el('p',w.message))));
   if(c.status==='FAILED')box.append(button('重試載入',()=>executeJob('repository.acquire',{})));

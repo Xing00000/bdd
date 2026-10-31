@@ -10,7 +10,7 @@ export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 7, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 8, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
@@ -24,6 +24,7 @@ export function openStore(home) {
     if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}
   }
   if(version>0&&version<7) { const backup=path.join(home,'before-catalog-regression-v7.sqlite'); if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);} }
+  if(version>0&&version<8) { const backup=path.join(home,'before-local-directories-v8.sqlite'); if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);} }
   db.exec('BEGIN IMMEDIATE');
   try {
     const old = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='workspaces'").get();
@@ -85,8 +86,15 @@ export function openStore(home) {
       id TEXT NOT NULL, repository_id TEXT NOT NULL REFERENCES spec_repositories(id), operation_id TEXT NOT NULL,
       status TEXT NOT NULL, result_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(repository_id,id)
     );
-    PRAGMA user_version=7;
+    CREATE TABLE IF NOT EXISTS repository_location_history (
+      repository_id TEXT NOT NULL REFERENCES spec_repositories(id), operation_id TEXT NOT NULL,
+      previous_path TEXT NOT NULL, local_path TEXT NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY(repository_id,operation_id)
+    );
+    PRAGMA user_version=8;
   `);
+  if(!db.prepare('PRAGMA table_info(spec_repositories)').all().some(c=>c.name==='local_path')) db.exec('ALTER TABLE spec_repositories ADD COLUMN local_path TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_repository_local_path ON spec_repositories(local_path) WHERE local_path IS NOT NULL');
   installDraftSchema(db);
   db.exec(`DROP INDEX IF EXISTS one_writer_per_repository; CREATE UNIQUE INDEX one_writer_per_repository ON operations(repository_id) WHERE status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate};`);
   db.exec('COMMIT');
@@ -115,16 +123,27 @@ export function openStore(home) {
       return db.prepare('SELECT id,description,original_gherkin originalGherkin,generated_gherkin generatedGherkin,created_at createdAt FROM requirement_proposals WHERE repository_id=? AND editor_key=? ORDER BY created_at DESC,rowid DESC LIMIT 20').all(repositoryId,editorKey);
     },
     close() { db.close(); },
-    repositories() { return db.prepare('SELECT id,title,remote_url remoteUrl,branch,created_at createdAt FROM spec_repositories ORDER BY created_at').all(); },
+    repositories() { return db.prepare('SELECT id,title,remote_url remoteUrl,branch,local_path localPath,created_at createdAt FROM spec_repositories ORDER BY created_at').all(); },
     repository(repositoryId) {
-      const row = db.prepare('SELECT id,title,remote_url remoteUrl,branch,created_at createdAt FROM spec_repositories WHERE id=?').get(repositoryId);
+      const row = db.prepare('SELECT id,title,remote_url remoteUrl,branch,local_path localPath,created_at createdAt FROM spec_repositories WHERE id=?').get(repositoryId);
       invariant(row, 'REPOSITORY_NOT_FOUND', 'Spec repository not found', 404); return row;
     },
     register(input) {
       invariant(!db.prepare('SELECT id FROM spec_repositories WHERE id=?').get(input.id), 'REPOSITORY_EXISTS', 'Spec repository ID already exists', 409);
-      db.prepare('INSERT INTO spec_repositories(id,title,remote_url,branch,created_at) VALUES(?,?,?,?,?)')
-        .run(input.id, input.title, input.remoteUrl, input.branch ?? null, new Date().toISOString());
+      db.prepare('INSERT INTO spec_repositories(id,title,remote_url,branch,created_at,local_path) VALUES(?,?,?,?,?,?)')
+        .run(input.id, input.title, input.remoteUrl, input.branch ?? null, new Date().toISOString(), input.localPath ?? null);
       return this.repository(input.id);
+    },
+    setRepositoryLocation(repositoryId, expectedStoredPath, localPath, previousPath, operationId, validate) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        validate();
+        invariant(db.prepare('UPDATE spec_repositories SET local_path=? WHERE id=? AND local_path IS ?').run(localPath,repositoryId,expectedStoredPath??null).changes===1,'LOCAL_PATH_CHANGED','目錄設定已被更新，未覆寫。',409);
+        db.prepare('INSERT INTO repository_location_history VALUES(?,?,?,?,?)').run(repositoryId,operationId,previousPath,localPath,new Date().toISOString());
+        db.prepare('DELETE FROM repository_projection WHERE repository_id=?').run(repositoryId);
+        db.prepare('DELETE FROM repository_connections WHERE repository_id=?').run(repositoryId);
+        db.exec('COMMIT');
+      } catch(error) { db.exec('ROLLBACK'); throw error; }
     },
     updateOrigin(repositoryId, url) { db.prepare('UPDATE spec_repositories SET remote_url=? WHERE id=?').run(url, repositoryId); },
     check(repositoryId, featureKey) {

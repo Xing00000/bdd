@@ -88,3 +88,9 @@ Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<RE
 `regression.mjs` 固定完整版本組合及預期功能／案例矩陣，使用原生 Runner 逐功能執行，不以 UI 模擬 PASS。`regression-evidence.mjs` 在獨立 publisher 將摘要和子證據寫成一筆報告 commit R；所有報告記錄受測 S。回歸不呼叫 SQL 作者編輯或確認函式。人工確認和測試 outcome 是兩個不同維度，任何未審核內容都不會因回歸 PASSED 自動批准。
 
 schema 7 的 `repository_connections` 保存載入進度／目錄索引／錯誤；`regressions` 按 binding + batchId 隔離批次狀態。工作程序中斷會保留逐項結果並把整批標成 INCOMPLETE。遠端批次摘要必須能對應子 manifest，不能單靠一行 PASSED 復原為可信歷史。
+
+## 本地目錄綁定（Schema 8）
+
+`spec_repositories.local_path` 保存由使用者選定、正規化的 host-side checkout 位置；null 表示沿用原受管理路徑。`locations.mjs` 統一解析位置並驗證目錄、來源、路徑重疊及採用條件。所有 Worker、版本查詢、產品讀寫及輸出都從 registry 解出位置，不由 API 操作傳入任意 cwd。
+
+位置切換是獨立的 `repository.location` 作業，使用原位置的樂觀並行檢查與既有 Repo 作業鎖。紀錄新位置及歷史後再取得內容；不移除舊 checkout 或 SQL 作者修訂。作者儲存不需要驗證實體磁碟可用，唯有讀取未匯入檔案、Git 輸出或執行才檢查實際位置。採用 existing clone 時以 HEAD 的原始內容作為 dirty 文件的 base hash，避免把外部草稿誤認成可覆蓋的初始範本。

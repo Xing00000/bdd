@@ -1,3 +1,4 @@
+import { checkRepositoryIdentity, remoteIdentity } from './locations.mjs';
 /** Export a fixed SQLite revision only for repository preparation/synchronization/execution. */
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -24,7 +25,7 @@ export async function prepareProjection(context) {
       await git.clone(record.remoteUrl,root,record.branch??undefined);
       if(await exists(path.join(root,'workbench.yaml')))snapshot=await importBoundRepository(context,snapshot);
     }
-    await git.root(root);
+    await checkRepositoryIdentity(root,record,git);
     // A repository configuration error is an export/sync error, not a save error.
     const specFiles=snapshot.files.filter(f=>f.target==='spec');
     const preflight=async(target,files)=>{
@@ -43,7 +44,7 @@ export async function prepareProjection(context) {
     // Check all existing products before changing any source file.
     for(const p of snapshot.settings.projects??[]) {
       const module=modules.find(m=>m.id===p.id);
-      invariant(!module||module.url===p.url,'PROJECT_SOURCE_CHANGED','已保存設定，但既有產品連結來源不同，未覆寫。',409);
+      invariant(!module||remoteIdentity(module.url)===remoteIdentity(p.url),'PROJECT_SOURCE_CHANGED','已保存設定，但既有產品連結來源不同，未覆寫。',409);
       if(module?.actual)await preflight(path.join(root,module.path),snapshot.files.filter(f=>f.target===`project:${p.id}`));
     }
     for(const file of specFiles)if(await fileHash(root,file.path)!==file.sha256)await atomicWrite(await safePath(root,file.path),file.content);
@@ -122,10 +123,14 @@ export async function importBoundRepository(context,snapshot) {
 async function importBoundSnapshot(context,snapshot) {
   const {root,store,request,git}=context,repositoryId=request.repositoryId;
   const config=await configuration(root),incoming=await sourceFiles(root),seed=store.draftSeed(repositoryId);
+  for(const file of incoming) {
+    file.origin='checkout';
+    if(Object.hasOwn(context.checkoutBases??{},file.path))file.baseHash=context.checkoutBases[file.path];
+  }
   const settings={...snapshot.settings,projects:[...(snapshot.settings.projects??[])]};
   for(const module of await git.modules(root)) {
     const binding=settings.projects.find(p=>p.id===module.id);
-    invariant(!binding||binding.url===module.url,'BINDING_CONFLICT','綁定來源中的產品代號與本機設定衝突；SQLite 內容已保留。',409);
+    invariant(!binding||remoteIdentity(binding.url)===remoteIdentity(module.url),'BINDING_CONFLICT','綁定來源中的產品代號與本機設定衝突；SQLite 內容已保留。',409);
     if(!binding)settings.projects.push({id:module.id,url:module.url});
   }
   config.projects=settings.projects.map(p=>({id:p.id,path:`projects/${p.id}`}));
@@ -133,7 +138,7 @@ async function importBoundSnapshot(context,snapshot) {
   for(const file of incoming) {
     const current=snapshot.files.find(f=>key(f)===key(file));
     if(file.path==='workbench.yaml') {
-      if(current && current.sha256!==current.baseHash && !seed.some(f=>key(f)===key(current)&&digest(f.content)===current.sha256)) continue;
+      if(current && current.sha256!==current.baseHash && !seed.some(f=>f.origin!=='checkout'&&!f.baseHash&&key(f)===key(current)&&digest(f.content)===current.sha256)) continue;
       let content=JSON.stringify(config,null,2)+'\n';
       if(settings.execution)await inDraftView({files:[{target:'spec',path:'workbench.yaml',content}]},async view=>{
         await configureExecution(view,{...settings.execution,expectedHash:digest(content)});
@@ -142,7 +147,7 @@ async function importBoundSnapshot(context,snapshot) {
       else if(config.execution.service)settings.execution={projectId:config.execution.service.projectId,baseUrl:config.execution.environment?.WB_TARGET_BASE_URL,healthUrl:config.execution.service.healthUrl,command:config.execution.service.command};
       changes.push({...file,content});continue;
     }
-    invariant(!current||current.sha256===digest(file.content)||current.sha256===current.baseHash||seed.some(f=>key(f)===key(current)&&digest(f.content)===current.sha256),
+    invariant(!current||current.sha256===digest(file.content)||current.sha256===current.baseHash||seed.some(f=>f.origin!=='checkout'&&!f.baseHash&&key(f)===key(current)&&digest(f.content)===current.sha256),
       'IMPORT_CONFLICT',`遠端的 ${file.path} 與 SQLite 草稿不同，兩份內容都保留，未自動覆蓋。`,409);
     changes.push(file);
   }

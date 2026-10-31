@@ -1,3 +1,4 @@
+import { validateLocation, managedLocation, checkRepositoryIdentity, remoteIdentity } from './locations.mjs';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { revisionOptions, versionCatalog, readVersionFile } from './catalog.mjs';
@@ -46,7 +47,7 @@ export async function createWorkstation(configuration) {
     options,
     async requirement(repositoryId, requirementId, featureId) {
       store.repository(id(repositoryId));
-      const root=await repositoryPath(options.home,repositoryId);
+      const root=await repositoryPath(options.home,repositoryId,store);
       const snapshot=await ensureDraft({root,options,store,repositoryId});
       const result=await inDraftView(snapshot,view=>readComposer(view,requirementId,featureId));
       return {...result,proposals:store.requirementProposals(repositoryId,result.key)};
@@ -61,27 +62,29 @@ export async function createWorkstation(configuration) {
     },
     requirementProposals(repositoryId,key) {store.repository(id(repositoryId));return store.requirementProposals(repositoryId,key);},
     importRequirementDocument(repositoryId,input) {store.repository(id(repositoryId));return importRequirementDocument(input);},
-    list() { return store.repositories().map(r=>({...r,connection:store.connection(r.id)})); },
+    list() { return store.repositories().map(r=>({...r,localPath:r.localPath??managedLocation(options.home,r.id),connection:store.connection(r.id)})); },
     register(input) {
       const repositoryId = id(input.id ?? `SPEC-${randomUUID()}`);
       remoteUrl(input.remoteUrl, options);
-      invariant(!store.repositories().some(r => r.remoteUrl === input.remoteUrl), 'REPOSITORY_ALREADY_BOUND', 'This Git remote is already bound to the workbench', 409);
+      invariant(!store.repositories().some(r => remoteIdentity(r.remoteUrl) === remoteIdentity(input.remoteUrl)), 'REPOSITORY_ALREADY_BOUND', '這個規格庫已綁定，請從左側開啟；本地目錄可在設定修改。', 409);
       if (input.branch) branchName(input.branch);
       invariant(typeof input.title === 'string' && input.title.trim() && input.title.length <= 200, 'INVALID_TITLE', 'Repository title is required');
-      const record=store.register({ ...input, id: repositoryId });
+      const selected=validateLocation(options,repositoryId,input.localPath,store.repositories());
+      const record=store.register({ ...input, id: repositoryId,localPath:input.localPath?.trim()?selected:null });
       mkdirSync(path.join(options.home,'repositories',repositoryId),{recursive:true,mode:0o700});
+      mkdirSync(path.dirname(selected),{recursive:true,mode:0o700});
       if(options.autoAcquire) {
         const operationId=`OP-${randomUUID()}`;
-        store.setConnection(repositoryId,{status:'QUEUED',operationId,localPath:path.join(options.home,'repositories',repositoryId,'repo')});
+        store.setConnection(repositoryId,{status:'QUEUED',operationId,localPath:selected});
         store.enqueue({schemaVersion:1,operationId,repositoryId,operation:'repository.acquire',input:{}});launch(operationId);
       }
-      return {...record,connection:store.connection(repositoryId)};
+      return {...record,localPath:selected,connection:store.connection(repositoryId)};
     },
     async detail(repositoryId) {
-      const repository = store.repository(id(repositoryId)), context = { root: await repositoryPath(options.home, repositoryId), repository, repositoryId, options, store };
+      const repository = store.repository(id(repositoryId)), context = { root: await repositoryPath(options.home, repositoryId,store), repository, repositoryId, options, store };
       let connection=store.connection(repositoryId);
       if(connection?.operationId && ['QUEUED','LOADING'].includes(connection.status)) {const op=store.get(connection.operationId);if(op&&['FAILED','CANCELLED','INTERRUPTED'].includes(op.status)){connection={...connection,status:'FAILED',error:op.error};store.setConnection(repositoryId,connection);}}
-      const detail = store.draft(repositoryId) ? await draftDetail(context) : await repositoryDetail(options, repository);
+      const detail = (store.draft(repositoryId)||repository.localPath) ? await draftDetail(context) : await repositoryDetail(options, repository);
       const runs = store.runs(repositoryId), reports = store.reports(repositoryId);
       for (const run of runs) {
         const publication = await safePath(options.home, `executions/${run.id}/publication.json`);
@@ -95,31 +98,34 @@ export async function createWorkstation(configuration) {
         if (feature.verification.status === 'VERIFIED') feature.review.stage = 'VERIFIED';
         else if (feature.review.stage === 'IMPLEMENTATION' && runs.some(r => r.result.requirementId === feature.requirementId && r.result.featureId === feature.id && r.result.baseline === feature.review.hashes.tests && r.result.testedSpecCommit === detail.state?.head)) feature.review.stage = 'VERIFICATION';
       }
-      return { ...detail, connection:store.connection(repositoryId), regressions:store.regressions(repositoryId), settingsToken: identity(detail.preferences ?? store.preferences(repositoryId)), preferences: detail.preferences ?? store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
+      return { ...detail, localPath:context.root, connection:store.connection(repositoryId), regressions:store.regressions(repositoryId), settingsToken: identity(detail.preferences ?? store.preferences(repositoryId)), preferences: detail.preferences ?? store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
     },
     async versions(repositoryId, specRef) {
-      store.repository(id(repositoryId));const root=await repositoryPath(options.home,repositoryId),git=createGit(options);
+      store.repository(id(repositoryId));const root=await repositoryPath(options.home,repositoryId,store),git=createGit(options);
+      await checkRepositoryIdentity(root,store.repository(repositoryId),git);
       const versions=await revisionOptions(root,git);
       return {versions,...(specRef?await versionCatalog({root,options,repositoryId,git},specRef):{})};
     },
     async versionFile(repositoryId, specRef, relative) {
-      store.repository(id(repositoryId));return readVersionFile({root:await repositoryPath(options.home,repositoryId),options,repositoryId,git:createGit(options)},specRef,relative);
+      const record=store.repository(id(repositoryId)),root=await repositoryPath(options.home,repositoryId,store),git=createGit(options);
+      await checkRepositoryIdentity(root,record,git);return readVersionFile({root,options,repositoryId,git},specRef,relative);
     },
     artifactDirectory(repositoryId, runId, reportKey) {
       store.repository(id(repositoryId)); return artifactDirectory({ home: options.home, store, repositoryId, runId, reportKey });
     },
     async projectFiles(repositoryId, projectId) {
-      store.repository(id(repositoryId)); const root=await repositoryPath(options.home,repositoryId);
-      return store.draft(repositoryId) ? draftProjectFiles({root,options,store,repositoryId},projectId) : projectFiles(root,projectId,createGit(options));
+      store.repository(id(repositoryId)); const root=await repositoryPath(options.home,repositoryId,store);
+      return (store.draft(repositoryId)||store.repository(repositoryId).localPath) ? draftProjectFiles({root,options,store,repositoryId},projectId) : projectFiles(root,projectId,createGit(options));
     },
     async readProjectFile(repositoryId, projectId, relative) {
-      store.repository(id(repositoryId)); const root=await repositoryPath(options.home,repositoryId);
-      return store.draft(repositoryId) ? readDraftFile({root,options,store,repositoryId},relative,projectId,true) : readProjectFile(root,projectId,relative,createGit(options));
+      store.repository(id(repositoryId)); const root=await repositoryPath(options.home,repositoryId,store);
+      return (store.draft(repositoryId)||store.repository(repositoryId).localPath) ? readDraftFile({root,options,store,repositoryId},relative,projectId,true) : readProjectFile(root,projectId,relative,createGit(options));
     },
     async readFile(repositoryId, relative) { store.repository(id(repositoryId));
-      return store.draft(repositoryId) ? readDraftFile({root:await repositoryPath(options.home,repositoryId),options,store,repositoryId},relative) : readRepositoryFile(options.home,repositoryId,relative); },
+      return (store.draft(repositoryId)||store.repository(repositoryId).localPath) ? readDraftFile({root:await repositoryPath(options.home,repositoryId,store),options,store,repositoryId},relative) : readRepositoryFile(options.home,repositoryId,relative,store.repository(repositoryId)); },
     async inspect(repositoryId, projectId) {
-      store.repository(id(repositoryId)); const git = createGit(options), root = await repositoryPath(options.home, repositoryId);
+      store.repository(id(repositoryId)); const git = createGit(options), root = await repositoryPath(options.home, repositoryId,store);
+      await checkRepositoryIdentity(root,store.repository(repositoryId),git);
       if (!projectId) return { ...(await git.diff(root)), remotes: await git.remotes(root) };
       const module = (await git.modules(root)).find(x => x.id === id(projectId));
       invariant(module?.actual, 'PROJECT_NOT_INITIALIZED', 'Project must be initialized');

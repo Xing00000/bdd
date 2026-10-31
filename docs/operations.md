@@ -12,6 +12,16 @@ npm start
 
 預設 `http://127.0.0.1:4173/`，`WB_HOME` 預設 `~/.bdd-workstation`。需要測試執行時設定 `WB_ENABLE_TRUSTED_EXECUTION=1`。Git、SSH agent／known-host、系統瀏覽器相依套件仍由主機管理；不要把 Token 寫進 Git URL。
 
+## 規格庫的本地目錄
+
+綁定時可在 **Spec Repo 本地目錄** 填入絕對路徑或 `~/`，例如 `/Users/xing/Desktop/projects/bdd-spec`。這是執行工作台服務的電腦上的路徑，不是瀏覽器上傳目錄，也不是 `/Users/xing/Desktop/projects/bdd` 工作台原始碼目錄。留空沿用 `WB_HOME/repositories/<repositoryId>/repo`，不要求額外設定。
+
+空目錄或不存在的位置會取得 Spec Repo；已有相同來源的 clone 會直接使用，不重複下載另一份編輯目錄，不 reset、切分支或丟棄暫存內容。既有本地未提交規格會保留，不用遠端內容覆蓋。不同 Repo、非空的一般資料夾、捷徑、其他綁定／產品範圍或系統／工作台資料目錄會拒絕採用並指出原因。
+
+已綁定的規格庫可在 **設定 → Spec Repo 本地目錄 → 儲存設定** 更換位置。不搬移或刪除舊目錄、不清空 SQLite、不自動遠端同步。目錄有衝突時其他設定與草稿仍已存入 SQLite，可更正路徑再儲存。正在同步或回歸時會保留目前使用的位置，待該作業結束再更換。
+
+本地 clone 的遠端暫時離線仍可查看已取得內容，畫面會提示未取得遠端更新。Schema 8 新增 `spec_repositories.local_path` 與位置變更歷史；既有綁定預設路徑不變，升級前自動備份為 `before-local-directories-v8.sqlite`。另選的本地目錄不在 `WB_HOME` 備份內，請一併備份其未提交檔案。
+
 ## 儲存不是同步
 
 綁定資料先存 SQLite，系統立即建立專屬本地目錄並以獨立作業取得規格、產品與歷史。載入失敗不撤銷綁定；畫面會顯示「內容取得失敗」，而不是把未知內容當成空規格庫。日常儲存設定與草稿仍只寫 SQLite，不下載、執行或提交 Repo。

@@ -18,6 +18,7 @@ async function freePort(){const s=createServer();await new Promise(r=>s.listen(0
 test('all-UI: acquire an existing Spec Repo → browse history → choose spec/product refs → full failing/passing regressions → replay', {timeout:900000}, async t=>{
   const base=await mkdtemp(path.join(os.tmpdir(),'catalog-ui-')),home=path.join(base,'station'),source=path.join(base,'source'),product=path.join(base,'product');
   const artifacts=path.join(path.resolve(process.env.WB_E2E_ARTIFACTS??base),'catalog-regression');await mkdir(artifacts,{recursive:true});
+  const selectedLocalPath=path.join(base,'指定目錄 with spaces','bdd-spec');
   const git=createGit({allowLocal:true}), remote=path.join(base,'spec.git'),productRemote=path.join(base,'product.git');
   const servicePort=await freePort(),uiPort=await freePort(),origin=`http://127.0.0.1:${uiPort}`,target=`http://127.0.0.1:${servicePort}`;
   const browsers=process.env.PLAYWRIGHT_BROWSERS_PATH??path.join(base,'browsers');
@@ -61,9 +62,13 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   async function tab(name){await page.getByRole('button',{name,exact:true}).click();await ready();}
   await page.goto(origin);await page.locator('#bind-sidebar').click();const dialog=page.getByRole('dialog');
   await dialog.getByLabel('Spec Repo Git 網址',{exact:true}).fill(remote);await dialog.getByLabel('顯示名稱（選填，自動從網址帶入）',{exact:true}).fill('既有規格與回歸');await dialog.getByLabel('需求確認者',{exact:true}).fill('UI reviewer');
+  await dialog.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true}).fill(selectedLocalPath);
+  await page.screenshot({path:path.join(artifacts,'00-custom-directory.png'),fullPage:true});
   await dialog.getByRole('button',{name:'開始使用',exact:true}).click();await expect(dialog).not.toBeVisible();await ready();
   await expect(page.locator('#binding-status')).toContainText('本地內容已就緒');await expect(page.locator('#feature-select option')).toHaveCount(3);
-  const repositoryId=new URL(page.url()).searchParams.get('repo'),checkout=path.join(home,'repositories',repositoryId,'repo');
+  const repositoryId=new URL(page.url()).searchParams.get('repo'),checkout=selectedLocalPath;
+  await expect(page.locator('#binding-status')).toContainText(selectedLocalPath);
+  assert.equal(await exists(path.join(home,'repositories',repositoryId,'repo')),false,'The selected directory is the only editing checkout');
   assert.equal((await git.modules(checkout))[0].actual,p1,'Binding restores the recorded product version, not newer main');
   await tab('驗收紀錄');await expect(page.locator('#run-list')).toContainText('RUN-history');
   await tab('版本與回歸');await expect(page.locator('#catalog-count')).toContainText('3 個功能');
@@ -102,7 +107,24 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   assert.ok(rows.every(r=>r.results.every(x=>x.runId)));assert.ok(rows.every(r=>r.results.every(x=>x.verification!=='VERIFIED')),'Regression must not approve unreviewed requirements');
   assert.equal(db.prepare("SELECT content FROM authoring_files WHERE repository_id=? AND path='spec/REQ-101/readiness/readiness.feature'").get(repositoryId).content,savedDuringRun);
   const edited=db.prepare("SELECT content FROM authoring_files WHERE repository_id=? AND path='spec/REQ-101/review.json'").get(repositoryId);assert.deepEqual(JSON.parse(edited.content).features,{});db.close();
+  // Choose a second, already-existing clone through the same centralized settings.
+  // Its unrelated staged draft must survive; SQLite drafts/history stay with the binding.
+  const existingPath=path.join(base,'existing-spec');await git.clone(remote,existingPath);
+  await writeFile(path.join(existingPath,'existing-staged.txt'),'preserve existing draft');await git.command(existingPath,['add','--','existing-staged.txt']);
+  const existingBefore=await git.inspect(existingPath),oldBefore=await git.inspect(checkout);
+  await tab('設定');await expect(page.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true})).toHaveValue(selectedLocalPath);
+  await page.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true}).fill(existingPath);
+  await page.getByRole('button',{name:'儲存設定',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#notice').dataset.operation==='repository.location'&&document.querySelector('#notice').dataset.outcome==='SUCCEEDED');await ready();
+  await expect(page.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true})).toHaveValue(existingPath);
+  assert.deepEqual(await git.inspect(checkout),oldBefore);
+  assert.deepEqual(await git.inspect(existingPath),existingBefore);
+  await page.screenshot({path:path.join(artifacts,'05-local-directory-settings.png'),fullPage:true});
+  await tab('需求流程');await expect(page.getByRole('textbox',{name:'Gherkin',exact:true})).toHaveValue(savedDuringRun);
+  await tab('版本與回歸');
   await page.reload();await ready();await expect(page.locator('.regression-card')).toHaveCount(3);
+  await expect(page.locator('#binding-status')).toContainText(existingPath);
+
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(artifacts,'04-regression-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   assert.deepEqual(errors,[]);assert.ok(writes.filter(x=>x.path.endsWith('/operations')).every(x=>!x.input.operation.startsWith('git.')));
   await writeJson(path.join(artifacts,'regression-ui-receipt.json'),{repositoryId,firstBatch,secondBatch,specVersions:{s1,s2},productVersions:{p1,p2},outcomes:rows.map(r=>r.outcome),noCheckoutMutation:true,noImplicitApproval:true,uiWrites:writes.length});

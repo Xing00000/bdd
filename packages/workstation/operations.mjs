@@ -1,3 +1,5 @@
+import { repositoryPath, changeLocation } from './locations.mjs';
+export { repositoryPath } from './locations.mjs';
 import { acquireRepository, moreReportHistory } from './catalog.mjs';
 import { runRegression } from './regression.mjs';
 import { localAuthoring, editDraft } from './authoring.mjs';
@@ -18,7 +20,7 @@ import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { validateContract } from '../contracts/schemas.mjs';
 
 export const operationNames = Object.freeze([
-  ...flowNames, 'repository.acquire', 'repository.history.more', 'regression.start',
+  ...flowNames, 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
   'repository.clone', 'repository.initialize', 'repository.validate',
   'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
@@ -40,12 +42,12 @@ export function validateRequest(request) {
   validateContract('operation', request);
   return request;
 }
-export async function repositoryPath(home, repositoryId) { return safePath(home, `repositories/${id(repositoryId)}/repo`); }
 export async function executeOperation(options, store, request) {
   validateRequest(request);
   const { home, toolkitRoot, allowLocal = false, hosts = ['github.com'], enableExecution = false } = options;
-  const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id);
+  const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id, store);
   const git = createGit({ allowLocal, hosts }), input = request.input;
+  if(request.operation==='repository.location') return changeLocation({root,options,store,request,git});
   if(request.operation==='repository.acquire') return acquireRepository({root,options,store,request,git});
   if(request.operation==='repository.history.more') return moreReportHistory({root,options,store,request,git});
   if(request.operation==='regression.start') return runRegression({root,options,store,request,git});
@@ -183,7 +185,7 @@ export async function executeOperation(options, store, request) {
   }
 }
 export async function repositoryDetail(options, workspace) {
-  const root = await repositoryPath(options.home, workspace.id), git = createGit(options);
+  const root = await repositoryPath(options.home, workspace.id, workspace), git = createGit(options);
   if (!await exists(root)) return { ...workspace, state: 'NOT_CLONED', initialized: false };
   const state = await git.inspect(root), remotes = await git.remotes(root);
   if (!await exists(await safePath(root, 'workbench.yaml'))) return { ...workspace, state, remotes, initialized: false };
@@ -196,9 +198,9 @@ export async function repositoryDetail(options, workspace) {
   try { modules = await git.modules(root); } catch (error) { moduleError = { code: error.code, message: error.message }; }
   return { ...workspace, state, remotes, initialized: true, spec, specError, modules, moduleError, dependencies: { installed: await exists(path.join(root, 'node_modules/.bin/bddgen')), locked: await exists(path.join(root, 'package-lock.json')) } };
 }
-export async function readRepositoryFile(home, repositoryId, relative) {
+export async function readRepositoryFile(home, repositoryId, relative, record) {
   invariant(/^(spec|tests)\//.test(relative) || ['workbench.yaml', 'bdd.config.ts', 'playwright.config.ts', 'package.json', 'package-lock.json'].includes(relative), 'FILE_NOT_READABLE', 'Only source/configuration files are exposed', 403);
-  const root = await repositoryPath(home, repositoryId), file = await safePath(root, relative, { missing: false }), bytes = await readFile(file);
+  const root = await repositoryPath(home, repositoryId, record), file = await safePath(root, relative, { missing: false }), bytes = await readFile(file);
   invariant(bytes.length <= 2 * 1024 * 1024, 'FILE_TOO_LARGE', 'Editor limit is 2 MiB');
   return { path: relative, content: bytes.toString('utf8'), sha256: digest(bytes) };
 }

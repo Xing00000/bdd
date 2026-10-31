@@ -67,3 +67,7 @@ npm run test:workstation:e2e
 回歸測試涵蓋 SQLite 交易回滾、版本衝突、重啟恢復、離線保存、同步失敗後保存、舊 dirty checkout 匯入與原稿保留。瀏覽器驗收透過 UI 完成設定、儲存、內容確認、一次安裝授權、真實失敗、產品修正、成功驗收及同步；也包含移除測試遠端後儲存並重新載入。
 
 隔離 bare remotes 的推送測試不代表已驗證使用者的私有 GitHub 憑證。Gherkin 表單產生草稿，不會假裝已實作、已確認或已通過測試。
+
+## 指定 Spec Repo 本地位置
+
+綁定對話框與集中設定都有「Spec Repo 本地目錄」。可填 `~/projects/bdd-spec`，或使用已有相同來源的 clone；留空使用工作台預設位置。產品仍位於該 Spec Repo 的 `projects/`，不要把工作台 `bdd` 原始碼目錄填成 Spec 目錄。更換位置保留舊目錄、SQLite 草稿與歷史，不隱含搬檔或上傳。[目錄與備份規則](docs/operations.md#規格庫的本地目錄)

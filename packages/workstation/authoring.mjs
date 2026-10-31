@@ -1,3 +1,4 @@
+import { canonicalLocation } from './locations.mjs';
 /** Authoring does not invoke Git, create branches, download repositories or execute repository code. */
 import path from 'node:path';
 import { saveComposer, requirementDiagnostics } from './requirements.mjs';
@@ -42,14 +43,20 @@ export async function ensureDraft({ root, options, store, repositoryId }) {
   try {
     await initialize(temporary,{specRepositoryId:repositoryId,templateRoot:path.join(options.toolkitRoot,'templates/spec-repo/v1'),toolkitRoot:path.join(options.toolkitRoot,'packages')});
     const files = (await sourceFiles(temporary)).map(f => ({...f,baseHash:null}));
-    if (await exists(root)) for (const f of await sourceFiles(root)) {
+    const binding=store.repository(repositoryId);
+    let allowCheckout=!binding.localPath;
+    try { allowCheckout ||= store.connection(repositoryId)?.validatedPath===binding.localPath && canonicalLocation(root)===root; } catch { /* SQL bootstrap remains available when a disk is missing. */ }
+    if (allowCheckout && await exists(root)) for (const f of await sourceFiles(root)) {
+      const bases=store.connection(repositoryId)?.checkoutBases??{};
+      if(Object.hasOwn(bases,f.path))f.baseHash=bases[f.path];
+      f.origin='checkout';
       const index = files.findIndex(x=>x.path === f.path); if (index >= 0) files[index]=f; else files.push(f);
     }
     const prior = store.preferences(repositoryId), configFile=files.find(f=>f.path==='workbench.yaml');
     let config; try { config=JSON.parse(configFile.content); } catch { /* Preserve malformed original in history; setup may repair its structured form. */ }
     const projects = prior?.projects ?? prior?.sync?.projects?.map(p=>({id:p.id,url:p.url})) ?? [];
     // Recover binding URLs from the existing .gitmodules text without running Git.
-    if(await exists(path.join(root,'.gitmodules'))) {
+    if(allowCheckout && await exists(path.join(root,'.gitmodules'))) {
       const text=await readFile(await safePath(root,'.gitmodules'),'utf8');
       for(const section of text.split(/(?=^\[submodule )/m)) {
         const p=/^\s*path\s*=\s*projects\/([A-Za-z0-9_-]+)\s*$/m.exec(section)?.[1], url=/^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1];
@@ -87,6 +94,8 @@ export async function readDraftFile(context, relative, target='spec', project=fa
   const storageTarget=project?`project:${target}`:'spec';
   const item=snapshot.files.find(f=>f.target===storageTarget&&f.path===relative);
   if(item)return {path:relative,...(project?{projectId:target}:{}),content:item.content,sha256:item.sha256,revision:snapshot.revision,storage:'sqlite'};
+  const binding=context.store.repository(context.repositoryId);
+  if(binding.localPath) invariant(context.store.connection(context.repositoryId)?.validatedPath===binding.localPath && canonicalLocation(context.root)===context.root,'LOCAL_CONTENT_UNAVAILABLE','本地內容尚未安全載入；SQLite 已儲存內容不受影響。',409);
   const base=!project?context.root:await safePath(context.root,`projects/${target}`,{missing:false});
   const file=await safePath(base,relative,{missing:false});
   invariant((await lstat(file)).size<=2*1024*1024,'FILE_TOO_LARGE','編輯器只接受 2 MiB 內的文字檔。');
@@ -98,7 +107,8 @@ export async function draftProjectFiles(context, projectId) {
   invariant(snapshot.settings.projects?.some(p=>p.id===projectId),'UNKNOWN_PROJECT','未知產品。',404);
   const files=new Set(snapshot.files.filter(f=>f.target===`project:${projectId}`).map(f=>f.path));
   const root=path.join(context.root,'projects',projectId);
-  if(await exists(root)) {
+  const binding=context.store.repository(context.repositoryId);
+  if((!binding.localPath || context.store.connection(context.repositoryId)?.validatedPath===binding.localPath) && await exists(root)) {
     const visit=async directory=>{
       for(const item of await readdir(directory,{withFileTypes:true})) {
         const relative=path.relative(root,path.join(directory,item.name)).split(path.sep).join('/');
