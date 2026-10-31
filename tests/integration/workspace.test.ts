@@ -11,13 +11,13 @@ function init(repo:string){git(repo,'init','-b','main');git(repo,'config','user.
 test('source pin resolves the project Git root and requires edited source bytes in that commit',async t=>{
   const root=await mkdtemp(join(tmpdir(),'wb-source-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const repo=join(root,'target');await mkdir(repo);init(repo);await writeFile(join(repo,'app.ts'),'export const app=1;\n');git(repo,'add','.');git(repo,'commit','-m','target');const commit=git(repo,'rev-parse','HEAD');
-  const adapter=createWorkspaceAdapter(join(root,'data'));
-  assert.equal((await adapter.resolveSource(commit,repo)).resolvedCommit,commit);
-  await assert.rejects(adapter.resolveSource('missing-ref',repo),{code:'INVALID_SOURCE_REF'});
+  const adapter=createWorkspaceAdapter(root,join(root,'data'));
+  assert.equal((await adapter.resolveSource(commit,repo,'project-1')).resolvedCommit,commit);
+  await assert.rejects(adapter.resolveSource('missing-ref',repo,'project-1'),{code:'INVALID_SOURCE_REF'});
   await adapter.saveSource(repo,'export const edited=1;\n','app.ts');
-  await assert.rejects(adapter.resolveSource(commit,repo),{code:'SOURCE_NOT_IN_COMMIT'},'a commit cannot pin edited project files it does not contain');
+  await assert.rejects(adapter.resolveSource(commit,repo,'project-1'),{code:'SOURCE_NOT_IN_COMMIT'},'a commit cannot pin edited project files it does not contain');
   git(repo,'add','app.ts');git(repo,'commit','-m','edited source');const editedCommit=git(repo,'rev-parse','HEAD');
-  const pinned=await adapter.resolveSource(editedCommit,repo);assert.equal(pinned.repositoryRef,await realpath(repo));assert.match(pinned.sourceTree!,/^[a-f0-9]{40,64}$/);
+  const pinned=await adapter.resolveSource(editedCommit,repo,'project-1');assert.equal(pinned.repositoryRef,await realpath(repo));assert.match(pinned.sourceTree!,/^[a-f0-9]{40,64}$/);
   await adapter.saveSource(repo,'export const edited=2;\n','app.ts');
-  await assert.rejects(adapter.resolveSource(editedCommit,repo),{code:'SOURCE_NOT_IN_COMMIT'});
+  await assert.rejects(adapter.resolveSource(editedCommit,repo,'project-1'),{code:'SOURCE_NOT_IN_COMMIT'});
 });

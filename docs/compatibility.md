@@ -9,7 +9,7 @@
 | `deploy/` 的 33 個已提交檔案 | 都是 DDL／DML、runner、seed、manifest、Dockerfile 或說明的生成副本；可完整重建 | `src/adapters/sqlite/`、`tools/deploy.mjs`、`tools/migrate.mjs`、`tools/dbgate.Dockerfile` |
 | `spec/REQ-WB-001/workbench/workbench.feature.spec.ts` | 已有受追蹤的生成器，不應靠舊生成結果讓 discovery 看似正常 | 原 `.feature`、`.steps.ts`、testing helpers、`tools/bdd/generate.mjs` |
 | 早期 `docs/architecture/git-workstation-v1.md` 與 `git-workstation-v2.md` | 一份說未實作、一份說已完成，不能繼續作為平行的目前操作說明 | 本次整合的 README、架構、操作與相容文件；歷史仍在 Git |
-| 未使用的 imports、局部變數、phase map 與內部 adapter 參數 | 已確認無資料流用途；移除並更新呼叫點 | 原有有副作用的驗證呼叫仍保留 |
+| 未使用的 imports、局部變數與 phase map | 已確認無資料流用途；移除不影響介面契約的死碼 | 原有有副作用的驗證呼叫仍保留 |
 
 沒有刪使用者資料、沒有刪任何人工編寫的 Gherkin／SD、沒有修改其批准 hash，也沒有減少測試案例或用刪測試來掩蓋失敗。
 
@@ -28,6 +28,8 @@
 | SQLite migrations／seed | 既有資料庫安全升級及部署 | 不能只因版本較舊就刪 migration history |
 | `src/fixtures/`、相關工具與測試 | 實際 UI／資料庫整合測試 | 對應新測試與可重建環境已完整取代 |
 | `skills/playwright-bdd/SKILL.md` | Agent seed／generation 的固定內容 | 替代版本與批准流程完成 |
+
+**介面參數不因某一 adapter 沒使用就能刪除。** `resolveSource` 的 Project ID 由多專案呼叫者與替代 adapter 使用；相容參數保留並以 `_` 標記本機實作刻意不讀取的值。原有多專案回歸測試不放寬。
 
 **沒有靜態 import 不等於沒用到。** Worker、reporter、MCP stdio、CLI 及瀏覽器入口可能由檔案路徑、設定或子程序啟動。本次盤點包含這些入口、npm scripts、測試與動態路徑。
 

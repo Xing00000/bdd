@@ -4,7 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 const exec = promisify(execFile);
-export function createWorkspaceAdapter(dataRoot: string) {
+// Retain the public adapter signature; alternate adapters use the root/context slots.
+export function createWorkspaceAdapter(_root: string, dataRoot: string) {
   const within = (base: string, file: string) => { const rel=path.relative(base,file); return rel==='' || (!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel)); };
   async function existing(ref: string) {
     if(!path.isAbsolute(ref))throw Object.assign(new Error('Project directory must be an absolute local path'),{statusCode:400,code:'INVALID_WORKSPACE'});
@@ -28,7 +29,8 @@ export function createWorkspaceAdapter(dataRoot: string) {
     existing, stageDirectory,
     async readSource(workspaceRef:string,relative='source.ts') { const file=await sourceFile(workspaceRef,relative); let rawText='';try{rawText=await readFile(file,'utf8');}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}return {path:relative,rawText,sha256:createHash('sha256').update(rawText).digest('hex')}; },
     async saveSource(workspaceRef:string,rawText:string,relative='source.ts') { await writeFile(await sourceFile(workspaceRef,relative),rawText,{mode:0o600});return this.readSource(workspaceRef,relative); },
-    async resolveSource(sourceRef:string,workspaceRef:string) {
+    // Project identity is part of the port contract even though this local implementation resolves by path.
+    async resolveSource(sourceRef:string,workspaceRef:string,_projectId?:string) {
       if(!sourceRef||sourceRef.startsWith('-')||sourceRef.includes('\0'))throw Object.assign(new Error('sourceRef must identify an existing commit'),{statusCode:422,code:'INVALID_SOURCE_REF'});
       let resolvedCommit:string|undefined,repositoryRef=await existing(workspaceRef);
       try {const top=(await exec('git',['-C',repositoryRef,'rev-parse','--show-toplevel'],{maxBuffer:1024*1024})).stdout.trim();if(await realpath(top)!==await realpath(repositoryRef))throw new Error('Workspace is not a Git repository root');resolvedCommit=(await exec('git',['-C',repositoryRef,'rev-parse','--verify',`${sourceRef}^{commit}`],{maxBuffer:1024*1024})).stdout.trim();}catch{}
