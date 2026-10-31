@@ -221,7 +221,7 @@ async function inspectGit(epoch=state.epoch) {
   $('#git-head').textContent=`${state.gitTarget?`Project ${state.gitTarget}`:'Spec Repo'} · ${value.state.branch??'Detached HEAD'} · ${value.state.head??'尚無 Commit'}`;
   $('#changed-files').replaceChildren();for(const c of value.state.changes){const l=element('label',undefined,'check file-row'),i=document.createElement('input');i.type='checkbox';i.value=c.path;i.setAttribute('aria-label',`選取檔案 ${c.path}`);l.append(i,element('code',`${c.code} ${c.path}`));$('#changed-files').append(l);}
   if(!value.state.changes.length)$('#changed-files').append(element('p','沒有待提交的變更。','muted'));
-  $('#commit-selected').disabled=!value.state.branch||!value.state.changes.length;$('#create-branch').disabled=!value.state.clean;
+  $('#commit-selected').disabled=!value.state.branch||!value.state.changes.length;$('#create-branch').disabled=!value.state.clean||!$('#branch-name').value.trim();
   $('#diff').textContent=`STAGED\n${value.staged||'（無）'}\n\nUNSTAGED\n${value.unstaged||'（無）'}`;
   const previous=$('#push-remote').value;$('#push-remote').replaceChildren(...value.remotes.map(x=>new Option(x.name,x.name)));if(value.remotes.some(r=>r.name===previous))$('#push-remote').value=previous;
   $('#push-branch').value=value.state.branch??'';$('#push').disabled=!value.state.head||!value.state.branch;updatePushDestination();
@@ -287,7 +287,8 @@ on('#check-tests','click',()=>operation('spec.tests.check',{requirementId:featur
 on('#implementation-git','click',()=>navigate({view:'git',gitTarget:''}));on('#open-feature-runs','click',()=>navigate({view:'reports'}));
 on('#add-project','click',addProject);on('#project-git','click',()=>navigate({view:'git',gitTarget:state.projectId}));on('#open-project-file','click',async()=>{const path=$('#project-file-select').value;if(await guardDraft())await openProjectFile(path);});on('#save-project-file','click',saveProduct);
 on('#git-target','change',()=>navigate({gitTarget:$('#git-target').value}));on('#inspect-git','click',()=>inspectGit());
-on('#create-branch','click',()=>operation('git.branch',{name:$('#branch-name').value,create:true},{target:gitTarget(),expected:state.git.state}));
+on('#branch-name','input',()=>{$('#create-branch').disabled=!state.git?.state.clean||!$('#branch-name').value.trim();});
+on('#create-branch','click',()=>{const name=$('#branch-name').value.trim();if(!name)throw new Error('請先填寫開發分支名稱。');return operation('git.branch',{name,create:true},{target:gitTarget(),expected:state.git.state});});
 on('#select-all','click',()=>{const inputs=all('#changed-files input');const selected=inputs.every(n=>n.checked);inputs.forEach(n=>n.checked=!selected);});on('#commit-selected','click',commitSelected);on('#push','click',pushSelected);
 on('#push-remote','change',updatePushDestination);on('#push-branch','input',updatePushDestination);on('#fetch-remote','click',()=>operation('git.fetch',{remote:$('#push-remote').value},{target:gitTarget(),expected:state.git.state}));on('#add-remote','click',()=>editRemote());
 on('#reindex-reports','click',async()=>{const result=await operation('reports.reindex');note(`已索引 ${result.indexed.length} 份報告；${result.errors.length} 項錯誤。`,result.errors.length>0);});
