@@ -107,7 +107,7 @@ export async function captureExecutionFiles(context,snapshot) {
 }
 
 /** A newly bound, existing Spec repo is imported without replacing authored local drafts. */
-async function importBoundRepository(context,snapshot) {
+export async function importBoundRepository(context,snapshot) {
   const {root,store,request,git}=context,repositoryId=request.repositoryId;
   const config=await configuration(root),incoming=await sourceFiles(root),seed=store.draftSeed(repositoryId);
   const settings={...snapshot.settings,projects:[...(snapshot.settings.projects??[])]};
@@ -121,6 +121,7 @@ async function importBoundRepository(context,snapshot) {
   for(const file of incoming) {
     const current=snapshot.files.find(f=>key(f)===key(file));
     if(file.path==='workbench.yaml') {
+      if(current && current.sha256!==current.baseHash && !seed.some(f=>key(f)===key(current)&&digest(f.content)===current.sha256)) continue;
       let content=JSON.stringify(config,null,2)+'\n';
       if(settings.execution)await inDraftView({files:[{target:'spec',path:'workbench.yaml',content}]},async view=>{
         await configureExecution(view,{...settings.execution,expectedHash:digest(content)});
@@ -129,11 +130,11 @@ async function importBoundRepository(context,snapshot) {
       else if(config.execution.service)settings.execution={projectId:config.execution.service.projectId,baseUrl:config.execution.environment?.WB_TARGET_BASE_URL,healthUrl:config.execution.service.healthUrl,command:config.execution.service.command};
       changes.push({...file,content});continue;
     }
-    invariant(!current||current.sha256===digest(file.content)||seed.some(f=>key(f)===key(current)&&digest(f.content)===current.sha256),
+    invariant(!current||current.sha256===digest(file.content)||current.sha256===current.baseHash||seed.some(f=>key(f)===key(current)&&digest(f.content)===current.sha256),
       'IMPORT_CONFLICT',`遠端的 ${file.path} 與 SQLite 草稿不同，兩份內容都保留，未自動覆蓋。`,409);
     changes.push(file);
   }
-  store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,settings,files:changes,operationId:`import-${request.operationId}`,request:{head:await git.resolve(root)},result:{imported:true}});
+  store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,settings,files:changes,operationId:`import-${request.operationId}`,request:{head:await git.resolve(root),sourceRevision:snapshot.revision},result:{imported:true}});
   return store.draft(repositoryId);
 }
 export async function captureSynchronized(context,snapshot) {

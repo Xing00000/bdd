@@ -208,7 +208,7 @@ test('workspace schema upgrades preserve existing operation and registry records
 test('imported Git reports are served through the real API on a new workstation', async t => {
   const f = await base(t), published = await publishedFixture(f, { screenshot: true });
   const target = path.join(f.home, 'repositories/WS-one/repo'); await mkdir(path.dirname(target), { recursive: true }); await git.clone(f.repo, target);
-  const app = await createStandaloneServer({ home: f.home, toolkitRoot, allowLocal: true }); t.after(() => app.close()); app.service.register({ id: 'WS-one', title: 'New machine', remoteUrl: f.repo });
+  const app = await createStandaloneServer({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true }); t.after(() => app.close()); app.service.register({ id: 'WS-one', title: 'New machine', remoteUrl: f.repo });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${app.server.address().port}`;
   app.service.enqueue({ schemaVersion: 1, operationId: 'OP-index', repositoryId: 'WS-one', operation: 'reports.reindex', input: {} });
   const result = await app.service.wait('OP-index'); assert.equal(result.status, 'SUCCEEDED', JSON.stringify(result.error));

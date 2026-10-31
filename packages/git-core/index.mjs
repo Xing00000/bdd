@@ -224,6 +224,10 @@ export function createGit(policy = {}) {
       await mkdir(path.dirname(directory), { recursive: true });
       // This local source is resolved from the registry, never from an untrusted URL.
       await command(undefined, ['-c', 'protocol.file.allow=always', 'clone', '--no-local', '--no-hardlinks', '--no-checkout', '--no-recurse-submodules', '--', source, directory]);
+      // A fetched remote branch may not be reachable from source's local branches.
+      // Fetch the already-validated immutable SHA, rather than assuming clone advertised it.
+      invariant(await resolve(source, commit) === commit, 'CANDIDATE_VERSION_MISSING', 'Selected source version is not available');
+      await command(directory, ['-c', 'protocol.file.allow=always', 'fetch', '--no-tags', '--no-recurse-submodules', '--', source, commit]);
       await command(directory, ['checkout', '--detach', commit]);
       invariant(await resolve(directory) === commit, 'HEAD_MISMATCH', 'Candidate clone mismatch');
       return inspect(directory);

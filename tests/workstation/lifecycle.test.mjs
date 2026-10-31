@@ -39,8 +39,8 @@ test('CLI and thin Git scripts share persisted state and structured output', asy
     assert.equal(result.exitCode, 0, result.stderr + result.stdout); return JSON.parse(result.stdout);
   }
   await cli('scripts/workstation.mjs', ['register'], { id: 'WS-cli', title: 'CLI fixture', remoteUrl: f.remote });
-  const clone = await cli('scripts/git/clone.mjs', [], { repositoryId: 'WS-cli', operationId: 'OP-cli-clone' }); assert.equal(clone.status, 'SUCCEEDED');
-  const init = await cli('scripts/spec/init.mjs', [], { repositoryId: 'WS-cli', operationId: 'OP-cli-init', expected: { head: null } }); assert.equal(init.status, 'SUCCEEDED');
+  const inspected = await cli('scripts/git/inspect.mjs', [], { repositoryId: 'WS-cli' }); assert.equal(inspected.state.head, null);
+  // Registration now creates the local checkout and initializes the empty specification.
   const detail = await cli('scripts/workstation.mjs', ['detail'], { repositoryId: 'WS-cli' }); assert.equal(detail.initialized, true);
 });
 test('a real failed preparation command seals NOT_RUN evidence without reporting product success', async t => {
@@ -54,7 +54,7 @@ test('a real failed preparation command seals NOT_RUN evidence without reporting
 });
 test('cancellation holds the workspace lock until the real worker and child stop', async t => {
   const f = await executionFixture(t, [process.execPath, '-e', "require('node:fs').writeFileSync('install.pid',String(process.pid)); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"]);
-  const service = await createWorkstation({ home: f.home, toolkitRoot, allowLocal: true, enableExecution: true }); t.after(() => service.close());
+  const service = await createWorkstation({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true, enableExecution: true }); t.after(() => service.close());
   service.register({ id: 'WS-one', title: 'Cancellation fixture', remoteUrl: f.remote });
   const request = (operationId, operation, input, expected) => ({ schemaVersion: 1, operationId, repositoryId: 'WS-one', operation, input, ...(expected ? { expected } : {}) });
   service.enqueue(request('OP-prepare', 'run.prepare', { requirementId: 'REQ-001', featureId: 'login' }, await git.inspect(f.repo)));

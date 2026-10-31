@@ -16,6 +16,7 @@ export async function reindexReports({ root, home, repositoryId, git, store, ref
     refs = ['HEAD', ...branches];
   }
   invariant(Array.isArray(refs) && refs.length > 0 && refs.length <= 200 && refs.every(x => typeof x === 'string'), 'INVALID_REPORT_REFS', 'Select 1–200 already-fetched refs');
+  const seenManifests = new Set();
   const commits = new Set(), indexed = [], errors = [];
   for (const ref of refs) {
     let commit;
@@ -29,6 +30,8 @@ export async function reindexReports({ root, home, repositoryId, git, store, ref
       return { path: line.slice(split + 1), mode, type, sha, size: Number(size) };
     });
     for (const candidate of entries.filter(x => /^reports\/[^/]+\/[^/]+\/[^/]+\/manifest\.json$/.test(x.path))) {
+      const identityKey=candidate.path+'@'+candidate.sha;
+      if(seenManifests.has(identityKey))continue;seenManifests.add(identityKey);
       let staging;
       try {
         const [, requirementId, featureId, runId] = candidate.path.split('/');
@@ -55,6 +58,26 @@ export async function reindexReports({ root, home, repositoryId, git, store, ref
         store.indexReport(repositoryId, entry); indexed.push({ key, ref, reportCommit: commit });
       } catch (error) { errors.push({ ref, path: candidate.path, ...errorResult(error) }); }
       finally { if (staging) await rm(staging, { recursive: true, force: true }); }
+    }
+    for(const file of entries.filter(e=>/^reports\/_runs\/BATCH-[A-Za-z0-9_-]+\/summary\.json$/.test(e.path))) {
+      try {
+        invariant(file.type==='blob'&&file.mode==='100644'&&file.size<=4*1024*1024,'INVALID_BATCH_SUMMARY','回歸摘要格式無效。');
+        const summary=JSON.parse((await git.blob(root,file.sha)).toString('utf8'));
+        invariant(summary.mode==='REGRESSION'&&summary.schemaVersion===1&&summary.status==='COMPLETED'&&file.path===`reports/_runs/${id(summary.batchId)}/summary.json`,'INVALID_BATCH_SUMMARY','回歸摘要識別不符。');
+        invariant(Array.isArray(summary.features)&&Array.isArray(summary.results)&&Array.isArray(summary.children)&&summary.features.length===summary.results.length&&summary.features.length>0,'INVALID_BATCH_SUMMARY','回歸清單不完整。');
+        invariant(new Set(summary.results.map(r=>r.key)).size===summary.results.length&&summary.features.every(f=>summary.results.some(r=>r.key===f.key)),'INVALID_BATCH_SUMMARY','回歸案例清單重複或不符。');
+        invariant((await git.command(root,['merge-base','--is-ancestor',summary.testedSpecCommit,commit],{allowFailure:true})).exitCode===0,'REPORT_SOURCE_UNREACHABLE','回歸來源版本不在報告歷史內。');
+        const recorded=store.reports(repositoryId);
+        for(const result of summary.results.filter(r=>['PASSED','FAILED'].includes(r.outcome))) {
+          const child=summary.children.find(x=>x.key===result.key&&x.runId===result.runId),report=recorded.find(x=>x.key===`${result.key}/${result.runId}`);
+          invariant(child&&report&&!report.invalidReason&&child.manifestHash===report.manifestHash&&report.manifest.testedSpecCommit===summary.testedSpecCommit,'BATCH_EVIDENCE_MISMATCH','部分回歸證據缺少或不符。');
+          if(result.outcome==='PASSED')invariant(report.manifest.testOutcome==='PASSED'&&report.manifest.coverageComplete===true,'BATCH_EVIDENCE_MISMATCH','不能把部分案例當成整個功能通過。');
+        }
+        const passed=summary.results.filter(r=>r.outcome==='PASSED').length;
+        invariant(summary.outcome!=='PASSED'||passed===summary.features.length,'INVALID_BATCH_SUMMARY','回歸總結與逐項結果不同。');
+        const local=store.regression(repositoryId,summary.batchId);
+        if(!local||local.imported)store.recordRegression(repositoryId,{...summary,repositoryId,operationId:`import-${summary.batchId}`,imported:true,publication:{status:'PUBLISHED',reportCommit:commit,branch:ref}});
+      }catch(error){errors.push({ref,path:file.path,...errorResult(error)});}
     }
   }
   return { indexed, errors, fetched: false, workingTreeChanged: false };

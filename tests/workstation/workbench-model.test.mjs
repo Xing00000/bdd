@@ -17,7 +17,7 @@ async function setupProduct(root, product, projectId='product') {
   const config=await readJson(path.join(root,'workbench.yaml'));config.projects=[{id:projectId,path:`projects/${projectId}`}];await writeJson(path.join(root,'workbench.yaml'),config);await commitAll(root);
 }
 test('primary entry serves the workstation, not old requirements or global projects',async t=>{
-  const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>app.close());await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${app.server.address().port}`;
+  const f=await fixture(t),app=await createStandaloneServer({autoAcquire:false,home:f.home,toolkitRoot,allowLocal:true});t.after(()=>app.close());await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${app.server.address().port}`;
   const page=await fetch(origin);assert.equal(page.status,200);const html=await page.text();assert.match(html,/工作台 → Spec Repo → Project/);assert.ok(!html.includes('既有工作台'));assert.ok(!html.includes('舊版工作區'));
   for(const route of ['/requirements','/projects','/repository-api/v1/workspaces'])assert.equal((await fetch(origin+route)).status,404,route);
   const model=await (await fetch(origin+'/repository-api/v1/workbench')).json();assert.equal(model.model,'workbench/spec-repositories/projects');
@@ -35,12 +35,12 @@ test('schema 2 bindings become SpecRepositories without losing IDs, receipts or 
   db.prepare('INSERT INTO operations(id,workspace_id,request_hash,request_json,status,created_at) VALUES(?,?,?,?,?,?)').run('OP-old','WS-old',identity(original),JSON.stringify(original),'FAILED','2025-01-01');
   db.prepare('INSERT INTO runs VALUES(?,?,?,?,?)').run('RUN-old','WS-old','SEALED',JSON.stringify({runId:'RUN-old',testedSpecCommit:'a'.repeat(40)}),'2025-01-01');db.close();
   const store=openStore(f.home);t.after(()=>store.close());assert.equal(store.repository('WS-old').title,'Existing Spec');assert.equal(store.get('OP-old').request.repositoryId,'WS-old');assert.equal(store.get('OP-old').request.operation,'repository.validate');assert.equal(store.get('OP-old').request.workspaceId,undefined);assert.equal(store.runs('WS-old')[0].id,'RUN-old');assert.ok(await exists(path.join(f.home,'before-repository-model-v3.sqlite')));
-  const verify=new DatabaseSync(path.join(f.home,'metadata.sqlite'));assert.equal(verify.prepare('PRAGMA user_version').get().user_version,6);assert.equal(verify.prepare("SELECT name FROM sqlite_schema WHERE name='workspaces'").get(),undefined);assert.deepEqual(JSON.parse(verify.prepare('SELECT original_request_json FROM operations').get().original_request_json),original);verify.close();
+  const verify=new DatabaseSync(path.join(f.home,'metadata.sqlite'));assert.equal(verify.prepare('PRAGMA user_version').get().user_version,7);assert.equal(verify.prepare("SELECT name FROM sqlite_schema WHERE name='workspaces'").get(),undefined);assert.deepEqual(JSON.parse(verify.prepare('SELECT original_request_json FROM operations').get().original_request_json),original);verify.close();
 });
 test('old checkout directories move once and conflicting copies are never merged or overwritten',async t=>{
   const f=await fixture(t);await mkdir(path.join(f.home,'workspaces','WS-old','repo'),{recursive:true});await writeFile(path.join(f.home,'workspaces','WS-old','repo','draft.txt'),'unsaved');
-  const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});await service.close();assert.equal(await readFile(path.join(f.home,'repositories','WS-old','repo','draft.txt'),'utf8'),'unsaved');assert.equal(await exists(path.join(f.home,'workspaces')),false);
-  await mkdir(path.join(f.home,'workspaces'));await assert.rejects(createWorkstation({home:f.home,toolkitRoot,allowLocal:true}),{code:'CHECKOUT_MIGRATION_CONFLICT'});
+  const service=await createWorkstation({autoAcquire:false,home:f.home,toolkitRoot,allowLocal:true});await service.close();assert.equal(await readFile(path.join(f.home,'repositories','WS-old','repo','draft.txt'),'utf8'),'unsaved');assert.equal(await exists(path.join(f.home,'workspaces')),false);
+  await mkdir(path.join(f.home,'workspaces'));await assert.rejects(createWorkstation({autoAcquire:false,home:f.home,toolkitRoot,allowLocal:true}),{code:'CHECKOUT_MIGRATION_CONFLICT'});
 });
 test('same Project ID under different Spec repos never shares file writes',async t=>{
   const f=await fixture(t),a=path.join(f.base,'alpha'),b=path.join(f.base,'beta');await setupProduct(a,path.join(f.base,'source-a'));await setupProduct(b,path.join(f.base,'source-b'));
@@ -74,7 +74,7 @@ test('remote branch resolution pins an actual commit and invalid names cannot be
   await assert.rejects(git.remoteHead(f.repo,'missing'));
 });
 test('browser cannot confirm tests without a check receipt for the current input digest',async t=>{
-  const f=await fixture(t);const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>service.close());service.register({id:'SPEC-test',title:'Spec',remoteUrl:f.remote});const root=path.join(f.home,'repositories','SPEC-test','repo');await specRepository(root);
+  const f=await fixture(t);const service=await createWorkstation({autoAcquire:false,home:f.home,toolkitRoot,allowLocal:true});t.after(()=>service.close());service.register({id:'SPEC-test',title:'Spec',remoteUrl:f.remote});const root=path.join(f.home,'repositories','SPEC-test','repo');await specRepository(root);
   const {reviewState,confirm}=await import('../../packages/spec-toolkit/index.mjs');for(const stage of ['gherkin','sd']){const r=await reviewState(root,'REQ-001','login');await confirm(root,{requirementId:'REQ-001',featureId:'login',stage,expectedDigest:r.hashes[stage],confirmedBy:'Unit policy fixture'});}
   const review=await reviewState(root,'REQ-001','login');service.enqueue({schemaVersion:1,operationId:'OP-check-required',repositoryId:'SPEC-test',operation:'spec.review.confirm',expected:await git.inspect(root),input:{requirementId:'REQ-001',featureId:'login',stage:'tests',expectedDigest:review.hashes.tests,confirmedBy:'Reviewer'}});
   const result=await service.wait('OP-check-required');assert.equal(result.status,'FAILED');assert.equal(result.error.code,'TEST_CHECK_REQUIRED');assert.equal((await reviewState(root,'REQ-001','login')).confirmed.tests,false);

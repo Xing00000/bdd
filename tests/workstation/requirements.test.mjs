@@ -90,7 +90,7 @@ test('new-editor generation history follows the feature when first saved',async 
   await save(f);assert.equal(f.service.requirementProposals('SPEC-editor','REQ-001/feature')[0].originalGherkin,manual);assert.equal(f.service.requirementProposals('SPEC-editor','new-editor').length,0);
 });
 test('import and generation endpoints enforce repository ownership and protected HTTP writes',async t=>{
-  const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>app.close());app.service.register({id:'SPEC-http',title:'HTTP',remoteUrl:path.join(f.base,'missing.git')});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${app.server.address().port}/repository-api/v1/spec-repositories/`;
+  const f=await fixture(t),app=await createStandaloneServer({autoAcquire:false,home:f.home,toolkitRoot,allowLocal:true});t.after(()=>app.close());app.service.register({id:'SPEC-http',title:'HTTP',remoteUrl:path.join(f.base,'missing.git')});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${app.server.address().port}/repository-api/v1/spec-repositories/`;
   const body={description,previousGherkin:'',editorKey:'new-http'};
   const unprotected=await fetch(base+'SPEC-http/requirement/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.equal(unprotected.status,403);
   const headers={'content-type':'application/json','x-workbench-request':'1'};

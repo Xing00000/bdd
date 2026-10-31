@@ -1,3 +1,6 @@
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { revisionOptions, versionCatalog, readVersionFile } from './catalog.mjs';
 import { draftDetail, readDraftFile, draftProjectFiles, ensureDraft, inDraftView } from './authoring.mjs';
 import { readComposer, generateRequirement, requirementText } from './requirements.mjs';
 import { importRequirementDocument } from './requirement-documents.mjs';
@@ -16,7 +19,7 @@ import { validateRequest, repositoryDetail, repositoryPath, readRepositoryFile }
 
 export async function createWorkstation(configuration) {
   await mkdir(configuration.home, { recursive: true, mode: 0o700 });
-  const options = { allowLocal: false, hosts: ['github.com'], enableExecution: false, ...configuration, home: await realpath(configuration.home) };
+  const options = { autoAcquire: true, allowLocal: false, hosts: ['github.com'], enableExecution: false, ...configuration, home: await realpath(configuration.home) };
   const store = openStore(options.home);
   try { await migrateCheckoutDirectory(options.home); } catch (error) { store.close(); throw error; }
   const children = new Map(); let closing = false;
@@ -58,22 +61,32 @@ export async function createWorkstation(configuration) {
     },
     requirementProposals(repositoryId,key) {store.repository(id(repositoryId));return store.requirementProposals(repositoryId,key);},
     importRequirementDocument(repositoryId,input) {store.repository(id(repositoryId));return importRequirementDocument(input);},
-    list() { return store.repositories(); },
+    list() { return store.repositories().map(r=>({...r,connection:store.connection(r.id)})); },
     register(input) {
       const repositoryId = id(input.id ?? `SPEC-${randomUUID()}`);
       remoteUrl(input.remoteUrl, options);
       invariant(!store.repositories().some(r => r.remoteUrl === input.remoteUrl), 'REPOSITORY_ALREADY_BOUND', 'This Git remote is already bound to the workbench', 409);
       if (input.branch) branchName(input.branch);
       invariant(typeof input.title === 'string' && input.title.trim() && input.title.length <= 200, 'INVALID_TITLE', 'Repository title is required');
-      return store.register({ ...input, id: repositoryId });
+      const record=store.register({ ...input, id: repositoryId });
+      mkdirSync(path.join(options.home,'repositories',repositoryId),{recursive:true,mode:0o700});
+      if(options.autoAcquire) {
+        const operationId=`OP-${randomUUID()}`;
+        store.setConnection(repositoryId,{status:'QUEUED',operationId,localPath:path.join(options.home,'repositories',repositoryId,'repo')});
+        store.enqueue({schemaVersion:1,operationId,repositoryId,operation:'repository.acquire',input:{}});launch(operationId);
+      }
+      return {...record,connection:store.connection(repositoryId)};
     },
     async detail(repositoryId) {
       const repository = store.repository(id(repositoryId)), context = { root: await repositoryPath(options.home, repositoryId), repository, repositoryId, options, store };
+      let connection=store.connection(repositoryId);
+      if(connection?.operationId && ['QUEUED','LOADING'].includes(connection.status)) {const op=store.get(connection.operationId);if(op&&['FAILED','CANCELLED','INTERRUPTED'].includes(op.status)){connection={...connection,status:'FAILED',error:op.error};store.setConnection(repositoryId,connection);}}
       const detail = store.draft(repositoryId) ? await draftDetail(context) : await repositoryDetail(options, repository);
       const runs = store.runs(repositoryId), reports = store.reports(repositoryId);
       for (const run of runs) {
         const publication = await safePath(options.home, `executions/${run.id}/publication.json`);
         if (await exists(publication)) run.publication = await readJson(publication);
+        else if(run.result.batchId)run.publication=store.regression(repositoryId,run.result.batchId)?.publication;
       }
       const evidence = [...reports, ...runs.filter(x => x.state === 'SEALED').map(x => ({ manifest: x.result }))];
       for (const feature of detail.spec?.features ?? []) {
@@ -82,7 +95,15 @@ export async function createWorkstation(configuration) {
         if (feature.verification.status === 'VERIFIED') feature.review.stage = 'VERIFIED';
         else if (feature.review.stage === 'IMPLEMENTATION' && runs.some(r => r.result.requirementId === feature.requirementId && r.result.featureId === feature.id && r.result.baseline === feature.review.hashes.tests && r.result.testedSpecCommit === detail.state?.head)) feature.review.stage = 'VERIFICATION';
       }
-      return { ...detail, settingsToken: identity(detail.preferences ?? store.preferences(repositoryId)), preferences: detail.preferences ?? store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
+      return { ...detail, connection:store.connection(repositoryId), regressions:store.regressions(repositoryId), settingsToken: identity(detail.preferences ?? store.preferences(repositoryId)), preferences: detail.preferences ?? store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
+    },
+    async versions(repositoryId, specRef) {
+      store.repository(id(repositoryId));const root=await repositoryPath(options.home,repositoryId),git=createGit(options);
+      const versions=await revisionOptions(root,git);
+      return {versions,...(specRef?await versionCatalog({root,options,repositoryId,git},specRef):{})};
+    },
+    async versionFile(repositoryId, specRef, relative) {
+      store.repository(id(repositoryId));return readVersionFile({root:await repositoryPath(options.home,repositoryId),options,repositoryId,git:createGit(options)},specRef,relative);
     },
     artifactDirectory(repositoryId, runId, reportKey) {
       store.repository(id(repositoryId)); return artifactDirectory({ home: options.home, store, repositoryId, runId, reportKey });

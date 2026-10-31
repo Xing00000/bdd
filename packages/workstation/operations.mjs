@@ -1,3 +1,5 @@
+import { acquireRepository, moreReportHistory } from './catalog.mjs';
+import { runRegression } from './regression.mjs';
 import { localAuthoring, editDraft } from './authoring.mjs';
 import { prepareProjection, captureExecutionFiles, captureSynchronized } from './projection.mjs';
 import { flowNames, advanceWorkflow, synchronizeRepository } from './flows.mjs';
@@ -16,7 +18,7 @@ import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { validateContract } from '../contracts/schemas.mjs';
 
 export const operationNames = Object.freeze([
-  ...flowNames,
+  ...flowNames, 'repository.acquire', 'repository.history.more', 'regression.start',
   'repository.clone', 'repository.initialize', 'repository.validate',
   'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
@@ -44,6 +46,9 @@ export async function executeOperation(options, store, request) {
   const { home, toolkitRoot, allowLocal = false, hosts = ['github.com'], enableExecution = false } = options;
   const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id);
   const git = createGit({ allowLocal, hosts }), input = request.input;
+  if(request.operation==='repository.acquire') return acquireRepository({root,options,store,request,git});
+  if(request.operation==='repository.history.more') return moreReportHistory({root,options,store,request,git});
+  if(request.operation==='regression.start') return runRegression({root,options,store,request,git});
   if (flowNames.includes(request.operation)) {
     const context = { root, options, store, request, git };
     if (localAuthoring(request)) {

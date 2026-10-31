@@ -10,7 +10,7 @@ export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 6, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 7, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
@@ -23,6 +23,7 @@ export function openStore(home) {
     const backup=path.join(home,'before-requirement-editor-v6.sqlite');
     if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}
   }
+  if(version>0&&version<7) { const backup=path.join(home,'before-catalog-regression-v7.sqlite'); if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);} }
   db.exec('BEGIN IMMEDIATE');
   try {
     const old = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='workspaces'").get();
@@ -77,7 +78,14 @@ export function openStore(home) {
       generated_gherkin TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS proposals_by_editor ON requirement_proposals(repository_id,editor_key,created_at);
-    PRAGMA user_version=6;
+    CREATE TABLE IF NOT EXISTS repository_connections (
+      repository_id TEXT PRIMARY KEY REFERENCES spec_repositories(id), receipt_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS regressions (
+      id TEXT NOT NULL, repository_id TEXT NOT NULL REFERENCES spec_repositories(id), operation_id TEXT NOT NULL,
+      status TEXT NOT NULL, result_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(repository_id,id)
+    );
+    PRAGMA user_version=7;
   `);
   installDraftSchema(db);
   db.exec(`DROP INDEX IF EXISTS one_writer_per_repository; CREATE UNIQUE INDEX one_writer_per_repository ON operations(repository_id) WHERE status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate};`);
@@ -87,6 +95,17 @@ export function openStore(home) {
   const get = operationId => decode(db.prepare('SELECT * FROM operations WHERE id=?').get(operationId));
   return {
     ...draftMethods(db),
+    connection(repositoryId) { const row=db.prepare('SELECT receipt_json FROM repository_connections WHERE repository_id=?').get(repositoryId);return row?JSON.parse(row.receipt_json):null; },
+    setConnection(repositoryId, value) { db.prepare('INSERT INTO repository_connections VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET receipt_json=excluded.receipt_json').run(repositoryId,JSON.stringify(value)); },
+    regression(repositoryId, batchId) { const row=db.prepare('SELECT result_json FROM regressions WHERE id=? AND repository_id=?').get(batchId,repositoryId);return row?JSON.parse(row.result_json):null; },
+    regressions(repositoryId) { return db.prepare('SELECT result_json FROM regressions WHERE repository_id=? ORDER BY updated_at DESC LIMIT 100').all(repositoryId).map(x=>JSON.parse(x.result_json)); },
+    recordRegression(repositoryId, value) { db.prepare('INSERT INTO regressions VALUES(?,?,?,?,?,?) ON CONFLICT(repository_id,id) DO UPDATE SET operation_id=excluded.operation_id,status=excluded.status,result_json=excluded.result_json,updated_at=excluded.updated_at').run(value.batchId,repositoryId,value.operationId,value.status,JSON.stringify(value),new Date().toISOString()); },
+    interruptRegression(operationId, status) {
+      for(const row of db.prepare("SELECT repository_id,result_json FROM regressions WHERE operation_id=? AND status='RUNNING'").all(operationId)) {
+        const value=JSON.parse(row.result_json);value.status=status;value.outcome='INCOMPLETE';value.finishedAt=new Date().toISOString();
+        value.results=value.results.map(x=>['RUNNING','PENDING'].includes(x.outcome)?{...x,outcome:status}:x);this.recordRegression(row.repository_id,value);
+      }
+    },
     saveRequirementProposal(repositoryId, { editorKey, description, previousGherkin, gherkin }) {
       const proposalId=randomUUID(), createdAt=new Date().toISOString();
       db.prepare('INSERT INTO requirement_proposals VALUES(?,?,?,?,?,?,?)').run(proposalId,repositoryId,editorKey,description,previousGherkin,gherkin,createdAt);
@@ -149,6 +168,7 @@ export function openStore(home) {
       if (get(operationId)?.status === 'CANCELLING' && status !== 'CANCELLED') return get(operationId);
       db.prepare("UPDATE operations SET status=?,result_json=?,error_json=?,finished_at=? WHERE id=? AND status IN ('QUEUED','RUNNING','CANCELLING')")
         .run(status, result === undefined ? null : JSON.stringify(result), error ? JSON.stringify(errorResult(error)) : null, new Date().toISOString(), operationId);
+      if (['INTERRUPTED','CANCELLED','FAILED'].includes(status)) this.interruptRegression(operationId,status);
       return get(operationId);
     },
     recover() {

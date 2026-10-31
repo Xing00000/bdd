@@ -11,7 +11,7 @@
   → SQLite 交易（設定、原文、修訂、確認、收據）
   → 已儲存；不呼叫 Git、不需要遠端連線
 
-明確同步／測試／取得產品
+綁定取得既有內容／明確同步／測試／取得產品
   → 固定 SQLite 修訂
   → 受管理 Repo 輸出（衝突檢查）
   → 固定產品版本／隔離驗收／遠端同步
@@ -32,7 +32,7 @@
 | `packages/spec-toolkit/` | 規格契約、內容摘要、可攜工具、驗收候選與證據 |
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
 
-## SQLite schema 6
+## SQLite schema 7
 
 `spec_repositories` 保存綁定網址，不因連線失敗取消登錄。以下是需要備份的正式資料，不是可丟棄快取：
 
@@ -77,3 +77,14 @@ Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<RE
 正式 Gherkin 保存為 `spec/<REQ>/<feature>/<feature>.feature`；原始描述保存為同層 `requirement-source.json`，兩者在 `authoring_files` 與 `authoring_history` 的同一 SQL 交易更新，只有同步／驗收時才輸出到 Repo。後續確認的摘要綁定下方 `.feature` 而不是可隨時補充的來源素材。
 
 生成採用明確標示的本機格式整理，不冒充語意推理。輸出使用 Feature／Scenario／Given／When／Then 及穩定案例標記；瀏覽器回歸另用固定版本的官方 Cucumber parser 驗證輸出。人工編輯的儲存路徑保留原始 bytes，不會因診斷失敗拒絕草稿保存。執行前的完整 BDD discovery 是另一個關卡。
+
+
+## 綁定與歷史版本目錄
+
+`catalog.mjs` 負責耐久化的 QUEUED → LOADING → READY／READY_WITH_WARNINGS／FAILED 狀態。register 建立本地父目錄並排入取得作業，不將遠端錯誤誤報為登錄失敗。既有遠端內容安全匯入作者模型；已有草稿衝突時保留兩份，歷史版本仍可唯讀查看。取得已宣告的 submodule 不切換已初始化產品的分支或捨棄工作區內容。
+
+不可變 Spec 快照位於 `catalogs/<binding>/<SHA>/repo`；產品版本查詢使用 `version-products/<binding>/<remote-hash>/repo`，不借用編輯中的產品目錄。Git clone 後明確取得所選 SHA，以支援只存在於 remote-tracking refs 的版本。
+
+`regression.mjs` 固定完整版本組合及預期功能／案例矩陣，使用原生 Runner 逐功能執行，不以 UI 模擬 PASS。`regression-evidence.mjs` 在獨立 publisher 將摘要和子證據寫成一筆報告 commit R；所有報告記錄受測 S。回歸不呼叫 SQL 作者編輯或確認函式。人工確認和測試 outcome 是兩個不同維度，任何未審核內容都不會因回歸 PASSED 自動批准。
+
+schema 7 的 `repository_connections` 保存載入進度／目錄索引／錯誤；`regressions` 按 binding + batchId 隔離批次狀態。工作程序中斷會保留逐項結果並把整批標成 INCOMPLETE。遠端批次摘要必須能對應子 manifest，不能單靠一行 PASSED 復原為可信歷史。

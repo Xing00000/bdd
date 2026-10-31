@@ -12,7 +12,7 @@ async function setup(t,{product=true,prepare=true}={}) {
   const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const source=path.join(f.base,'product'),productRemote=path.join(f.base,'product.git');
   if(product){await repository(source,{'message.txt':'before'});await git.command(undefined,['init','--bare','--initial-branch','main',productRemote]);await git.command(source,['remote','add','origin',productRemote]);await git.push(source,{},await git.inspect(source));}
-  const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>service.close());
+  const service=await createWorkstation({autoAcquire:false,home:f.home,toolkitRoot,allowLocal:true});t.after(()=>service.close());
   service.register({id:'SPEC-flow',title:'Flow',remoteUrl:f.remote});
   let sequence=0;
   async function job(operation,input={}, {fail=false}={}) {

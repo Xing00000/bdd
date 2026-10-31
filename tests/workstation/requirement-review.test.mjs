@@ -8,7 +8,7 @@ import { fixture, toolkitRoot } from './helpers.mjs';
 
 async function authoring(t) {
   const f = await fixture(t);
-  const service = await createWorkstation({ home: f.home, toolkitRoot, allowLocal: true });
+  const service = await createWorkstation({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true });
   t.after(() => service.close());
   const repositoryId = 'SPEC-review';
   service.register({ id: repositoryId, title: 'Human review', remoteUrl: path.join(f.base, 'offline.git') });

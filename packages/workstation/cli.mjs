@@ -42,7 +42,7 @@ export async function main(command = process.argv[2]) {
     }
     const input = await stdinJson(); service = await createWorkstation(options);
     let result;
-    if (command === 'register') result = service.register(input);
+    if (command === 'register') { result=service.register(input); if(result.connection?.operationId){await service.wait(result.connection.operationId,1800000);result.connection=(await service.detail(result.id)).connection;} }
     else if (command === 'list') result = service.list();
     else if (command === 'detail') result = await service.detail(input.repositoryId);
     else if (command === 'inspect') result = await service.inspect(input.repositoryId, input.projectId);

@@ -8,7 +8,7 @@ const stages = [
   ['IMPLEMENTATION', '開發', '讓產品符合已確認的測試', '修改產品後按儲存，再開始驗收。不需要先遠端同步。'],
   ['VERIFICATION', '驗收', '用實際執行證明結果', '系統將已儲存內容輸出成固定版本、執行並保存報告；失敗可修正後再驗收。']
 ];
-const labels = { 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.verify':'執行驗收' };
+const labels = { 'repository.acquire':'載入規格與歷史', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.verify':'執行驗收' };
 const state = { repositories:[], repositoryId:null, detail:null, view:'features', stage:'GHERKIN', featureKey:null, projectId:null, editor:null, composer:null, composerRequest:0, transient:false, product:null, busy:false, loading:false, epoch:0, sourceRequest:0, productRequest:0, reportRequest:0, formDirty:false, capabilities:null, scope:null };
 function el(tag,text,cls) { const n=document.createElement(tag); if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n; }
 function button(text, action, cls) { const n=el('button',text,cls);n.type='button';n.onclick=()=>safe(action);return n; }
@@ -64,7 +64,7 @@ async function refresh() {
     const detail=state.repositoryId?await api(`/spec-repositories/${state.repositoryId}`):null;if(epoch!==state.epoch)return;state.detail=detail;
     renderNavigation();$('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
     if(!detail){renderHome();return;}
-    if(!['features','projects','reports','settings'].includes(state.view))state.view='features';if(!detail.preferences?.configured)state.view='settings';
+    if(!['features','projects','reports','settings','versions'].includes(state.view))state.view='features';if(!detail.preferences?.configured && state.view!=='versions')state.view='settings';
     $('#repository-title').textContent=detail.title;$('#repository-origin').textContent=detail.remoteUrl;$('#breadcrumbs').textContent=`工作台 / ${detail.title}`;
     $('#repository-error').hidden=!detail.specError&&!detail.moduleError;$('#repository-error').textContent=[detail.specError,detail.moduleError].filter(Boolean).map(x=>x.message).join('\n');
     const allReportsSynced=(detail.runs??[]).filter(r=>r.state==='SEALED').every(r=>r.publication?.status==='PUBLISHED');
@@ -75,6 +75,8 @@ async function refresh() {
     if(state.view==='projects')await renderProjects(epoch);
     if(state.view==='reports')renderReports();
     if(state.view==='settings')renderSettings();
+    renderBinding();
+    if(state.view==='versions')await renderVersions(epoch);
   } finally {if(epoch===state.epoch){state.loading=false;block();}}
 }
 async function executeJob(name,input, {refreshAfter=true}={}) {
@@ -103,7 +105,7 @@ async function flow(name,input) {
     const names=Object.entries(plan.packages).map(([name,v])=>`${name} ${v}`).join('\n');
     const approved=await ask('安裝必要套件並繼續',`這個步驟需要以下套件與瀏覽器：\n${names}\n瀏覽器：${plan.browsers.join('、')}\n\n不執行套件安裝腳本，不要求系統管理員權限。完成後自動接續，不必另外按安裝或測試檢查。`,'安裝並繼續');
     if(!approved){note('已取消安裝；已儲存內容保留，流程尚未推進。');return null;}
-    return executeJob(name,{...input,installConsent:plan.digest});
+    return executeJob(name,{...input,installConsent:plan.digest,...(plan.batchId?{batchId:plan.batchId}:{})});
   }
 }
 function renderNavigation() {
@@ -144,7 +146,7 @@ async function bindRepository() {
     ],false,'advanced-ids')
   ];
   let registered;
-  dialog('連接規格庫','Repo 網址只用來綁定同步位置。設定與需求直接儲存在 SQLite，不必先連上遠端；產品與測試環境可以稍後補充。',fields,'開始使用',async form=>{
+  dialog('連接規格庫','綁定後自動建立本地目錄，載入既有需求、設計、產品與歷史。設定與草稿存 SQLite；連線失敗仍會保留，日後可重試。',fields,'開始使用',async form=>{
     const projects=formProducts(form),baseUrl=String(form.get('baseUrl')??'').trim(),remoteUrl=String(form.get('remoteUrl')).trim();
     const title=String(form.get('title')??'').trim()||guessName(remoteUrl);
     if(!title)throw new Error('無法從網址辨識名稱，請輸入顯示名稱。');
@@ -152,7 +154,14 @@ async function bindRepository() {
     state.repositoryId=registered.id;state.detail={...registered,state:'NOT_CLONED'};
     const input={reviewer:form.get('reviewer'),projects};
     if(baseUrl&&projects.length)input.execution={projectId:projects[0].id,baseUrl,healthUrl:new URL('/health',baseUrl).href,command:[form.get('program'),...form.get('args').split('\n').map(x=>x.trim()).filter(Boolean)]};
-    await executeJob('repository.setup',input,{refreshAfter:false});localStorage.setItem('bdd-reviewer',input.reviewer);await navigate({repositoryId:registered.id,view:'features',stage:'GHERKIN',featureKey:null,projectId:null},{protect:false});
+    await executeJob('repository.setup',input,{refreshAfter:false});
+    if(registered.connection?.operationId) {
+      $('#dialog-description').textContent='設定已儲存；正在取得規格、產品及歷史。';
+      let loaded=await api(`/operations/${registered.connection.operationId}`);
+      while(['QUEUED','RUNNING','CANCELLING'].includes(loaded.status)){await new Promise(r=>setTimeout(r,350));loaded=await api(`/operations/${registered.connection.operationId}`);}
+      if(loaded.status!=='SUCCEEDED')note('綁定與設定已保存，內容尚未取得：'+(loaded.error?.message??'請重試'),true);
+    }
+    localStorage.setItem('bdd-reviewer',input.reviewer);await navigate({repositoryId:registered.id,view:'features',stage:'GHERKIN',featureKey:null,projectId:null},{protect:false});
   });
 }
 function renderSettings() {
@@ -335,7 +344,7 @@ async function openProduct(relative) {
 async function saveProduct() { const e=state.product;if(!e)return;const content=$('#project-editor').value;const result=await executeJob('repository.save',{kind:'project',projectId:e.projectId,path:e.path,content,expectedHash:e.sha256},{refreshAfter:false});state.product={...e,content,sha256:result.sha256};await refresh(); }
 function artifact(runId,file,key){return `${API}/spec-repositories/${state.repositoryId}/runs/${runId}/artifact?path=${encodeURIComponent(file)}${key?'&reportKey='+encodeURIComponent(key):''}`;}
 function renderReports() {
-  $('#run-list').replaceChildren();const d=state.detail;
+  $('#run-list').replaceChildren();if(Number.isInteger(state.detail.connection?.nextHistoryOffset))$('#run-list').append(button('載入更早的測試紀錄',()=>executeJob('repository.history.more',{})));const d=state.detail;
   if(!d.runs?.length&&!d.reports?.length)$('#run-list').append(el('p','尚無驗收紀錄。完成內容確認後，按「開始驗收」即可。','empty-state'));
   for(const r of d.runs??[]){const m=r.result,c=el('article',undefined,'card');c.dataset.runId=r.id;c.append(el('h3',`${m.requirementId} / ${m.featureId}`),badge(m.testOutcome??r.state),document.createTextNode(' '),badge(m.verification??'NOT_VERIFIED'),el('p',r.publication?.status==='PUBLISHED'?'已同步至遠端':'報告已儲存於本機，遠端同步時一併分享。','muted'));
     if(r.state==='SEALED')c.append(button('檢視證據',()=>showReport(r.id)));else c.append(el('p','這次執行未完成，原紀錄已保留。回到功能再次驗收可建立新結果。','muted'));$('#run-list').append(c);}
@@ -371,3 +380,106 @@ on('#settings-add-product','click',()=>{addSettingsProduct();state.formDirty=tru
 on('#scope-form','input',()=>{state.formDirty=true;block();});on('#scope-form','submit',async()=>{const f=feature();await executeJob('repository.save',{kind:'scope',requirementId:f.requirementId,featureId:f.id,expectedHash:state.scope.sha256,projectIds:all('[name=feature-project]:checked').map(x=>x.value),profiles:all('[name=profile]:checked').map(x=>x.value),caseIds:$('#case-ids').value.split('\n').map(x=>x.trim()).filter(Boolean)},{refreshAfter:false});state.formDirty=false;await refresh();});
 window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});window.addEventListener('popstate',()=>safe(async()=>{if(!await guard()){history.forward();return;}await route();}));
 await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'主機尚未啟用執行';await route();});
+
+
+function renderBinding() {
+  const box=$('#binding-status'), c=state.detail?.connection; box.replaceChildren();
+  if(!c){box.append(el('span','已綁定，尚未載入既有內容。'),button('載入需求與歷史',()=>executeJob('repository.acquire',{})));return;}
+  const label={QUEUED:'綁定已保存，等待取得內容',LOADING:'正在載入需求、產品與歷史',READY:'本地內容已就緒',READY_WITH_WARNINGS:'內容已載入，部分項目需要注意',FAILED:'綁定已保存，內容取得失敗'}[c.status]??c.status;
+  box.append(el('strong',label),el('span',c.localPath??'','mono muted'));
+  if(c.error)box.append(el('p',c.error.message,'error'));
+  if(c.warnings?.length)box.append(detailGroup('查看載入提醒',c.warnings.map(w=>el('p',w.message))));
+  if(c.status==='FAILED')box.append(button('重試載入',()=>executeJob('repository.acquire',{})));
+}
+let catalogRequest=0, currentCatalog=null;
+const regressionJobs=new Map();
+async function renderVersions(epoch) {
+  const repositoryId=state.repositoryId;
+  $('#start-regression').disabled=true;$('#catalog-source').hidden=true;
+  const choices=await api(`/spec-repositories/${repositoryId}/versions`);
+  if(epoch!==state.epoch)return;
+  $('#spec-versions').replaceChildren(...choices.versions.map(v=>new Option(`${v.label} · ${v.commit.slice(0,8)} (${v.kind})`,v.ref)));
+  const wanted=currentCatalog?.repositoryId===repositoryId?currentCatalog.ref:state.detail.connection?.catalog?.commit;
+  $('#regression-spec').value=wanted??choices.versions.find(v=>v.kind==='branch')?.ref??choices.versions[0]?.ref??'';
+  if(!$('#regression-spec').value){$('#catalog-count').textContent='規格庫尚無共享版本；先儲存需求並遠端同步，再選擇回歸基線。';return;}
+  await loadVersion();renderRegressionHistory(state.detail.regressions??[]);
+}
+async function loadVersion() {
+  const request=++catalogRequest, repositoryId=state.repositoryId,ref=$('#regression-spec').value.trim();
+  $('#start-regression').disabled=true;$('#catalog-count').textContent='讀取固定版本…';
+  const value=await api(`/spec-repositories/${repositoryId}/versions?ref=${encodeURIComponent(ref)}`);
+  if(request!==catalogRequest||repositoryId!==state.repositoryId||state.view!=='versions')return;
+  currentCatalog={...value,repositoryId,ref};$('#catalog-version').textContent=`規格版本 ${value.commit}`;
+  $('#regression-products').replaceChildren();
+  for(const p of value.projects) {
+    const label=el('label',`產品 ${p.id} 的版本`),input=document.createElement('input'),list=document.createElement('datalist');
+    input.dataset.projectId=p.id;input.placeholder=`使用規格記錄：${p.commit.slice(0,12)}`;input.setAttribute('aria-label',`產品 ${p.id} 的版本`);
+    list.id=`project-versions-${p.id}`;input.setAttribute('list',list.id);
+    list.append(...p.versions.map(v=>new Option(`${v.label} · ${v.commit.slice(0,8)} (${v.kind})`,v.ref)));label.append(input,list);
+    if(p.error)label.append(el('span',p.error.message,'error'));$('#regression-products').append(label);
+  }
+  const count=value.spec.features.reduce((n,f)=>n+f.caseIds.length*f.profiles.length,0);
+  $('#catalog-count').textContent=`全部 ${value.spec.features.length} 個功能，共 ${count} 個案例／環境組合`;
+  $('#catalog-features').replaceChildren();$('#catalog-source').hidden=true;
+  for(const f of value.spec.features) {
+    const row=el('article',undefined,'catalog-feature');row.append(el('h4',f.title),el('span',f.key,'mono muted'));
+    for(const [label,file] of [['Gherkin',`spec/${f.key}/${f.id}.feature`],['設計',`spec/${f.key}/${f.id}.sd.md`],['測試',`tests/${f.key}/${f.id}.steps.ts`],['Hooks',`tests/${f.key}/${f.id}.hooks.ts`]])row.append(button(label,async()=>{
+      const data=await api(`/spec-repositories/${repositoryId}/version-file?ref=${value.commit}&path=${encodeURIComponent(file)}`);
+      if(repositoryId!==state.repositoryId||currentCatalog?.commit!==value.commit)return;
+      $('#catalog-source').textContent=`${file} @ ${data.commit}（唯讀）\n\n${data.content}`;$('#catalog-source').hidden=false;$('#catalog-source').scrollIntoView({block:'nearest'});
+    }));$('#catalog-features').append(row);
+  }
+  $('#start-regression').disabled=!state.capabilities.executionEnabled||!value.spec.features.length||regressionJobs.has(repositoryId);
+  $('#regression-status').textContent=state.capabilities.executionEnabled?'選擇版本後即可回歸，不需要重做歷史需求的人工確認。':'這台主機尚未啟用受信任執行；仍可查看歷史內容。';
+}
+function renderRegressionHistory(batches) {
+  $('#regression-list').replaceChildren();
+  if(!batches.length)$('#regression-list').append(el('p','尚無整庫回歸紀錄。','muted'));
+  for(const batch of batches) {
+    const card=el('article',undefined,'panel regression-card');card.dataset.batchId=batch.batchId;
+    card.append(el('h3',`${batch.outcome} · ${batch.status}`),el('p',batch.batchId,'mono muted'),el('p',`規格 ${batch.testedSpecCommit}`,'mono'),el('p',`通過 ${batch.counts?.passed??0} / 全部 ${batch.features.length}；失敗 ${batch.counts?.failed??0}；錯誤 ${batch.counts?.errors??0}`));
+    for(const p of batch.projects)card.append(el('p',`${p.id}：${p.commit} (${p.requestedRef})`,'mono muted'));
+    for(const r of batch.results) {
+      const row=el('div',undefined,'regression-result');row.append(el('span',`${r.title} · ${r.outcome}`));
+      if(r.error)row.append(el('p',r.error.message,'error'));
+      if(r.runId&&r.testOutcome)row.append(button('查看這次證據',async()=>{await navigate({view:'reports'});await showReport(r.runId);}));
+      card.append(row);
+    }
+    if(batch.differences?.length)card.append(el('p','與上一批差異：'+batch.differences.map(d=>`${d.key} ${d.before} → ${d.after}`).join('；')));
+    if(batch.status==='COMPLETED')card.append(button('相同版本重跑',()=>startRegression({specRef:batch.testedSpecCommit,projects:Object.fromEntries(batch.projects.map(p=>[p.id,p.commit]))})));
+    $('#regression-list').append(card);
+  }
+}
+async function startRegression(selection) {
+  const repositoryId=state.repositoryId;
+  if(regressionJobs.has(repositoryId))throw new Error('這個規格庫已有回歸正在執行。');
+  const input=selection??{specRef:$('#regression-spec').value.trim(),projects:Object.fromEntries(all('#regression-products input').map(n=>[n.dataset.projectId,n.value.trim()]).filter(([,v])=>v))};
+  const accepted=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:'regression.start',input});
+  regressionJobs.set(repositoryId,accepted.id);$('#cancel-regression').hidden=false;$('#start-regression').disabled=true;
+  note('回歸正在執行；可以繼續編輯及儲存，這次仍使用開始時固定的版本。');
+  let result=accepted;
+  try {
+    while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)) {
+      await new Promise(r=>setTimeout(r,700));result=await api(`/operations/${accepted.id}`);
+      if(state.repositoryId===repositoryId&&state.view==='versions') {
+        const data=await api(`/spec-repositories/${repositoryId}`);renderRegressionHistory(data.regressions??[]);
+        $('#regression-status').textContent='回歸執行中；取消不會刪除已產生的證據。';
+      }
+    }
+  } finally {regressionJobs.delete(repositoryId);if(state.repositoryId===repositoryId){$('#cancel-regression').hidden=true;$('#start-regression').disabled=false;}}
+  if(result.error?.code==='INSTALL_REQUIRED') {
+    const plan=result.error.details.install;
+    if(await ask('安裝必要套件並繼續',`此固定版本需安裝測試套件及 ${plan.browsers.join('、')}。安裝只影響獨立回歸目錄，不更動編輯內容。`,'安裝並繼續'))return startRegression({...input,batchId:plan.batchId,installConsent:plan.digest});
+    note('已取消安裝；固定版本計畫與已儲存內容保留。');return;
+  }
+  if(state.repositoryId===repositoryId) {
+    if(state.view==='versions'){const data=await api(`/spec-repositories/${repositoryId}`);renderRegressionHistory(data.regressions??[]);}
+    $('#regression-status').textContent=result.status==='SUCCEEDED'?`回歸完成：${result.result.outcome}`:result.error?.message??result.status;
+    note(result.status==='SUCCEEDED'?`回歸完成：${result.result.outcome}，歷史已保留。`:result.error?.message??'回歸未完成。',result.status!=='SUCCEEDED');
+    $('#notice').dataset.operation='regression.start';$('#notice').dataset.outcome=result.status;$('#notice').dataset.jobId=result.id;
+  }
+}
+$('#regression-spec').addEventListener('change',()=>safe(loadVersion));
+$('#refresh-versions').addEventListener('click',()=>safe(()=>executeJob('repository.acquire',{})));
+$('#start-regression').addEventListener('click',()=>safe(()=>startRegression()));
+$('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));

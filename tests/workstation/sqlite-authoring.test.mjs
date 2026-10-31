@@ -11,7 +11,7 @@ import { digest,exists } from '../../packages/contracts/index.mjs';
 async function scenario(t,{existing=false}={}) {
   const f=await fixture(t),root=path.join(f.home,'repositories','SPEC-sql','repo');
   if(existing)await specRepository(root);
-  const options={home:f.home,toolkitRoot,allowLocal:true};let service=await createWorkstation(options);
+  const options={autoAcquire:false,home:f.home,toolkitRoot,allowLocal:true};let service=await createWorkstation(options);
   t.after(()=>service.close());service.register({id:'SPEC-sql',title:'SQLite',remoteUrl:path.join(f.base,'unreachable.git')});
   let n=0;
   const job=async(operation,input={},fail=false)=>{

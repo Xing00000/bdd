@@ -1,3 +1,4 @@
+import { publishRegression } from './regression-evidence.mjs';
 /** User-facing transactions. Git plumbing stays behind save/sync, not in the UI. */
 import path from 'node:path';
 import { mkdir, readFile } from 'node:fs/promises';
@@ -53,7 +54,7 @@ export async function targetFor(root, git, branch) {
   return { remote: 'origin', url: remote.url, pushUrl: remote.pushUrl, branch: branchName(branch) };
 }
 
-async function installationPlan(root, profiles, browserRoot) {
+export async function installationPlan(root, profiles, browserRoot) {
   const packageBytes = await readFile(await safePath(root, 'package.json', { missing: false }));
   const lock = await exists(path.join(root, 'package-lock.json')) ? digest(await readFile(path.join(root, 'package-lock.json'))) : null;
   const runtime = process.versions.node.split('.')[0];
@@ -188,9 +189,13 @@ export async function synchronizeRepository(context) {
     await pinSavedProducts(root, git, repositoryId);
     const result = await git.push(root, settings.sync.spec, await git.inspect(root));
     receipt.completed.push({ kind: 'spec', ...result }); await writeJson(journalPath, receipt);
-    for (const run of store.runs(repositoryId).filter(x => x.state === 'SEALED')) {
+    for (const run of store.runs(repositoryId).filter(x => x.state === 'SEALED' && x.result.mode !== 'REGRESSION')) {
       const publication = await publishRun({ root, home: options.home, repositoryId, runId: run.id, git, push: true });
       receipt.completed.push({ kind: 'report', runId: run.id, ...publication }); await writeJson(journalPath, receipt);
+    }
+    for(const batch of store.regressions(repositoryId).filter(x=>x.status==='COMPLETED'&&!x.imported)) {
+      const publication=await publishRegression({root,home:options.home,repositoryId,batch,git,push:true});
+      store.recordRegression(repositoryId,{...batch,publication});receipt.completed.push({kind:'regression',...publication});await writeJson(journalPath,receipt);
     }
     await git.fetch(root);
     const indexed = await reindexReports({ root, home: options.home, repositoryId, git, store });

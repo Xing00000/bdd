@@ -230,7 +230,7 @@ export async function executeRun({ home, runId, repositoryId, git, enabled = fal
   try {
     const modules = await git.modules(repo);
     unchanged = await git.resolve(repo) === plan.testedSpecCommit && await inputSnapshot(repo, git) === plan.inputDigest
-      && modules.length === plan.projects.length && modules.every(p => !p.dirty && p.actual === p.commit && plan.projects.some(x => x.id === p.id && x.commit === p.actual));
+      && modules.length === plan.projects.length && modules.every(p => !p.dirty && plan.projects.some(x => x.id === p.id && x.commit === p.actual && p.commit === (plan.mode === 'REGRESSION' ? x.recordedCommit : x.commit)));
   } catch {}
   let assessment = { testOutcome: 'NOT_RUN', verification: 'NOT_VERIFIED', coverageComplete: false, evidenceComplete: false, reasons: ['EXECUTION_INCOMPLETE'] };
   if (!failure && discovery && receipt) {
@@ -242,7 +242,8 @@ export async function executeRun({ home, runId, repositoryId, git, enabled = fal
   const artifacts = await copyArtifacts(scratch, staging);
   if (receipt) for (const c of receipt.cases ?? []) for (const a of c.attachments ?? [])
     if (!artifacts.some(x => x.path === a.path)) { assessment.verification = 'NOT_VERIFIED'; assessment.evidenceComplete = false; assessment.reasons.push('MISSING_ATTACHMENT'); }
-  const report = { schemaVersion: 1, specRepositoryId: plan.specRepositoryId, runId, requirementId: plan.requirementId, featureId: plan.featureId, ...assessment,
+  if (plan.mode === 'REGRESSION' && !plan.approvalConfirmed) { assessment.verification = 'NOT_VERIFIED'; assessment.reasons.push('HUMAN_APPROVAL_NOT_RECORDED'); }
+  const report = { schemaVersion: 1, mode: plan.mode ?? 'VERIFICATION', ...(plan.batchId ? { batchId: plan.batchId, selectedRefs: plan.selectedRefs, approvalConfirmed: plan.approvalConfirmed } : {}), specRepositoryId: plan.specRepositoryId, runId, requirementId: plan.requirementId, featureId: plan.featureId, ...assessment,
     testedSpecCommit: plan.testedSpecCommit, projects: plan.projects, scope: plan.scope, deployment: managed.receipt,
     startedAt: plan.startedAt, finishedAt: new Date().toISOString(), failure, cleanupFailure, cases: receipt?.cases ?? [] };
   await writeJson(path.join(staging, 'report.json'), report);

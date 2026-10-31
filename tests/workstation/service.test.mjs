@@ -10,7 +10,7 @@ import { openStore } from '../../packages/workstation/store.mjs';
 
 async function setup(t) {
   const f = await fixture(t); await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', f.remote]);
-  const service = await createWorkstation({ home: f.home, toolkitRoot, allowLocal: true }); t.after(() => service.close());
+  const service = await createWorkstation({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true }); t.after(() => service.close());
   service.register({ id: 'WS-one', title: 'Fixture', remoteUrl: f.remote }); return { ...f, service };
 }
 function request(operationId, operation, input = {}, expected = { head: null }) { return { schemaVersion: 1, operationId, repositoryId: 'WS-one', operation, input, expected }; }
@@ -46,11 +46,11 @@ test('dead running operations are marked interrupted on recovery', async t => {
   const f = await fixture(t); await mkdir(f.home); const store = openStore(f.home);
   store.register({ id: 'WS-one', title: 'fixture', remoteUrl: '/unused' }); store.enqueue(request('OP-dead', 'repository.clone')); store.claim('OP-dead'); store.close();
   const db = new DatabaseSync(path.join(f.home, 'metadata.sqlite')); db.prepare('UPDATE operations SET worker_pid=?').run(2147483647); db.close();
-  const service = await createWorkstation({ home: f.home, toolkitRoot, allowLocal: true }); t.after(() => service.close());
+  const service = await createWorkstation({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true }); t.after(() => service.close());
   assert.equal(service.operation('OP-dead').status, 'INTERRUPTED');
 });
 test('real HTTP API serves the management UI and requires protected write headers', async t => {
-  const f = await fixture(t), app = await createStandaloneServer({ home: f.home, toolkitRoot, allowLocal: true }); t.after(() => app.close());
+  const f = await fixture(t), app = await createStandaloneServer({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true }); t.after(() => app.close());
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${app.server.address().port}`;
   const page = await fetch(origin + '/repositories'); assert.equal(page.status, 200); assert.match(await page.text(), /規格與驗收工作台/); assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   const denied = await fetch(origin + '/repository-api/v1/spec-repositories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); assert.equal(denied.status, 403);
@@ -60,7 +60,7 @@ test('real HTTP API serves the management UI and requires protected write header
 });
 test('HTTP returns 202 for a real background clone and exposes its final receipt', async t => {
   const f = await fixture(t); await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', f.remote]);
-  const app = await createStandaloneServer({ home: f.home, toolkitRoot, allowLocal: true }); t.after(() => app.close());
+  const app = await createStandaloneServer({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true }); t.after(() => app.close());
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${app.server.address().port}`;
   app.service.register({ id: 'WS-one', title: 'HTTP fixture', remoteUrl: f.remote });
   const response = await fetch(origin + '/repository-api/v1/operations', { method: 'POST', headers: { 'content-type': 'application/json', 'x-workbench-request': '1' }, body: JSON.stringify(request('OP-http', 'repository.clone')) });

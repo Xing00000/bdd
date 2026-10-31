@@ -89,6 +89,7 @@ const server=http.createServer((request,response)=>{
   for(const remote of [remotes.alpha,remotes.beta])assert.equal((await git.command(undefined,['--git-dir',remote,'show-ref'],{allowFailure:true})).exitCode,1,'Setup must not upload');
   await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();
   await click('開啟規格庫 Alpha 規格庫');
+  const acquiredHead=(await git.inspect(path.join(home,'repositories',alpha,'repo'))).head;
   assert.equal(await page.getByRole('button',{name:/Commit|Push|Clone|安裝 Chromium|檢查測試接線|準備驗收候選/}).count(),0);
   await click('＋ 新增需求');let d=page.getByRole('dialog');
   await expect(d).not.toBeVisible();
@@ -114,15 +115,16 @@ const server=http.createServer((request,response)=>{
   await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
   await page.screenshot({path:path.join(artifacts,'00-two-input-requirement.png'),fullPage:true});
   const savedRoot=path.join(home,'repositories',alpha,'repo');
-  assert.equal(await exists(savedRoot),false,'Saving must not require or create a Git checkout');
+  assert.equal(await exists(savedRoot),true,'Binding automatically created the checkout');
+  assert.equal((await git.inspect(savedRoot)).head,acquiredHead,'Saving still writes only SQLite, not a Git commit');
   const readSaved=(repo,path)=>{const db=new DatabaseSync(`${home}/metadata.sqlite`,{readOnly:true});try{return db.prepare('SELECT content FROM authoring_files WHERE repository_id=? AND path=?').get(repo,path)?.content;}finally{db.close();}};
   assert.match(readSaved(alpha,'spec/REQ-001/feature/feature.feature'),/Sign in to the actual product/);
   await page.reload();await ready();await expect(lower).toHaveValue(manual);await expect(upper).toHaveValue(sourceDescription+'\n上方修改不應蓋掉下方手動編輯');
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
-  // Revisit settings with no checkout and no successful remote operation.
+  // Revisit settings without publishing any content; the automatically acquired checkout is unchanged.
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
   await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.setup');
-  assert.equal(await exists(savedRoot),false);
+  assert.equal(await exists(savedRoot),true);
   await tab('需求流程');await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
 
   await job(page.getByRole('button',{name:'確認需求並繼續',exact:true}),'workflow.review');await expect(page.getByRole('dialog')).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
@@ -170,7 +172,7 @@ const server=http.createServer((request,response)=>{
   await lower.fill(betaGenerated+'# 手動加入且必須原樣保留\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
   await expect(page.locator('#feature-select option:checked')).toHaveText('獨立規格庫查詢');
   await page.screenshot({path:path.join(artifacts,'05-two-input-upload.png'),fullPage:true});
-  const betaRoot=path.join(home,'repositories',beta,'repo');assert.equal(await exists(betaRoot),false);
+  const betaRoot=path.join(home,'repositories',beta,'repo');assert.equal(await exists(betaRoot),true);
   assert.match(readSaved(beta,'spec/REQ-001/feature/feature.feature'),/手動加入且必須原樣保留/);
   // The user explicitly approves content; old scaffold text is advice, not a veto.
   const placeholderDraft=betaGenerated.replace(/^    Then .+$/m,'    Then 請補充可驗收的結果');
@@ -185,7 +187,7 @@ const server=http.createServer((request,response)=>{
   await page.reload();await ready();await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
   await click('1 需求');await expect(lower).toHaveValue(placeholderDraft);
   assert.equal(readSaved(beta,'spec/REQ-001/feature/feature.feature'),placeholderDraft);
-  assert.equal(await exists(betaRoot),false,'Human content approval is still an offline SQLite action');
+  assert.equal(await exists(betaRoot),true,'Binding acquired the checkout; human content approval remains a SQLite action');
   // Official parser accepts static checks and * style without a mandatory When/Then pair.
   for(const source of [
     'Feature: Static data\n Scenario: Version\n  Given a version exists\n  Then the version is correct\n',
