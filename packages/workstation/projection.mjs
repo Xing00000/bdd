@@ -138,7 +138,12 @@ async function importBoundSnapshot(context,snapshot) {
   for(const file of incoming) {
     const current=snapshot.files.find(f=>key(f)===key(file));
     if(file.path==='workbench.yaml') {
-      if(current && current.sha256!==current.baseHash && !seed.some(f=>f.origin!=='checkout'&&!f.baseHash&&key(f)===key(current)&&digest(f.content)===current.sha256)) continue;
+      if(current && current.sha256!==current.baseHash && !seed.some(f=>f.origin!=='checkout'&&!f.baseHash&&key(f)===key(current)&&digest(f.content)===current.sha256)) {
+        // Preserve the saved edit, but learn the unchanged checkout baseline on
+        // first acquisition. A prior non-null base is retained by saveDraft, so
+        // subsequent external edits still conflict instead of being overwritten.
+        changes.push({...file,content:current.content});continue;
+      }
       let content=JSON.stringify(config,null,2)+'\n';
       if(settings.execution)await inDraftView({files:[{target:'spec',path:'workbench.yaml',content}]},async view=>{
         await configureExecution(view,{...settings.execution,expectedHash:digest(content)});
