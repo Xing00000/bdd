@@ -8,3 +8,10 @@ playwright-report/
 .workbench/
 .mentor/
 dist/
+
+# Rebuild from canonical sources; do not version generated copies.
+/deploy/
+/spec/REQ-WB-001/workbench/workbench.feature.spec.ts
+/verification/
+/.generated/
+/.runtime/

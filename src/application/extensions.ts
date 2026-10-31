@@ -135,7 +135,7 @@ export function createExtensions(input:{core:Core;generation:any;git:any;workspa
       const previous=(await store.all("SELECT * FROM baselines WHERE feature_id=? AND kind='source' AND valid=1 ORDER BY rowid DESC LIMIT 1",[r.featureId]))[0];
       const requested=body.projects??(r.projects.length===1?[{projectId:r.projects[0].id,sourceRef:body.sourceRef}]:null);
       if(!Array.isArray(requested)||requested.length!==r.projects.length||!requested.length||new Set(requested.map((p:any)=>p.projectId)).size!==requested.length)error(422,'PROJECT_SOURCES_REQUIRED','Pin a source revision for every linked project');
-      const projects=await Promise.all(requested.map(async(item:any)=>{const p=selectedProject(r,item.projectId);return {projectId:p.id,workspaceRef:p.workspaceRef,...await workspace.resolveSource(String(item.sourceRef??''),p.workspaceRef,p.id)};}));projects.sort((a,b)=>a.projectId.localeCompare(b.projectId));
+      const projects=await Promise.all(requested.map(async(item:any)=>{const p=selectedProject(r,item.projectId);return {projectId:p.id,workspaceRef:p.workspaceRef,...await workspace.resolveSource(String(item.sourceRef??''),p.workspaceRef)};}));projects.sort((a,b)=>a.projectId.localeCompare(b.projectId));
       const resolved={projects,...(projects.length===1?projects[0]:{})},manifest=JSON.stringify(resolved),baselineId=randomUUID();
       const previousValue=previous?JSON.parse(previous.manifest_json):null,previousProjects=previousValue?projectSources(previousValue,r.projects.map(p=>p.id)):[];
       const changed=projects.length!==previousProjects.length||projects.some(p=>!previousProjects.some((old:any)=>old.projectId===p.projectId&&old.resolvedCommit===p.resolvedCommit));

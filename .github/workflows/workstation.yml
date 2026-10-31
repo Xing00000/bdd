@@ -32,6 +32,8 @@ jobs:
           git rev-parse HEAD > verification/source-commit.txt
           node --version > verification/runtime.txt
           git --version >> verification/runtime.txt
+      - name: Check source ownership and maintained documentation
+        run: npm run check:repository 2>&1 | tee verification/repository.log
       - name: Check workstation syntax
         run: node scripts/check-workstation.mjs 2>&1 | tee verification/syntax.log
       - name: Test actual Git, processes, CLI and HTTP
@@ -88,19 +90,33 @@ jobs:
         run: |
           mkdir -p verification
           npm ci 2>&1 | tee verification/application-install.log
+      - name: Rebuild legacy discovery from a clean source checkout
+        run: npm run spec:list 2>&1 | tee verification/legacy-discovery.log
+      - name: Reject unused production declarations
+        run: npm run check:unused 2>&1 | tee verification/application-unused.log
       - name: Type check application
         run: npm run check 2>&1 | tee verification/application-check.log
       - name: Build application
-        run: npm run build 2>&1 | tee verification/application-build.log
+        run: |
+          mkdir -p dist/src dist/tests
+          printf 'throw new Error("stale compiled module")\n' > dist/src/retired-cleanup-probe.js
+          printf 'throw new Error("stale compiled test")\n' > dist/tests/retired-cleanup-probe.test.js
+          npm run build 2>&1 | tee verification/application-build.log
+          test ! -e dist/src/retired-cleanup-probe.js
+          test ! -e dist/tests/retired-cleanup-probe.test.js
       - name: Install browser required by existing application UI tests
         run: node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee verification/application-browser-install.log
       - name: Run application unit and integration checks
         run: npm run test:app 2>&1 | tee verification/application-tests.log
+      - name: Verify build and deployment regeneration did not modify tracked sources
+        run: git diff --exit-code && npm run check:repository
       - name: Preserve application validation logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: workstation-application-${{ github.sha }}
-          path: verification/application-*.log
+          path: |
+            verification/application-*.log
+            verification/legacy-discovery.log
           retention-days: 3
           if-no-files-found: error

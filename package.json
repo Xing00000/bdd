@@ -28,7 +28,11 @@
     "workstation": "node scripts/workstation.mjs",
     "check:workstation": "node scripts/check-workstation.mjs",
     "test:workstation": "node --test tests/workstation/*.test.mjs",
-    "test:workstation:e2e": "node --test tests/workstation-e2e/*.test.mjs"
+    "test:workstation:e2e": "node --test tests/workstation-e2e/*.test.mjs",
+    "prespec:list": "npm run spec:generate",
+    "pretest:tooling": "npm run spec:generate",
+    "check:repository": "node scripts/check-repository.mjs",
+    "check:unused": "tsc --noEmit -p tsconfig.unused.json"
   },
   "dependencies": {
     "@cucumber/cucumber-expressions": "19.0.0",

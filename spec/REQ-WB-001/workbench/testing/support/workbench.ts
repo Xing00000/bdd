@@ -1,16 +1,14 @@
 import { expect as rawExpect, chromium, type Browser, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { resolve, dirname, relative } from 'node:path';
 import ts from 'typescript';
 import { StepEvidence } from './evidence.ts';
 import { SelectionProbe } from './selection.ts';
 import { resolveManagedPage, type Attachment } from './managed.ts';
-import type { SQLInputValue } from 'node:sqlite';
 import { FixtureDatabase, sha } from './database.ts';
 import {DbGatePage} from './dbgate.ts';
 import { sourceFeature, sourceSd, specText, malformedFeature, malformedSpec, fixtureSql, failingSpecText,completionContext,designContext,dbgateSpecText } from '../fixtures/content.ts';
-const phases:Record<string,string>={'Gherkin確認':'GHERKIN','SD確認':'SD','test generation/completion':'TESTS',implementation:'IMPLEMENTATION','verification/report':'VERIFICATION'};
 export class Workbench {
   db:FixtureDatabase;
   tracker:StepEvidence;

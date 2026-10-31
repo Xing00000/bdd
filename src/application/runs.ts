@@ -136,7 +136,7 @@ export function createRuns(options: Options) {
   }
 
   async function verify(requirementId: string, body: any) {
-    const requirement = await one('SELECT * FROM requirements WHERE id=?', [requirementId], 'Requirement');
+    await one('SELECT * FROM requirements WHERE id=?', [requirementId], 'Requirement');
     const features=await store.all('SELECT * FROM features WHERE requirement_id=? ORDER BY rowid',[requirementId]);
     if(!body.featureId&&features.length!==1)fail(400,'FEATURE_REQUIRED','Select one Gherkin feature for verification');
     const feature=features.find(row=>row.id===(body.featureId??features[0]?.id))??fail(404,'NOT_FOUND','Feature does not belong to requirement');

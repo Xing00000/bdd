@@ -46,7 +46,7 @@ test('independent requirements link local repositories, route source files and p
  await expect.poll(()=>output,{timeout:10000}).toContain(projects[0].workspaceRef);
  const source=await request('GET',`/requirements/${requirement.id}/source?projectId=${projects[1].id}&path=app.ts`);assert.match(source.rawText,/backend/);
  await request('POST',`/requirements/${requirement.id}/source`,{projectId:projects[0].id,path:'../outside.ts',rawText:'blocked'},400);
- const workspace=createWorkspaceAdapter(root,join(directory,'data'));await assert.rejects(workspace.saveSource(projects[0].workspaceRef,'blocked','../outside.ts'),{code:'INVALID_SOURCE_PATH'});
+ const workspace=createWorkspaceAdapter(join(directory,'data'));await assert.rejects(workspace.saveSource(projects[0].workspaceRef,'blocked','../outside.ts'),{code:'INVALID_SOURCE_PATH'});
  await request('PUT',`/requirements/${requirement.id}/projects`,{projectIds:[projects[0].id]});
  assert.equal((await request('GET',`/requirements/${requirement.id}`)).stage,'SD');assert.equal((await server.core.store.all("SELECT valid FROM baselines WHERE kind='source'"))[0].valid,0);
  assert.equal((await request('GET','/requirements')).length,1);

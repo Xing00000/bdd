@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { readFile, realpath, readdir } from 'node:fs/promises';
 import { id, invariant, safePath, exists, digest, identity, writeJson, readJson, atomicWrite } from '../contracts/index.mjs';
 

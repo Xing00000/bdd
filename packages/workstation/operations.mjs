@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { createGit, remoteUrl } from '../git-core/index.mjs';
-import { id, version, invariant, safePath, exists, writeJson, readJson, digest } from '../contracts/index.mjs';
+import { createGit } from '../git-core/index.mjs';
+import { id, version, invariant, safePath, exists, writeJson, digest } from '../contracts/index.mjs';
 import { initialize, createFeature, validate, configuration, confirm, saveFile, scan, reviewState } from '../spec-toolkit/index.mjs';
 import { planUpgrade } from './upgrades.mjs';
 import { planLegacyImport, backupLegacySelection } from './legacy.mjs';

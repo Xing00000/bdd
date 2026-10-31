@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { invariant, id, version } from '../contracts/index.mjs';
+import { invariant, id } from '../contracts/index.mjs';
 import { createGit, remoteUrl, branchName, processEnvironment } from '../git-core/index.mjs';
 import { artifactDirectory, currentVerification } from './reports.mjs';
 import { listTransactions } from './transactions.mjs';

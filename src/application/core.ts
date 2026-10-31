@@ -420,7 +420,7 @@ export async function createCore(metadataFile: string, applicationRoot = process
     setRequirementProjects(id:string,projectIds:string[]){return mutation(async()=>({id,projects:(await updateRequirementUnsafe(id,{projectIds})).projects}));},
     getRequirement, selectFeature, getVersion, structure, scenarioTests,
     createFeature(requirementId:string,input:{featureKey:string}) {return mutation(async()=>{
-      const r=await requirement(requirementId);
+      await requirement(requirementId);
       if(typeof input.featureKey!=='string'||!input.featureKey.trim()||/[\/\\\0]/.test(input.featureKey))fail(400,'INVALID_FEATURE','A featureKey without path separators is required');
       if((await store.all('SELECT id FROM features WHERE requirement_id=? AND feature_key=?',[requirementId,input.featureKey])).length)fail(409,'FEATURE_EXISTS','Feature already exists');
       const id=randomUUID(),commands=[insert('features',{id,requirement_id:requirementId,feature_key:input.featureKey,stage:'GHERKIN'})];

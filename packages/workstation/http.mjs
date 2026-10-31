@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createWorkstation } from './service.mjs';
-import { invariant, id, safePath, readJson, errorResult } from '../contracts/index.mjs';
+import { invariant, id, safePath, errorResult } from '../contracts/index.mjs';
 import { verifyBundle } from '../spec-toolkit/engine.mjs';
 
 const prefix = '/repository-api/v1';
