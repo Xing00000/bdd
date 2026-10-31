@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { installDraftSchema, draftMethods, isLocalSave, projectionJobPredicate } from './draft-store.mjs';
 import path from 'node:path';
 import { existsSync, chmodSync } from 'node:fs';
 import { normalizeStoredRequest } from './migrate.mjs';
@@ -8,10 +9,14 @@ export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 4, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 5, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
+  }
+  if(version>0&&version<5) {
+    const backup=path.join(home,'before-authoring-v5.sqlite');
+    if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}
   }
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -61,13 +66,16 @@ export function openStore(home) {
     CREATE TABLE IF NOT EXISTS repository_preferences (
       repository_id TEXT PRIMARY KEY REFERENCES spec_repositories(id), settings_json TEXT NOT NULL, sync_json TEXT
     );
-    PRAGMA user_version=4;
+    PRAGMA user_version=5;
   `);
+  installDraftSchema(db);
+  db.exec(`DROP INDEX IF EXISTS one_writer_per_repository; CREATE UNIQUE INDEX one_writer_per_repository ON operations(repository_id) WHERE status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate};`);
   db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
   const decode = row => row ? { ...row, request: JSON.parse(row.request_json), result: row.result_json ? JSON.parse(row.result_json) : null, error: row.error_json ? JSON.parse(row.error_json) : null } : null;
   const get = operationId => decode(db.prepare('SELECT * FROM operations WHERE id=?').get(operationId));
   return {
+    ...draftMethods(db),
     close() { db.close(); },
     repositories() { return db.prepare('SELECT id,title,remote_url remoteUrl,branch,created_at createdAt FROM spec_repositories ORDER BY created_at').all(); },
     repository(repositoryId) {
@@ -103,7 +111,7 @@ export function openStore(home) {
           invariant(previous.request_hash === hash, 'OPERATION_ID_CONFLICT', 'An operation ID cannot be reused with different input', 409);
           db.exec('COMMIT'); return previous;
         }
-        const busy = db.prepare("SELECT id FROM operations WHERE repository_id=? AND status IN ('QUEUED','RUNNING','CANCELLING')").get(request.repositoryId);
+        const busy = !isLocalSave(request) && db.prepare(`SELECT id FROM operations WHERE repository_id=? AND status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate}`).get(request.repositoryId);
         invariant(!busy, 'REPOSITORY_BUSY', `Spec repository has an active operation ${busy?.id ?? ''}`, 409);
         db.prepare("INSERT INTO operations(id,repository_id,request_hash,request_json,status,created_at) VALUES(?,?,?,?,'QUEUED',?)")
           .run(request.operationId, request.repositoryId, hash, JSON.stringify(request), new Date().toISOString());
@@ -125,6 +133,14 @@ export function openStore(home) {
       return get(operationId);
     },
     recover() {
+      // A worker may die after committing SQLite but before updating its job row.
+      // Recover the transaction receipt instead of falsely reporting a failed save.
+      for(const row of db.prepare("SELECT id,repository_id,request_json FROM operations WHERE status IN ('QUEUED','RUNNING','INTERRUPTED')").all()) {
+        const request=JSON.parse(row.request_json);
+        if(!isLocalSave(request))continue;
+        const receipt=this.draftReceipt(row.repository_id,row.id,request);
+        if(receipt)db.prepare("UPDATE operations SET status='SUCCEEDED',result_json=?,error_json=NULL,finished_at=? WHERE id=?").run(JSON.stringify(receipt),new Date().toISOString(),row.id);
+      }
       const active = db.prepare("SELECT * FROM operations WHERE status IN ('RUNNING','CANCELLING')").all();
       for (const operation of active) {
         let alive = false;

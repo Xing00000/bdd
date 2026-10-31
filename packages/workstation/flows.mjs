@@ -1,16 +1,16 @@
 /** User-facing transactions. Git plumbing stays behind save/sync, not in the UI. */
 import path from 'node:path';
 import { mkdir, readFile } from 'node:fs/promises';
-import { WorkstationError, invariant, id, safePath, exists, readJson, writeJson, atomicWrite, digest, identity } from '../contracts/index.mjs';
+import { WorkstationError, invariant, id, safePath, exists, readJson, writeJson, digest, identity } from '../contracts/index.mjs';
 import { branchName, remoteUrl, execute, processEnvironment } from '../git-core/index.mjs';
-import { initialize, configuration, createFeature, buildGuidedFeature, parseGuidedFeature, scan, saveFile, reviewState, confirm } from '../spec-toolkit/index.mjs';
-import { projectRoot, saveProjectFile, configureExecution, configureFeature, installDependencies, checkTests } from './repository-actions.mjs';
+import { configuration, scan, reviewState, confirm } from '../spec-toolkit/index.mjs';
+import { installDependencies, checkTests } from './repository-actions.mjs';
 import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { reindexReports } from './reports.mjs';
 
-export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.draft', 'workflow.review', 'workflow.verify'];
+export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.draft', 'workflow.review', 'workflow.verify', 'repository.prepare'];
 
-async function attached(root, git, repositoryId) {
+export async function attached(root, git, repositoryId) {
   const state = await git.inspect(root);
   if (state.branch) return state;
   // A product restored at a gitlink is normally detached. Retain its content and
@@ -23,14 +23,10 @@ async function attached(root, git, repositoryId) {
   } else await git.command(root, ['switch', '-c', name]);
   return git.inspect(root);
 }
-async function savePaths(root, paths, git, repositoryId, message) {
+export async function savePaths(root, paths, git, repositoryId, message) {
   const state = await attached(root, git, repositoryId);
   if (!paths.length) return { head: state.head, noChanges: true };
   return git.commitSelected(root, { paths: [...new Set(paths)], message }, state);
-}
-async function changedPaths(root, git) {
-  const state = await git.inspect(root);
-  return [...new Set(state.changes.flatMap(x => [x.path, ...(x.originalPath ? [x.originalPath] : [])]))];
 }
 async function pinSavedProducts(root, git, repositoryId) {
   const modules = await git.modules(root);
@@ -41,7 +37,7 @@ async function pinSavedProducts(root, git, repositoryId) {
   // detach an editing branch or include unrelated staged changes.
   return savePaths(root, modules.filter(p => p.commit !== p.actual).map(p => p.path), git, repositoryId, 'Save product version references');
 }
-async function defaultBranch(url, git) {
+export async function defaultBranch(url, git) {
   remoteUrl(url, git.policy);
   const response = await git.command(undefined, ['ls-remote', '--symref', url, 'HEAD']);
   const name = /^ref: refs\/heads\/([^\t\n]+)\tHEAD$/m.exec(response.stdout)?.[1];
@@ -49,100 +45,11 @@ async function defaultBranch(url, git) {
   invariant(!response.stdout.trim(), 'REMOTE_DEFAULT_MISSING', '遠端未設定預設版本，請先由管理者設定預設分支。');
   return 'main'; // an empty remote has no version yet
 }
-async function targetFor(root, git, branch) {
+export async function targetFor(root, git, branch) {
   const remote = (await git.remotes(root)).find(x => x.name === 'origin');
   invariant(remote && remote.urls.length === 1 && remote.pushUrls.length === 1, 'SYNC_DESTINATION_REQUIRED', '請在集中設定中確認唯一的遠端同步位置。');
   remoteUrl(remote.url, git.policy); remoteUrl(remote.pushUrl, git.policy);
   return { remote: 'origin', url: remote.url, pushUrl: remote.pushUrl, branch: branchName(branch) };
-}
-
-/** Setup never installs or executes repository code. Settings are supplied once. */
-export async function setupRepository({ root, options, store, request, git }) {
-  const input = request.input, record = store.repository(request.repositoryId);
-  invariant(typeof input.reviewer === 'string' && input.reviewer.trim() && input.reviewer.length <= 120, 'REVIEWER_REQUIRED', '請設定確認者名稱。');
-  invariant(Array.isArray(input.projects ?? []) && (input.projects ?? []).length <= 20, 'INVALID_PROJECTS', '最多可設定 20 個產品。');
-  const projects = input.projects ?? [];
-  invariant(new Set(projects.map(p => p.id)).size === projects.length, 'DUPLICATE_PROJECT', '產品名稱不能重複。');
-  for (const project of projects) { id(project.id); remoteUrl(project.url, git.policy); }
-  const previous = store.preferences(record.id);
-  if (previous && input.expectedSettings !== undefined) invariant(identity(previous) === input.expectedSettings, 'SETTINGS_CHANGED', '設定已被更新，請重新開啟設定。', 409);
-  const hadCheckout = await exists(root);
-  if (!hadCheckout) await git.clone(record.remoteUrl, root, record.branch ?? undefined);
-  else await git.expect(root, request.expected);
-  await git.root(root);
-  if (!await exists(path.join(root, 'workbench.yaml'))) {
-    await initialize(root, { specRepositoryId: record.id, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
-    await savePaths(root, await changedPaths(root, git), git, record.id, 'Initialize specification repository');
-  }
-  // Setup may run after a human has started editing the specification.
-  // Scope all writes to setup-owned files; leave other staged/unstaged drafts alone.
-  // A concurrent edit of the configuration itself is an actual conflict.
-  const setupState = await git.inspect(root);
-  const installedModules = await git.modules(root);
-  const modifiesConfig = Boolean(input.execution) || projects.some(p => !installedModules.some(m => m.id === p.id));
-  if (modifiesConfig && setupState.changes.some(change => change.path === 'workbench.yaml'))
-    throw new WorkstationError('SETTINGS_DRAFT_CONFLICT',
-      '規格庫設定檔有尚未儲存的修改。系統已保留內容；請先儲存該設定，再重新執行設定。', 409);
-  let config = await configuration(root);
-  if ((await git.modules(root)).some(p => !p.actual)) await git.restore(root, await git.inspect(root));
-  const destinations = [];
-  for (const project of projects) {
-    let module = (await git.modules(root)).find(p => p.id === project.id);
-    const branch = previous?.sync?.projects?.find(p => p.id === project.id)?.branch ?? await defaultBranch(project.url, git);
-    if (module) invariant(module.url === project.url, 'PROJECT_SOURCE_CHANGED', `產品 ${project.id} 的來源不能被默默替換。`, 409);
-    else {
-      const commit = await git.remoteHead(project.url, branch);
-      await git.addModule(root, { projectId: project.id, url: project.url, commit }, await git.inspect(root));
-      config.projects.push({ id: project.id, path: `projects/${project.id}` });
-      await writeJson(path.join(root, 'workbench.yaml'), config);
-      await savePaths(root, ['.gitmodules', `projects/${project.id}`, 'workbench.yaml'], git, record.id, `Save product binding ${project.id}`);
-      module = (await git.modules(root)).find(p => p.id === project.id);
-    }
-    destinations.push({ id: project.id, ...await targetFor(path.join(root, module.path), git, branch) });
-  }
-  // Existing products are retained if not supplied; never delete them in setup.
-  for (const module of await git.modules(root)) if (!destinations.some(p => p.id === module.id)) {
-    const prior = previous?.sync?.projects?.find(p => p.id === module.id);
-    destinations.push({ id: module.id, ...await targetFor(path.join(root, module.path), git, prior?.branch ?? await defaultBranch(module.url, git)) });
-  }
-  if (input.execution) {
-    await configureExecution(root, { ...input.execution, expectedHash: digest(await readFile(path.join(root, 'workbench.yaml'))) });
-    await savePaths(root, ['workbench.yaml'], git, record.id, 'Save verification environment');
-  }
-  const specState = await attached(root, git, record.id);
-  const settings = { schemaVersion: 1, reviewer: input.reviewer.trim(), configured: true,
-    sync: { spec: await targetFor(root, git, previous?.sync?.spec?.branch ?? specState.branch), projects: destinations },
-    updatedAt: new Date().toISOString() };
-  store.setPreferences(record.id, settings);
-  return { ready: true, saved: true, synchronized: false, settings };
-}
-
-/** Durable save: explicit file → local history → parent product reference. No network. */
-export async function saveRepository({ root, options, store, request, git }) {
-  const input = request.input, repositoryId = request.repositoryId;
-  invariant(store.preferences(repositoryId)?.configured, 'SETUP_REQUIRED', '請先完成一次性設定。');
-  await git.expect(root, request.expected);
-  if (input.kind === 'scope') {
-    await configureFeature(root, input);
-    await savePaths(root, [`spec/${id(input.requirementId)}/${id(input.featureId)}/feature.yaml`], git, repositoryId, 'Save acceptance scope');
-    return { saved: true, synchronized: false };
-  }
-  const project = input.kind === 'project';
-  invariant(project || input.kind === 'source', 'INVALID_SAVE_TARGET', '選擇規格或產品檔案。');
-  const target = project ? await projectRoot(root, input.projectId, git) : root;
-  // Save bytes must pass the same editor hash/secret/path constraints as low-level APIs.
-  await attached(target, git, repositoryId);
-  let result;
-  if (project) result = await saveProjectFile(root, input, git, await git.inspect(target));
-  else result = await saveFile(root, input);
-  const saved = await savePaths(target, [input.path], git, repositoryId, `Save ${project ? 'product' : 'specification'} ${input.path}`);
-  if (project) {
-    // Do not demand unrelated product drafts be committed just to save this file.
-    await savePaths(root, [`projects/${id(input.projectId)}`], git, repositoryId, `Save product version ${input.projectId}`);
-  }
-  const receipt = { ...result, saved: true, commit: saved.head, synchronized: false };
-  await writeJson(await safePath(options.home, `save-receipts/${repositoryId}/${request.operationId}.json`), receipt);
-  return receipt;
 }
 
 async function installationPlan(root, profiles, browserRoot) {
@@ -190,45 +97,9 @@ export async function advanceWorkflow(context) {
   invariant(settings?.configured, 'SETUP_REQUIRED', '請先完成一次性設定。');
   await git.expect(root, request.expected);
   const input = request.input;
-  if (request.operation === 'workflow.create') {
-    const existing = (await scan(root)).features;
-    const requirements = new Set(existing.map(f => f.requirementId));
-    let requirementId = input.requirementId?.trim();
-    if (!requirementId) { let i = 1; while (requirements.has(`REQ-${String(i).padStart(3, '0')}`)) i++; requirementId = `REQ-${String(i).padStart(3, '0')}`; }
-    id(requirementId);
-    let featureId = input.featureId?.trim();
-    if (!featureId) {
-      const slug = String(input.title ?? '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 45);
-      const prefix = slug || 'feature'; let index = 1; featureId = prefix;
-      while (existing.some(f => f.requirementId === requirementId && f.id === featureId)) featureId = `${prefix}-${String(++index).padStart(3, '0')}`;
-    }
-    id(featureId);
-    const guided = Boolean(input.guided || input.goal || input.acceptance);
-    const result = await createFeature(root, { ...input, requirementId, featureId, guided });
-    await savePaths(root, [...result.files, `spec/${requirementId}/requirement.yaml`, `spec/${requirementId}/review.json`], git, request.repositoryId, `Create ${result.key}`);
-    return { ...result, saved: true };
-  }
   const key = `${id(input.requirementId)}/${id(input.featureId)}`;
   const data = await scan(root), feature = data.features.find(x => x.key === key);
   invariant(feature, 'FEATURE_NOT_FOUND', '找不到此功能。', 404);
-  if (request.operation === 'workflow.draft') {
-    const filename = `spec/${key}/${id(input.featureId)}.feature`;
-    const file = await safePath(root, filename, { missing: false });
-    const old = await readFile(file, 'utf8');
-    invariant(digest(old) === input.expectedHash, 'CONTENT_CHANGED', '草稿已由其他操作修改；已保留你的編輯，請重新讀取。', 409);
-    invariant(parseGuidedFeature(old), 'ADVANCED_GHERKIN', '此需求已直接編輯 Gherkin；為保護情境，請使用進階編輯器修改。', 409);
-    const draft = buildGuidedFeature(input);
-    const metadataPath = `spec/${key}/feature.yaml`;
-    const metadata = await readJson(await safePath(root, metadataPath, { missing: false }));
-    invariant(digest(JSON.stringify(metadata)) === input.expectedMetadataHash || !input.expectedMetadataHash,
-      'CONTENT_CHANGED', '驗收範圍已被修改，請先重新讀取。', 409);
-    metadata.title = draft.title;
-    metadata.caseIds = draft.caseIds;
-    await atomicWrite(file, draft.featureText);
-    await writeJson(await safePath(root, metadataPath), metadata);
-    await savePaths(root, [filename, metadataPath], git, request.repositoryId, `Save guided requirement ${key}`);
-    return { saved: true, key, sha256: digest(draft.featureText) };
-  }
   let review = await reviewState(root, input.requirementId, input.featureId);
   if (request.operation === 'workflow.review') {
     invariant(['gherkin', 'sd', 'tests'].includes(input.stage), 'INVALID_STAGE', '只需確認需求、設計與驗收測試。');

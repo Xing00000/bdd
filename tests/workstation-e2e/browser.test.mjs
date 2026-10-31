@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, cp, rm, readdir } from 'node:fs/promises';
@@ -86,18 +87,16 @@ const server=http.createServer((request,response)=>{
   assert.equal(await page.getByRole('button',{name:/Commit|Push|Clone|安裝 Chromium|檢查測試接線|準備驗收候選/}).count(),0);
   await click('＋ 新增需求');let d=page.getByRole('dialog');await d.getByLabel('這個功能要做到什麼？',{exact:true}).fill('真正產品登入');await d.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('點擊登入按鈕，出現已登入訊息');await d.getByText('進階：自訂需求編號和功能代號（一般不需要）').click();await d.getByLabel('需求 ID',{exact:true}).fill('REQ-001');await d.getByLabel('功能 ID',{exact:true}).fill('login');await job(d.getByRole('button',{name:'建立需求草稿',exact:true}),'workflow.create');await expect(d).not.toBeVisible();await expect(page.locator('#gherkin-guided')).toBeVisible();await page.getByRole('button',{name:'直接編輯 Gherkin（進階）',exact:true}).click();
   await editSource(`Feature: Sign in to the actual product\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`);
-  const savedRoot=path.join(home,'repositories',alpha,'repo');assert.equal((await git.inspect(savedRoot)).clean,true);
+  const savedRoot=path.join(home,'repositories',alpha,'repo');
+  assert.equal(await exists(savedRoot),false,'Saving must not require or create a Git checkout');
+  const readSaved=(repo,path)=>{const db=new DatabaseSync(`${home}/metadata.sqlite`,{readOnly:true});try{return db.prepare('SELECT content FROM authoring_files WHERE repository_id=? AND path=?').get(repo,path)?.content;}finally{db.close();}};
+  assert.match(readSaved(alpha,'spec/REQ-001/login/login.feature'),/Sign in to the actual product/);
+  await page.reload();await ready();await expect(page.getByRole('textbox',{name:'規格測試原始碼',exact:true})).toHaveValue(/Sign in to the actual product/);
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
-  // Real-world regression: users may have pre-existing staged or unsaved files
-  // when they revisit centralized settings. The fixture adds external drafts;
-  // the settings change itself is performed exclusively through the UI.
-  const pending = path.join(savedRoot,'unrelated-local-draft.txt');
-  await writeFile(pending,'keep my other work');await git.command(savedRoot,['add','--','unrelated-local-draft.txt']);
+  // Revisit settings with no checkout and no successful remote operation.
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
   await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.setup');
-  assert.equal((await git.command(savedRoot,['show',':unrelated-local-draft.txt'])).stdout,'keep my other work');
-  assert.equal((await git.command(savedRoot,['cat-file','-e','HEAD:unrelated-local-draft.txt'],{allowFailure:true})).exitCode,128);
-  await git.command(savedRoot,['reset','--','unrelated-local-draft.txt']);await rm(pending);
+  assert.equal(await exists(savedRoot),false);
   await tab('需求流程');await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
 
   await job(page.getByRole('button',{name:'確認需求並繼續',exact:true}),'workflow.review');await expect(page.getByRole('dialog')).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
@@ -112,12 +111,15 @@ const server=http.createServer((request,response)=>{
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'02-failure.png'),fullPage:true});
   await click('開啟產品 product');await page.getByLabel('產品檔案',{exact:true}).selectOption('message.txt');await expect(page.getByRole('textbox',{name:'產品原始碼',exact:true})).toHaveValue('Not implemented\n');
   await page.getByRole('textbox',{name:'產品原始碼',exact:true}).fill('Signed in\n');await job(page.getByRole('button',{name:'儲存產品',exact:true}),'repository.save');await expect(page.getByRole('textbox',{name:'產品原始碼',exact:true})).toHaveValue('Signed in\n');
-  const productHead=await git.resolve(path.join(savedRoot,'projects/product'));assert.notEqual(productHead,initialProduct.commit);
+  assert.equal(await git.resolve(path.join(savedRoot,'projects/product')),initialProduct.commit,'Saving a product is a SQLite write, not a commit');
+  assert.equal(readSaved(alpha,'message.txt'),'Signed in\n');
+  await page.reload();await ready();await expect(page.getByRole('textbox',{name:'產品原始碼',exact:true})).toHaveValue('Signed in\n');
   assert.equal((await git.command(undefined,['--git-dir',remotes.product,'rev-parse','main'])).stdout.trim(),initialProduct.commit,'Local save and verification must not sync products');
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1);
   await tab('需求流程');await job(page.getByRole('button',{name:'再次驗收',exact:true}),'workflow.verify');run=page.locator('#run-list [data-run-id]').first();const passedRunId=await run.getAttribute('data-run-id');assert.notEqual(passedRunId,failedRunId);await expect(run).toContainText('VERIFIED');await expect(run).toContainText('PASSED');
   await expect(page.getByRole('dialog')).not.toBeVisible();await run.getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#report-view')).toHaveAttribute('data-run-id',passedRunId);await expect(page.locator('#report-view')).toHaveAttribute('aria-busy','false');await page.locator('#report-view .gallery').scrollIntoViewIfNeeded();await page.waitForFunction(()=>{const a=[...document.querySelectorAll('#report-view .gallery img')];return a.length>=3&&a.every(x=>x.complete&&x.naturalWidth>0);});
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'03-simple-verified.png'),fullPage:true});
+  const productHead=await git.resolve(path.join(savedRoot,'projects/product'));assert.notEqual(productHead,initialProduct.commit);
   const tested=await git.resolve(savedRoot);await job(page.getByRole('button',{name:'遠端同步',exact:true}),'repository.sync');await expect(run).toContainText('已同步至遠端');await expect(page.getByRole('dialog')).not.toBeVisible();
   assert.equal((await git.command(undefined,['--git-dir',remotes.product,'rev-parse','main'])).stdout.trim(),productHead);assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'rev-parse','main'])).stdout.trim(),tested);
   const reportCommit=(await git.command(undefined,['--git-dir',remotes.alpha,'rev-parse',`refs/heads/evidence/${passedRunId}`])).stdout.trim();assert.notEqual(reportCommit,tested);
@@ -142,8 +144,18 @@ const server=http.createServer((request,response)=>{
   await page.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('能找到符合關鍵字的資料\n查不到時顯示空結果');
   await job(page.getByRole('button',{name:'儲存需求',exact:true}),'workflow.draft');
   const betaRoot=path.join(home,'repositories',beta,'repo');
-  const betaFeature=(await git.command(betaRoot,['show','HEAD:spec/REQ-001/feature/feature.feature'])).stdout;
+  const betaFeature=readSaved(beta,'spec/REQ-001/feature/feature.feature');assert.equal(await exists(betaRoot),false);
   assert.match(betaFeature,/@case:CASE-002/);
+  // Break the isolated remote after binding. A real UI sync fails, while later saves succeed.
+  const moved=remotes.beta+'.offline';await import('node:fs/promises').then(fs=>fs.rename(remotes.beta,moved));
+  const previousJob=await page.locator('#notice').getAttribute('data-job-id');
+  await page.getByRole('button',{name:'遠端同步',exact:true}).click();
+  await page.waitForFunction(previous=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation==='repository.sync';},previousJob);
+  await expect(page.locator('#notice')).toHaveAttribute('data-outcome','FAILED');await ready();
+  await page.getByLabel('怎樣才算成功？（每行一項）',{exact:true}).fill('同步失敗後仍可儲存');
+  await job(page.getByRole('button',{name:'儲存需求',exact:true}),'workflow.draft');
+  await page.reload();await ready();await expect(page.locator('#guided-acceptance')).toHaveValue('同步失敗後仍可儲存');
+  assert.match(readSaved(beta,'spec/REQ-001/feature/feature.feature'),/同步失敗後仍可儲存/);
   await page.getByLabel('使用情境（選填）',{exact:true}).fill('尚未儲存的草稿');
   await page.getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');
   await d.getByRole('button',{name:'取消',exact:true}).click();

@@ -8,6 +8,12 @@
 
 原 `ui/`、`src/application/`、`src/http/server.ts` 等保留為尚未全面遷移之 Agent、MCP、錄製與資料庫能力的相容來源／回歸測試。它們不被正式工作台入口載入。不能把這些功能宣稱為已完成新 UI 接線；本次完整 UI 驗收涵蓋規格庫、產品開發、驗收與 Git 發布流程。
 
+## SQLite authoring（schema 5）
+
+設定、草稿、內容確認與產品編輯改存 SQLite，Repo 僅是綁定與同步／驗收輸出。舊 checkout 原文第一次唯讀匯入，不把 clean 工作目錄當作儲存前提。主資料庫、歷史原文和未同步內容必須備份，不能只靠重新 Clone 恢復。
+
+低階 Git／遷移 helper 保留相容測試用途；它們修改 checkout 不代表已更新新的 SQL authoring。正式 UI 的儲存只有一套 SQL 交易路徑。
+
 ## 管理模型遷移
 
 Operational DB schema 4 保留 schema 3 的轉換，新增 `repository_preferences` 保存一次設定及同步收據。尚未設定的舊登錄只需完成集中設定，不重建 checkout。

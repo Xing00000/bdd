@@ -8,7 +8,7 @@ import { digest, readJson, writeJson, exists, identity } from '../../packages/co
 import { prepareRun } from '../../packages/spec-toolkit/engine.mjs';
 import { ensureInstallation } from '../../packages/workstation/flows.mjs';
 
-async function setup(t,{product=true}={}) {
+async function setup(t,{product=true,prepare=true}={}) {
   const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const source=path.join(f.base,'product'),productRemote=path.join(f.base,'product.git');
   if(product){await repository(source,{'message.txt':'before'});await git.command(undefined,['init','--bare','--initial-branch','main',productRemote]);await git.command(source,['remote','add','origin',productRemote]);await git.push(source,{},await git.inspect(source));}
@@ -22,29 +22,36 @@ async function setup(t,{product=true}={}) {
   const setupInput={reviewer:'Human',projects:product?[{id:'product',url:productRemote}]:[]};
   await job('repository.setup',setupInput);
   const root=path.join(f.home,'repositories/SPEC-flow/repo');
+  if(prepare)await job('repository.prepare');
   return {...f,source,productRemote,root,service,job,setupInput};
 }
 
-test('single setup clones initializes saves and binds products without pushing or installing',async t=>{
-  const f=await setup(t),d=await f.service.detail('SPEC-flow');assert.equal(d.preferences.configured,true);assert.equal(d.state.clean,true);assert.equal(d.modules.length,1);
+test('single setup saves bindings to SQLite without cloning, pushing or installing',async t=>{
+  const f=await setup(t,{prepare:false}),d=await f.service.detail('SPEC-flow');assert.equal(await exists(f.root),false);assert.equal(d.authoring.storage,'sqlite');assert.equal(d.preferences.configured,true);assert.equal(d.state.clean,true);assert.equal(d.modules.length,1);
   assert.equal(d.dependencies.installed,false);assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
   const before=d.state.head;await f.job('repository.setup',f.setupInput);assert.equal((await f.service.detail('SPEC-flow')).state.head,before);
 });
-test('source save automatically versions only the selected file and keeps unrelated staging intact',async t=>{
+test('source save writes SQLite only; later export preserves unrelated staging',async t=>{
   const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',projectIds:['product']});
-  const relative='spec/REQ-001/login/login.sd.md',bytes=await readFile(path.join(f.root,relative));
+  const relative='spec/REQ-001/login/login.sd.md',bytes=Buffer.from((await f.service.readFile('SPEC-flow',relative)).content);
   await writeFile(path.join(f.root,'external.txt'),'not selected');await git.command(f.root,['add','external.txt']);
   await f.job('repository.save',{kind:'source',path:relative,expectedHash:digest(bytes),content:'New human design'});
+  assert.equal((await f.service.readFile('SPEC-flow',relative)).content,'New human design');
+  assert.equal(await exists(path.join(f.root,relative)),false,'Save does not write the checkout');
+  await f.job('repository.prepare');
   assert.equal((await git.command(f.root,['show',`HEAD:${relative}`])).stdout,'New human design');
   assert.equal((await git.command(f.root,['cat-file','-e','HEAD:external.txt'],{allowFailure:true})).exitCode,128);
   assert.equal((await git.command(f.root,['show',':external.txt'])).stdout,'not selected');
   const conflicting=await f.job('repository.save',{kind:'source',path:relative,expectedHash:digest(bytes),content:'stale'}, {fail:true});assert.equal(conflicting.error.code,'CONTENT_CHANGED');
   assert.equal(await readFile(path.join(f.root,relative),'utf8'),'New human design');
 });
-test('saving detached product automatically records its version and parent gitlink, entirely offline',async t=>{
+test('saving detached product uses SQLite, and explicit projection creates its Git version',async t=>{
   const f=await setup(t),target=path.join(f.root,'projects/product'),before=(await git.modules(f.root))[0].commit;
   assert.equal((await git.inspect(target)).branch,null);
   await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'after'});
+  assert.equal((await git.modules(f.root))[0].commit,before,'Save must not alter gitlinks');
+  assert.equal((await f.service.readProjectFile('SPEC-flow','product','message.txt')).content,'after');
+  await f.job('repository.prepare');
   const after=(await git.modules(f.root))[0];assert.notEqual(after.commit,before);assert.equal(after.actual,after.commit);assert.equal(after.dirty,false);assert.equal((await git.inspect(f.root)).clean,true);
   assert.equal((await git.command(undefined,['--git-dir',f.productRemote,'show','main:message.txt'])).stdout,'before');
   assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
@@ -52,6 +59,7 @@ test('saving detached product automatically records its version and parent gitli
 test('formal candidate can clone an unpushed product version without a remote sync',async t=>{
   const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',projectIds:['product']});
   await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'local-only'});
+  await f.job('repository.prepare');
   await writeJson(path.join(f.root,'package-lock.json'),{lockfileVersion:3,packages:{}});await approve(f.root);
   const candidate=await prepareRun({root:f.root,home:f.home,repositoryId:'SPEC-flow',git,input:{requirementId:'REQ-001',featureId:'login',expected:await git.inspect(f.root)}});
   assert.equal(await readFile(path.join(f.home,'executions',candidate.runId,'repo/projects/product/message.txt'),'utf8'),'local-only');
@@ -70,6 +78,7 @@ test('sync conflicts preserve local and remote histories and perform no product 
   await writeFile(path.join(other,'remote-change.txt'),'remote');await commitAll(other);await git.push(other,{},await git.inspect(other));
   await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Local',projectIds:['product']});
   await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'local'});
+  await f.job('repository.prepare');
   const before=await git.inspect(f.root),remote=(await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim();
   const result=await f.job('repository.sync',{}, {fail:true});assert.equal(result.error.code,'SYNC_CONFLICT');assert.equal(result.error.details.sync.completed.length,0);
   assert.deepEqual(await git.inspect(f.root),before);assert.equal((await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim(),remote);
@@ -139,6 +148,8 @@ test('adding a product after starting work does not discard unrelated drafts or 
   await git.command(f.root, ['add', '--', 'staged.md']);
   const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{id:'myproduct', url}] });
   assert.equal(result.result.ready, true);
+  assert.equal((await f.service.detail('SPEC-flow')).modules[0].id, 'myproduct');
+  await f.job('repository.prepare');
   assert.equal((await git.modules(f.root))[0].id, 'myproduct');
   const after = await git.inspect(f.root);
   assert.deepEqual(after.changes.map(x => x.path).sort(), ['draft.md', 'staged.md']);
@@ -159,7 +170,7 @@ test('reviewer-only settings do not modify or commit an unrelated configuration 
   assert.equal((await f.service.detail('SPEC-flow')).preferences.reviewer, 'New reviewer');
 });
 
-test('setup refuses overlapping config drafts without overwriting or silently committing them', async t => {
+test('SQLite settings save accepts a new binding; export detects overlapping checkout edits', async t => {
   const f = await setup(t, { product: false });
   const file = path.join(f.root, 'workbench.yaml'), before = await readFile(file, 'utf8');
   await writeFile(file, before.replace('"timeoutMs": 180000', '"timeoutMs": 210000'));
@@ -168,8 +179,10 @@ test('setup refuses overlapping config drafts without overwriting or silently co
   await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', url]);
   await git.command(productRoot, ['remote', 'add', 'origin', url]);
   await git.push(productRoot, {}, await git.inspect(productRoot));
-  const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'target', url }] }, { fail: true });
-  assert.equal(result.error.code, 'SETTINGS_DRAFT_CONFLICT');
+  const saved = await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'target', url }] });
+  assert.equal(saved.result.storage,'sqlite');
+  const result = await f.job('repository.prepare', {}, { fail: true });
+  assert.equal(result.error.code, 'EXPORT_CONFLICT');
   assert.equal((await git.modules(f.root)).length, 0);
   assert.equal(await readFile(file, 'utf8'), before.replace('"timeoutMs": 180000', '"timeoutMs": 210000'));
 });
@@ -180,7 +193,8 @@ test('submodule registration respects an externally edited gitmodules file witho
   const target = path.join(f.base, 'product-extra');
   const head = await repository(target, { 'README.md': 'sample' });
   const before = await git.inspect(f.root);
-  const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'extra', url: target }] }, { fail: true });
+  await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'extra', url: target }] });
+  const result = await f.job('repository.prepare', {}, { fail: true });
   assert.equal(result.error.code, 'SUBMODULE_SETTINGS_CONFLICT');
   assert.deepEqual(await git.inspect(f.root), before);
   assert.equal(await readFile(path.join(f.root, '.gitmodules'), 'utf8'), '# pending external edit\n');
@@ -190,14 +204,14 @@ test('plain-language requirement creates stable IDs and multiple Gherkin cases w
   const f=await setup(t,{product:false});
   const result=(await f.job('workflow.create',{title:'使用者登入',goal:'已有帳號的人希望登入',acceptance:'輸入正確密碼，能看到個人頁面\n- 密碼錯誤時顯示提示',guided:true})).result;
   assert.equal(result.key,'REQ-001/feature');
-  const file=await readFile(path.join(f.root,'spec/REQ-001/feature/feature.feature'),'utf8');
+  const file=(await f.service.readFile('SPEC-flow','spec/REQ-001/feature/feature.feature')).content;
   assert.match(file,/Feature: 使用者登入/);assert.match(file,/目標：已有帳號的人希望登入/);
   assert.match(file,/@case:CASE-001/);assert.match(file,/@case:CASE-002/);
   assert.match(file,/Then 輸入正確密碼，能看到個人頁面/);
   assert.match(file,/Then 密碼錯誤時顯示提示/);
-  const metadata=await readJson(path.join(f.root,'spec/REQ-001/feature/feature.yaml'));
+  const metadata=JSON.parse((await f.service.readFile('SPEC-flow','spec/REQ-001/feature/feature.yaml')).content);
   assert.deepEqual(metadata.caseIds,['CASE-001','CASE-002']);
-  const requirement=await readJson(path.join(f.root,'spec/REQ-001/requirement.yaml'));
+  const requirement=JSON.parse((await f.service.readFile('SPEC-flow','spec/REQ-001/requirement.yaml')).content);
   assert.equal(requirement.title,'使用者登入');
   const next=(await f.job('workflow.create',{title:'退出登入',acceptance:'按下退出後進入未登入狀態',guided:true})).result;
   assert.equal(next.key,'REQ-002/feature');
@@ -208,12 +222,12 @@ test('guided requirement revisions are saved locally and remain editable without
   const f=await setup(t,{product:false});
   await f.job('workflow.create',{title:'會員登入',acceptance:'能顯示登入頁',guided:true});
   const pathname='spec/REQ-001/feature/feature.feature';
-  const before=await readFile(path.join(f.root,pathname));
+  const before=Buffer.from((await f.service.readFile('SPEC-flow',pathname)).content);
   const review=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'會員登入',goal:'使用者想登入',acceptance:'能進入首頁\n錯誤密碼顯示原因',expectedHash:digest(before)});
   assert.equal(review.result.saved,true);
-  const meta=await readJson(path.join(f.root,'spec/REQ-001/feature/feature.yaml'));
+  const meta=JSON.parse((await f.service.readFile('SPEC-flow','spec/REQ-001/feature/feature.yaml')).content);
   assert.deepEqual(meta.caseIds,['CASE-001','CASE-002']);
-  assert.match(await readFile(path.join(f.root,pathname),'utf8'),/Given 系統已準備好讓使用者操作 會員登入/);
+  assert.match((await f.service.readFile('SPEC-flow',pathname)).content,/Given 系統已準備好讓使用者操作 會員登入/);
   assert.equal((await git.inspect(f.root)).clean,true);
   assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
   const stale=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'衝突覆寫',acceptance:'覆寫',expectedHash:digest(before)},{fail:true});
@@ -231,9 +245,9 @@ test('incomplete plain-language acceptance stays a draft and cannot be approved'
 
 test('editing a real Gherkin file disables guided overwrite protection',async t=>{
   const f=await setup(t,{product:false});await f.job('workflow.create',{title:'會員登入',acceptance:'能顯示登入頁',guided:true});
-  const pathname='spec/REQ-001/feature/feature.feature';let old=await readFile(path.join(f.root,pathname));
+  const pathname='spec/REQ-001/feature/feature.feature';let old=Buffer.from((await f.service.readFile('SPEC-flow',pathname)).content);
   await f.job('repository.save',{kind:'source',path:pathname,content:'Feature: customized\n  Scenario: custom\n    Given I wrote my own steps\n',expectedHash:digest(old)});
-  const result=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'不能覆蓋',acceptance:'xxx',expectedHash:digest(await readFile(path.join(f.root,pathname)))},{fail:true});
+  const result=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'不能覆蓋',acceptance:'xxx',expectedHash:digest(Buffer.from((await f.service.readFile('SPEC-flow',pathname)).content))},{fail:true});
   assert.equal(result.error.code,'ADVANCED_GHERKIN');
-  assert.match(await readFile(path.join(f.root,pathname),'utf8'),/customized/);
+  assert.match((await f.service.readFile('SPEC-flow',pathname)).content,/customized/);
 });

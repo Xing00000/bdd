@@ -13,7 +13,7 @@ export async function projectRoot(root, projectId, git) {
   invariant(project && (await git.modules(root)).some(x => x.id === projectId && x.actual), 'PROJECT_NOT_INITIALIZED', 'Project must belong to this Spec Repo and be initialized', 404);
   return safePath(root, project.path, { missing: false });
 }
-function sourcePath(relative) {
+export function sourcePath(relative) {
   relativePath(relative);
   invariant(!relative.split('/').some(x => ['node_modules', '.runtime', '.generated', '.workbench-tools'].includes(x) || /^\.env(?:\.|$)/.test(x))
     && !/\.(pem|key|p12|pfx)$/i.test(relative), 'SOURCE_PATH_DENIED', 'Private/runtime files are not exposed by the source editor', 403);

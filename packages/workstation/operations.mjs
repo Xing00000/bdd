@@ -1,4 +1,6 @@
-import { flowNames, setupRepository, saveRepository, advanceWorkflow, synchronizeRepository } from './flows.mjs';
+import { localAuthoring, editDraft } from './authoring.mjs';
+import { prepareProjection, captureExecutionFiles, captureSynchronized } from './projection.mjs';
+import { flowNames, advanceWorkflow, synchronizeRepository } from './flows.mjs';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { createGit } from '../git-core/index.mjs';
@@ -44,10 +46,35 @@ export async function executeOperation(options, store, request) {
   const git = createGit({ allowLocal, hosts }), input = request.input;
   if (flowNames.includes(request.operation)) {
     const context = { root, options, store, request, git };
-    if (request.operation === 'repository.setup') return setupRepository(context);
-    if (request.operation === 'repository.save') return saveRepository(context);
-    if (request.operation === 'repository.sync') return synchronizeRepository(context);
-    return advanceWorkflow(context);
+    if (localAuthoring(request)) {
+      for(let attempt=0;;attempt++) {
+        try { return await editDraft(context); }
+        catch(error) { if(error.code!=='DRAFT_REVISION_CHANGED'||attempt>=2)throw error; }
+      }
+    }
+    // Saves are already durable. Only explicit reads/execution/sync need a Git projection.
+    if (request.operation === 'workflow.verify' || request.operation === 'workflow.review') {
+      const { ensureDraft, inDraftView } = await import('./authoring.mjs');
+      const snapshot = await ensureDraft({ ...context, repositoryId: request.repositoryId });
+      if (request.operation === 'workflow.verify') await inDraftView(snapshot, async view => {
+        const review = await reviewState(view,input.requirementId,input.featureId);
+        invariant(Object.values(review.confirmed).every(Boolean),'REVIEWS_REQUIRED','請先確認需求、設計與測試。',409);
+      });
+      invariant(enableExecution,'EXECUTION_DISABLED','內容已儲存；主機尚未啟用測試執行。',403);
+    }
+    const snapshot = await prepareProjection(context);
+    if (request.operation === 'repository.prepare') return { prepared: true, revision: snapshot.revision };
+    const projected = { ...context, request: { ...request, expected: await git.inspect(root) } };
+    if (request.operation === 'repository.sync') {
+      const receipt = await synchronizeRepository(projected);
+      receipt.sourceRevision = await captureSynchronized(context,snapshot); store.setSyncReceipt(request.repositoryId,receipt);
+      return receipt;
+    }
+    let output, failure;
+    try { output = await advanceWorkflow(projected); } catch (error) { failure = error; }
+    try { await captureExecutionFiles(context,snapshot); } catch(error) { failure ??= error; }
+    if(failure) { failure.details = { ...failure.details, saved: true, storage: 'sqlite' }; throw failure; }
+    return output;
   }
   if (request.operation === 'repository.clone') return git.clone(workspace.remoteUrl, root, workspace.branch ?? undefined);
   await git.root(root);
