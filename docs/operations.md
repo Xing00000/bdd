@@ -1,10 +1,10 @@
-# 操作指南
+# 工作台操作
 
 [README](../README.md) · [架構](architecture/workstation.md) · [相容](compatibility.md)
 
-## 部署與備份
+## 主機準備與更新
 
-使用 Node.js 24 與 Git。`npm start` 直接提供新工作台，不需要舊 UI build。預設網址 `http://127.0.0.1:4173/`，`WB_PORT` 可指定連接埠，`WB_HOME` 預設為 `~/.bdd-workstation`。
+使用 Node.js 24、Git、SSH agent 與 known-host。`npm start` 直接啟動工作台，不需舊 Vue UI build。預設位址為 `http://127.0.0.1:4173/`；`WB_PORT` 設定連接埠，`WB_HOME` 保存受管理的來源與作業資料。
 
 ```sh
 WB_HOME=/absolute/private/workbench \
@@ -12,84 +12,68 @@ WB_ENABLE_TRUSTED_EXECUTION=1 \
 npm start
 ```
 
-只在可信任、隔離的執行主機開啟此旗標。Git SSH agent 與 known-host 由主機設定。`WB_GIT_HOSTS` 控制允許的 Git host。`WB_ALLOW_LOCAL_GIT=1` 只供明確允許本機 Git remote 的環境，CI 使用它連接真實 bare remotes。
+先停止舊程序及 workers、備份整個 WB_HOME，再更新。Schema 4 在既有 SpecRepository 管理模型新增集中設定與同步收據；不刪除舊 checkout 或證據。尚無集中設定的既有規格庫會引導完成設定一次，不必重新綁定。
 
-`PLAYWRIGHT_BROWSERS_PATH` 可共用受管理 browser binaries；未設定時工作台使用 `WB_HOME/browsers`。UI 可安裝 Chromium binaries，不會用 sudo 安裝 OS 套件；系統相依套件請先準備。其他 browser profile 可以在主機安裝對應正式版本。
+`WB_GIT_HOSTS` 設定允許來源；`WB_ALLOW_LOCAL_GIT=1` 僅供管理者允許本機遠端的環境。`PLAYWRIGHT_BROWSERS_PATH` 可指定瀏覽器路徑，預設使用 `WB_HOME/browsers`。UI 安裝瀏覽器 binaries，不使用 sudo，也不安裝 OS 套件；OS 相依套件與 Git 登入由部署主機準備。
 
-停止舊程序及 workers，備份完整 `WB_HOME`、舊 metadata DB 與原證據，再啟動 schema 3。升級保留舊 Spec ID 與未提交 checkout 檔案；若 `workspaces/` 和 `repositories/` 同時存在，系統拒絕合併，需先保存並排除重複目錄。metadata 的升級備份不是完整工作目錄備份。
+## 一次性設定
 
-## UI 完整路徑
+首頁「綁定 Spec Repo」集中填寫：規格庫名稱及網址、確認者名稱、零到多個產品的名稱及來源網址，以及驗收服務的啟動程式、逐行參數與產品網址。第一個產品預設作為服務；不同服務可在同一個設定頁選擇。健康檢查預設為同來源 `/health`，不同位置才需進階設定。
 
-### 綁定與初始化
+系統自動 Clone、初始化空 Spec Repo、保存初始結構、建立 submodules、固定產品版本。這些步驟沒有額外確認或提交按鈕。非空不相容規格庫會拒絕覆寫。現有產品來源不允許靜默替換或刪除。
 
-首頁「綁定 Spec Repo」填入名稱與既有 remote。空 remote 的分支欄留白。選擇 Repo 後按「取得 Repo」「初始化 Spec 結構」，再到「Git 與 Remotes」勾選初始檔案、輸入訊息、Commit。初始化遇到非空不相容 Repo 會拒絕，不覆蓋它。
+服務的健康檢查需回傳 `{ "commit": "<WB_SOURCE_COMMIT>" }`。Runner 從固定版本啟動它，並核對產品網址；不把另一個已存在網站當成目前產品。多服務部署證明仍未支援。
 
-第二個 Spec Repo 走相同流程，彼此的功能 ID、Projects 與執行紀錄獨立。產品不能直接加到工作台總覽。
+## 儲存與遠端同步
 
-### 加入產品與 remote
+**儲存**僅處理這次編輯的檔案與必要的父層產品引用；系統自行建立本機版本。未被選取的 staged／unstaged 內容保持原樣。失敗會保留內容並顯示錯誤，不以遠端同步成功代替儲存成功。
 
-在 Spec Repo 的 Projects 頁按「加入 Project」，填產品 ID、產品 remote 與來源分支。來源分支解析到完整 SHA 並寫成 gitlink。回 Spec Git 頁審閱並提交 `.gitmodules`、`workbench.yaml` 與 gitlink。
+**遠端同步**才連線並分享已儲存內容。先核對集中設定的唯一同步位置、確認沒有未儲存外部變更及歷史衝突；然後依序同步產品、規格與全部已封存報告。報告使用系統管理的 evidence 分支，不改寫受測來源版本。分享報告可能包含頁面內容與 logs，點擊同步即代表要求上傳這些已儲存證據。
 
-Git 頁可選「Spec Repo」或該 Repo 的某個 Project；每個 Git 目標有自己的 remote 清單。新增／編輯 named remote 時，fetch URL 與 push URL 可不同；「Fetch 選取 Remote」不隱含 Merge，「Push 選取目標」先列出 SHA、remote URL 與遠端分支並要求確認。產品版本請先 Push，再 Push 包含新 gitlink 的 Spec 候選。
+主流程沒有 Commit／Push／Fetch／gitlink／branch 操作，使用者不必取 SHA 或輸入提交訊息。底層 Git 功能仍供開發者維護，但不是 UI 的必要步驟。
 
-### 驗收環境與依賴
+無衝突且僅遠端較新時使用 fast-forward；分歧歷史不自動 merge、不 reset、不 Force Push。同步失敗會保存已完成步驟，顯示尚未完成，可重試。跨 Repo 不是原子交易，可能部分已上傳；不會假裝全部回滾。
 
-總覽選服務 Project，填入 loopback 目標網址、健康檢查網址、啟動 executable 與逐行 argv。健康檢查應回傳 `{ "commit": "<WB_SOURCE_COMMIT>" }`。Runner 會從 pinned Project 啟動服務，不把既有 port 的回應當成自己部署的版本。
+## 三個內容確認
 
-按「安裝／更新測試依賴」：無 lockfile 使用固定的 npm install，有 lockfile 使用 npm ci，兩者皆忽略 lifecycle scripts。按「安裝 Chromium」安裝與規格庫 Playwright 版本相容的 browser binaries。設定與 lockfile 是要審閱、提交的來源。
+需求、設計、驗收測試是需要人決定的內容。確認者名稱來自集中設定，不逐頁再填。按「確認…並繼續」即為確認，不再彈第二次確認框。未儲存的當前文件會先儲存；其他尚未儲存的設定需先保存。
 
-### 需求到測試
+測試確認自動執行真正的生成及 discovery，必須與案例／瀏覽器範圍一致才會推進。一般使用預設 CASE-001、Chromium 及所選產品；不同案例 ID 或產品關係可在功能的進階範圍設定中修改，這些是每個功能的驗收內容，不是重複的環境設定。
 
-建立 Requirement ID／Feature ID 與產品關聯。五階段每頁有文件、下一步及阻擋原因。依序保存及確認 Gherkin、SD，再編寫 steps／hooks。案例 ID 與 browser profile 可在「案例、瀏覽器與產品範圍」調整。
+上游改變會讓相關確認過期，必要的重新審閱仍保留。系統不代替人批准新的需求或修改後的驗收斷言。
 
-檢查測試接線會執行真正生成與 discovery，必須與配置中的案例集合一致。成功後才可確認測試基線；修改檔案後必須重檢。人工確認不會自動 Commit，也不宣稱產品通過。
+## 套件只在流程需要時一次詢問
 
-### 產品開發與驗收
+第一次確認測試或執行需要環境時，系統檢查套件定義、lockfile、Node 主版本、選取瀏覽器及已安裝檔案。缺少環境顯示一個「安裝必要套件並繼續」對話框，列出套件版本與瀏覽器。按一次會完成依賴與瀏覽器安裝、保存 lockfile、接續原操作。
 
-在 Projects 選產品。固定版本通常是 detached HEAD，按「此 Project 的 Git」建立開發分支，再回編輯器修改 UTF-8 產品檔案。保存時檢查目前內容 hash，拒絕覆蓋其他人剛改的內容。
+沒有另外的安裝依賴、安裝 Chromium、提交 lockfile、檢查接線按鈕。取消不安裝也不推進。相同已安裝環境不重複詢問；依賴版本改變、新增瀏覽器或檔案缺失需要新的授權。安裝授權綁定當下依賴摘要，不能用舊授權安裝被更換的套件。
 
-產品 Commit → 明確 Push → Projects「固定目前產品 Commit」→ Spec Commit → Spec Push。回功能開發／驗收頁按「準備驗收候選」，在執行紀錄啟動真正測試。前置確認、dirty checkout 或產品版本不符會阻擋，畫面給出原因。
+依賴安裝使用 npm install／ci 的 `--ignore-scripts`，不執行安裝 lifecycle scripts。新範本的正式驗收安裝也採用這個參數。已存在的可執行測試與產品命令仍須在可信任隔離環境執行，這不是惡意程式沙箱。
 
-失敗也封存報告。修正產品後建立新 candidate／run；不能覆寫舊 run。通過只對應當次固定輸入。上游內容或產品改變後顯示過期，不延用舊 VERIFIED。
+## 一次開始驗收
 
-### 證據與發布
+按「開始驗收」即可完成候選準備、真正執行、封存與本機報告保存。產品版本直接從受管理本機來源取得，因此產品儲存後，即使從未同步也可驗收。
 
-「檢視證據」顯示案例、瀏覽器、結果、斷言、逐步圖片、受測版本與下載連結。「建立報告 Commit」使用獨立 clone；「Push 報告分支」明確發布到 origin 的 `evidence/<run-id>`。R 與被測 S 不同，不改動 main。
+失敗報告也保留。修正產品按儲存，再次驗收建立新 run。結果只對該次固定版本有效；舊 VERIFIED 不替新修改背書。報告與截圖自動保存，不需要「建立報告 Commit」「發布報告」按鈕；遠端同步一併上傳。
 
-其他機器先明確 Fetch，再「重建 Git 報告索引」。驗證不通過的 report 不當作有效證據。報告、截圖、logs 可能含敏感資料，Push 前需人工審閱。
+## 故障與人工處理
 
-## API 與腳本
+| 狀況 | 行為 |
+|---|---|
+| 來源在編輯期間被改過 | 拒絕覆蓋，保留畫面草稿，重新讀取比較。 |
+| 安裝取消或失敗 | 流程不推進、已儲存內容不變；按原步驟重試。 |
+| 測試接線或斷言失敗 | 顯示錯誤；修正內容，不把失敗轉成通過。 |
+| 遠端歷史分歧 | 保留兩邊版本並阻擋同步；需要人工判斷差異。現階段不提供圖形化衝突合併器。 |
+| 同步目的地被外部改動 | 阻擋；在集中設定重新核對來源與目的地。 |
+| 程序中斷 | 作業紀錄保留；不宣稱原子完成。新的驗收使用新 run，不覆寫舊證據。 |
+| 主機缺少 OS 瀏覽器相依套件／憑證 | 顯示錯誤，由管理者修復；不要求使用者執行 Git 步驟。 |
 
-API prefix `/repository-api/v1`。資源為 `/workbench`、`/spec-repositories`、`/spec-repositories/:id/projects/:projectId/files`、`/operations` 與各 Repo 的 run artifacts。不存在全域 Project 或舊 `/workspaces` API。
+## 開發者 API 與維護
 
-寫入使用 JSON、`X-Workbench-Request: 1`；Origin 出現時必須符合站台。操作輸入：
+API 前綴 `/repository-api/v1`，資源為 SpecRepository 及其 Projects。主要操作為 `repository.setup`、`repository.save`、`repository.sync`、`workflow.create`、`workflow.review`、`workflow.verify`；共同使用持久作業、repositoryId、預期版本與互斥鎖。
 
-```json
-{
-  "schemaVersion": 1,
-  "operationId": "OP-unique",
-  "repositoryId": "SPEC-id",
-  "operation": "git.commit",
-  "expected": { "head": "<actual-full-sha>" },
-  "input": { "paths": ["spec/REQ-001/login/login.feature"], "message": "Define login" }
-}
-```
+儲存的 input 包含 `kind: source|project|scope`、檔案路徑、內容及 expectedHash；產品需 projectId。套件缺失回傳 INSTALL_REQUIRED 與依賴摘要；UI 唯一的安裝確認重送原操作並附 installConsent。不是接受任意安裝命令。
 
-Project Git 操作另外指定 `target: {"kind":"project","projectId":"product"}`，仍必須帶父層 repositoryId。`git.push` 可指定 `input.remote` 與 `input.branch`。所有 scripts 讀 stdin JSON、回 stdout JSON；不接受任意伺服器 cwd 或任意 shell。
+舊資料匯入、工具升級與恢復仍保留在管理 CLI，不在日常流程堆疊操作。`node scripts/workstation.mjs help` 列出底層及語意操作。相關工具不自動推送匯入的機密來源；操作前備份並審閱。
 
-`repository.clone`、`repository.initialize`、`repository.validate`、`repository.dependencies.install`、`repository.browsers.install`、`spec.tests.check`、`project.file.save`、`git.remote`、`submodule.*`、`run.*` 共用後端實作。舊 request 名稱只在儲存資料升級時轉換，不是持續存在的 API alias。
-
-## 維護與相容檢查
-
-維護頁提供工具升級預覽／套用、舊 DB 唯讀匯入與中斷續做。原資料匯入不重新批准來源，也不執行被封存的舊測試；參見相容文件。
-
-```sh
-npm run check:repository
-npm run check:workstation
-npm run test:workstation
-npm run test:workstation:e2e
-```
-
-舊元件回歸使用 `npm ci`、`npm run spec:list`、`npm run check:unused`、`npm run check`、`npm run build`、`npm run test:app`。這些是相容性維護，不會啟動舊工作區作為正常入口。
-
-UI 驗收測試會保存真實瀏覽器 trace、手機／桌面截圖、UI 發出的寫入請求與 Git 收據。基礎設施可以預先建立 Git 服務及 browser binaries，業務流程不得透過 API 或檔案預填來跳過 UI。
+驗證使用 `npm run check:repository`、`npm run check:workstation`、`npm run test:workstation`、`npm run test:workstation:e2e`。相容元件的 build／typecheck／test:app 仍在 CI 執行。所有瀏覽器寫入必須透過 UI，不能用 API 或檔案預填來跳過真實流程。

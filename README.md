@@ -1,52 +1,43 @@
 # BDD 工作台
 
-一個工作台綁定多個 **Spec Repository 與 Git remotes**；產品只存在於各 Spec Repo 的 `projects/` submodules。規格、測試與報告使用相同的 `REQ/feature` 層級。不是另一個全域「產品工作區」系統。
+一個工作台綁定多個 Spec Repo；產品只存在於各規格庫的 `projects/`。使用者處理需求、設計、測試與產品內容，**不需要操作 Git 流程**。
 
 ```text
-工作台
-  ├─ Spec Repo A（origin / 其他 remotes）
-  │   ├─ spec/REQ/feature/
-  │   ├─ tests/REQ/feature/
-  │   ├─ reports/REQ/feature/run/
-  │   └─ projects/product-a/ → Git submodule
-  └─ Spec Repo B（自己的 remotes、需求、Projects、作業及驗收）
+工作台 → Spec Repo → 需求／測試／報告 + Projects
 ```
 
-## 啟動
+## 開始使用
 
-主機需要 Node.js 24 與 Git。管理服務使用 Node 內建模組，不需要先安裝舊 Vue／PTY 應用的依賴。
-
-```sh
-npm start
-# http://127.0.0.1:4173/
-```
-
-`/` 就是新工作台。`/repositories` 是相同頁面的相容網址，不是另一個管理產品；舊 `/requirements`、全域 `/projects` 以及舊工作區 API 不再由正式入口提供。
-
-在已隔離、可信任的執行主機上開啟測試與依賴安裝：
+主機需要 Node.js 24、Git、可用的遠端憑證及瀏覽器系統相依套件。在可信任、隔離的主機啟動：
 
 ```sh
 WB_ENABLE_TRUSTED_EXECUTION=1 npm start
+# http://127.0.0.1:4173/
 ```
 
-程式設定、套件與測試是可執行程式碼。此旗標不是 OS sandbox，也不適合直接公開多租戶使用。主機仍須具備正式瀏覽器的系統相依套件。SSH agent／known-host 設定由主機管理，不把 Token、密碼或私鑰放進 Git URL。
+沒有啟用執行旗標時仍可管理與編輯，但不執行依賴安裝或測試。此旗標不是 OS sandbox；站台只綁定 loopback，不提供公開多租戶 ACL。
 
-## 從 UI 推進一個需求
+## 設定一次，日常只做必要操作
 
-1. **綁定 Spec Repo**：輸入名稱與 remote → 取得 Repo → 空 Repo 初始化 → Git 頁檢視並提交初始結構。
-2. **加入 Projects**：在所屬 Spec Repo 加入產品 remote 與分支，解析成固定 commit；提交 gitlink。
-3. **準備環境**：選服務 Project、啟動程式與參數、測試網址、health URL；從 UI 安裝測試依賴與 Chromium，審閱 lockfile。
-4. **需求 → 設計 → 測試**：建立功能、編輯原始檔、逐階段確認；實際生成／discovery 通過後才能確認測試基線。
-5. **開發 → 驗收**：編輯 Project 的產品檔案，建立分支、Commit、Push；固定產品版本並提交 Spec 候選，從 UI 準備及執行驗收。
-6. **報告**：檢視真實結果與逐步截圖；獨立建立報告 commit，明確 Push 到 evidence 分支。失敗紀錄不覆寫，歷史通過不冒充當前版本已驗收。
+首次綁定時集中填寫規格庫網址、確認者、產品來源與啟動方式。已存在的規格庫設定會保留；沒有產品時可先處理需求，之後在同一個「設定」頁補齊。系統自動取得檔案、初始化空庫、連結產品、記錄本機版本。
 
-每個按鈕有前置條件與阻擋原因。保存檔案不等於 Commit，Commit 不等於 Push。未保存的編輯在離開前需要確認；過期 HEAD 或檔案 hash 不會被默默覆寫。
+| 使用者操作 | 系統自動完成 |
+|---|---|
+| **儲存** | 保存指定檔案、建立本機版本、更新對應產品引用。不連線、不上傳、不夾帶其他尚未儲存的檔案。 |
+| **確認需求／設計／測試並繼續** | 保存目前編輯、檢查前置條件、記錄確認並前進。測試接線自動檢查，沒有另一個檢查按鈕。 |
+| **安裝並繼續**（必要時一次） | 一次列出必要套件與瀏覽器，取得授權後安裝，然後接續原步驟。取消不安裝、不推進。 |
+| **開始驗收** | 固定已儲存輸入、建立獨立副本、執行、封存報告。尚未遠端同步也可以驗收。 |
+| **遠端同步** | 核對同步位置、處理無衝突更新，依序同步已儲存產品、規格、報告。不要求輸入 commit 訊息、分支或 SHA。 |
+
+只保留內容審核、安裝授權、捨棄未儲存草稿與需要人判斷的衝突。沒有儲存、同步、開分支、固定版本或執行前的重複確認框。一般設定不在每次執行時重問。
+
+日常流程：**建立需求 → 確認需求 → 確認設計 → 確認測試 → 儲存產品 → 開始驗收**。失敗時修改產品、儲存、再次驗收；報告自動保留。要分享時按遠端同步。
 
 ## 文件
 
-- [架構、資料模型與 UI 資訊架構](docs/architecture/workstation.md)
-- [操作、部署、備份與完整 UI 流程](docs/operations.md)
-- [舊資料相容與退役邊界](docs/compatibility.md)
+- [架構與自動化界線](docs/architecture/workstation.md)
+- [操作、部署及故障處理](docs/operations.md)
+- [舊資料與維護相容](docs/compatibility.md)
 
 ## 驗證
 
@@ -57,8 +48,6 @@ npm run test:workstation
 npm run test:workstation:e2e
 ```
 
-真實瀏覽器測試從**兩個空的 bare Git remotes**開始；只預先準備 Git 遠端、刻意未完成的產品及瀏覽器依賴。不預填 Spec、確認狀態、作業或報告。綁定、編輯、接線檢查、人工確認、產品修正、所有 Commit／Push、失敗重跑及證據發布皆由頁面上的使用者控制項完成。
+核心測試使用真實 Git、SQLite、HTTP、子程序與隔離的遠端。瀏覽器測試從兩個空遠端開始，沒有預填規格、審核或報告；透過頁面完成集中設定、儲存、取消安裝、一次同意安裝、真實失敗、產品修正、未同步先驗收、最後一次同步與跨庫隔離。
 
-測試保留 UI trace、桌面／手機截圖、所有 UI 寫入請求與 Git 收據。它驗證真實 Git 推送到隔離的 bare remotes，不代表已代替你的私有 GitHub SSH 憑證做驗證。缺少前置條件直接失敗，不轉成 skip。
-
-原有 Agent／MCP／錄製程式尚未全面遷移到此新介面，保留其來源與相容性回歸檢查，但不以「舊工作區」重新暴露在主要導航。詳細限制見相容文件。
+證據包含 UI trace、桌面／手機截圖、請求紀錄及遠端 refs 收據。對隔離 bare remotes 的真實推送不等於驗證使用者自己的 GitHub SSH 權限。舊 Agent／MCP／Terminal／錄製的完整接線仍見相容文件，不以舊工作區冒充已完成。

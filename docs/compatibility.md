@@ -10,7 +10,9 @@
 
 ## 管理模型遷移
 
-Operational DB 的 `workspaces` 登錄資料實際代表以前加入的 Spec checkout。Schema 3 明確改為 `spec_repositories`，其 jobs、checks、runs 與 report index 以 repository ID 關聯。原 ID 保留；原 operation request 另存，轉換後標準格式用 repositoryId。這是一次遷移，不是繼續開放舊工作區 API。
+Operational DB schema 4 保留 schema 3 的轉換，新增 `repository_preferences` 保存一次設定及同步收據。尚未設定的舊登錄只需完成集中設定，不重建 checkout。
+
+原 Operational DB 的 `workspaces` 登錄資料實際代表以前加入的 Spec checkout。Schema 3 明確改為 `spec_repositories`，其 jobs、checks、runs 與 report index 以 repository ID 關聯。原 ID 保留；原 operation request 另存，轉換後標準格式用 repositoryId。這是一次遷移，不是繼續開放舊工作區 API。
 
 舊 checkout 目錄 `WB_HOME/workspaces` 改名為 `WB_HOME/repositories`，保留 git refs、未提交文件與本機產品內容。舊 run evidence/seal 不重寫，讀取 ownership 時辨識舊欄位。遷移 journal 的舊 root 僅接受同一個受管理 checkout 的舊位置，不允許任意路徑。
 
@@ -31,3 +33,7 @@ Operational DB 的 `workspaces` 登錄資料實際代表以前加入的 Spec che
 ## 防止退化
 
 `check:repository` 阻擋生成副本、過期文件與不存在的 npm 指令；`check:unused` 檢查生產 TypeScript 中的未使用宣告；Build 清除失效的編譯輸出。原有相容性測試仍執行，不用刪測試讓新的 UI 變更看似成功。
+
+## 日常 UI 的機械操作已退役
+
+Git 操作頁、分開 Clone／初始化／Commit／Push／pin、獨立套件及瀏覽器安裝、接線檢查、準備候選與報告發布按鈕均不再是主流程。低階 API／CLI 保留供維護；正式 UI 只送出 setup、save、sync 與 workflow 語意操作。原有元件回歸仍保留，瀏覽器驗收改為使用新操作並檢查未同步先驗收、安裝取消與一次同意續行。

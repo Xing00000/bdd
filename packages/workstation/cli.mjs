@@ -27,7 +27,7 @@ export async function main(command = process.argv[2]) {
   let service;
   try {
     if (!command || command === 'help') {
-      process.stdout.write('BDD workstation CLI\n  serve | register | list | detail | inspect | wait | cancel\n  repository.clone | repository.initialize | repository.validate\n  spec.feature.create | spec.file.save | spec.review.confirm\n  git.fetch | git.branch | git.commit | git.push\n  submodule.add | submodule.restore | submodule.pin | submodule.remove\n  run.prepare | run.execute | run.publish\n  repository.upgrade.preview | repository.upgrade.apply | repository.transaction.resume\n  legacy.preview | legacy.import | reports.reindex\nRead JSON from stdin. WB_HOME selects persistent state. Mutations require inspected expected.head.\n'); return;
+      process.stdout.write('BDD workstation CLI\n  repository.setup | repository.save | repository.sync\n  workflow.create | workflow.review | workflow.verify\n  serve | register | list | detail | inspect | wait | cancel\n  repository.clone | repository.initialize | repository.validate\n  spec.feature.create | spec.file.save | spec.review.confirm\n  git.fetch | git.branch | git.commit | git.push\n  submodule.add | submodule.restore | submodule.pin | submodule.remove\n  run.prepare | run.execute | run.publish\n  repository.upgrade.preview | repository.upgrade.apply | repository.transaction.resume\n  legacy.preview | legacy.import | reports.reindex\nRead JSON from stdin. WB_HOME selects persistent state. Mutations require inspected expected.head.\n'); return;
     }
     const options = environmentOptions();
     if (command === 'serve') {

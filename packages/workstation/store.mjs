@@ -8,7 +8,7 @@ export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 3, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 4, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
@@ -58,7 +58,10 @@ export function openStore(home) {
       feature_key TEXT NOT NULL, digest TEXT NOT NULL, result_json TEXT NOT NULL,
       PRIMARY KEY(repository_id,feature_key)
     );
-    PRAGMA user_version=3;
+    CREATE TABLE IF NOT EXISTS repository_preferences (
+      repository_id TEXT PRIMARY KEY REFERENCES spec_repositories(id), settings_json TEXT NOT NULL, sync_json TEXT
+    );
+    PRAGMA user_version=4;
   `);
   db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
@@ -85,6 +88,10 @@ export function openStore(home) {
     recordCheck(repositoryId, featureKey, value) {
       db.prepare('INSERT INTO tooling_checks VALUES(?,?,?,?) ON CONFLICT(repository_id,feature_key) DO UPDATE SET digest=excluded.digest,result_json=excluded.result_json').run(repositoryId, featureKey, value.digest, JSON.stringify(value));
     },
+    preferences(repositoryId) { const row=db.prepare('SELECT settings_json FROM repository_preferences WHERE repository_id=?').get(repositoryId); return row ? JSON.parse(row.settings_json) : null; },
+    setPreferences(repositoryId, settings) { db.prepare('INSERT INTO repository_preferences(repository_id,settings_json) VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET settings_json=excluded.settings_json').run(repositoryId,JSON.stringify(settings)); },
+    syncReceipt(repositoryId) { const row=db.prepare('SELECT sync_json FROM repository_preferences WHERE repository_id=?').get(repositoryId); return row?.sync_json ? JSON.parse(row.sync_json) : null; },
+    setSyncReceipt(repositoryId, receipt) { db.prepare('UPDATE repository_preferences SET sync_json=? WHERE repository_id=?').run(JSON.stringify(receipt),repositoryId); },
     get,
     operations(repositoryId) { return db.prepare('SELECT * FROM operations WHERE repository_id=? ORDER BY created_at DESC LIMIT 100').all(repositoryId).map(decode); },
     enqueue(request) {

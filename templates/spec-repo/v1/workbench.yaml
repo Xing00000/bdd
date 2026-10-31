@@ -3,6 +3,6 @@
   "specRepositoryId": "spec-repository",
   "layout": {"specRoot":"spec","testsRoot":"tests","reportsRoot":"reports","projectsRoot":"projects"},
   "projects": [],
-  "execution": {"featureIsolation":"process","install":["npm","ci"],"prepare":[],"teardown":[],"timeoutMs":180000,"environment":{}},
+  "execution": {"featureIsolation":"process","install":["npm","ci","--ignore-scripts","--no-audit","--no-fund"],"prepare":[],"teardown":[],"timeoutMs":180000,"environment":{}},
   "reports": {"storage":"git","publishMode":"explicit"}
 }

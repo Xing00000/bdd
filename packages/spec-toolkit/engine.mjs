@@ -42,7 +42,15 @@ export async function prepareRun({ root, home, repositoryId, input, git }) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const repository = path.join(directory, 'repo');
   await git.cloneCandidate(root, repository, state.head);
-  await git.restore(repository, { head: state.head });
+  for (const project of verified.modules) {
+    const source = await safePath(root, project.path, { missing: false });
+    const destination = await safePath(repository, project.path);
+    // The local source is a registered product checkout, not caller-provided input.
+    // Git creates empty gitlink directories when checking out the parent.
+    if (await exists(destination)) { const { readdir } = await import('node:fs/promises'); invariant((await readdir(destination)).length === 0, 'CANDIDATE_DIRECTORY_NOT_EMPTY', project.path); const { rmdir } = await import('node:fs/promises'); await rmdir(destination); }
+    await git.cloneCandidate(source, destination, project.commit);
+    await git.command(destination, ['remote', 'set-url', 'origin', project.url]);
+  }
   await validate(repository, git, { pinned: true });
   const pinnedReview = await reviewState(repository, input.requirementId, input.featureId);
   invariant(Object.values(pinnedReview.confirmed).every(Boolean) && identity(pinnedReview.hashes) === identity(review.hashes), 'REVIEW_BASELINE_MISMATCH', 'Committed review differs from working tree');

@@ -61,7 +61,7 @@ export async function createWorkstation(configuration) {
         if (feature.verification.status === 'VERIFIED') feature.review.stage = 'VERIFIED';
         else if (feature.review.stage === 'IMPLEMENTATION' && runs.some(r => r.result.requirementId === feature.requirementId && r.result.featureId === feature.id && r.result.baseline === feature.review.hashes.tests && r.result.testedSpecCommit === detail.state?.head)) feature.review.stage = 'VERIFICATION';
       }
-      return { ...detail, runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
+      return { ...detail, preferences: store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
     },
     artifactDirectory(repositoryId, runId, reportKey) {
       store.repository(id(repositoryId)); return artifactDirectory({ home: options.home, store, repositoryId, runId, reportKey });

@@ -4,7 +4,7 @@
 
 Configuration files ending in `.yaml` use JSON syntax (a YAML 1.2 subset) in schema v1. The toolkit deliberately rejects other YAML syntax instead of guessing. `.workbench-tools/` is a fixed, SHA-256-verified toolkit snapshot; it does not import the running workstation or `projects/bdd`.
 
-After initialization, run `npm install`, review and commit `package-lock.json`. A formal candidate without a lockfile is rejected. Install the matching Playwright browser binaries separately. Scaffold steps intentionally fail until implemented.
+In the workstation UI, confirm the necessary installation once when the workflow requests it. The system installs dependencies and required browsers, saves the lockfile and continues. There are no separate Git or installation steps. A formal candidate without a lockfile remains rejected. For standalone developer previews only, install the pinned dependencies and browsers using your trusted host. Scaffold steps intentionally fail until implemented.
 
 ```
 npm run bdd:validate

@@ -1,3 +1,4 @@
+import { flowNames, setupRepository, saveRepository, advanceWorkflow, synchronizeRepository } from './flows.mjs';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { createGit } from '../git-core/index.mjs';
@@ -13,6 +14,7 @@ import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { validateContract } from '../contracts/schemas.mjs';
 
 export const operationNames = Object.freeze([
+  ...flowNames,
   'repository.clone', 'repository.initialize', 'repository.validate',
   'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
@@ -40,6 +42,13 @@ export async function executeOperation(options, store, request) {
   const { home, toolkitRoot, allowLocal = false, hosts = ['github.com'], enableExecution = false } = options;
   const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id);
   const git = createGit({ allowLocal, hosts }), input = request.input;
+  if (flowNames.includes(request.operation)) {
+    const context = { root, options, store, request, git };
+    if (request.operation === 'repository.setup') return setupRepository(context);
+    if (request.operation === 'repository.save') return saveRepository(context);
+    if (request.operation === 'repository.sync') return synchronizeRepository(context);
+    return advanceWorkflow(context);
+  }
   if (request.operation === 'repository.clone') return git.clone(workspace.remoteUrl, root, workspace.branch ?? undefined);
   await git.root(root);
   if (request.operation === 'project.file.save') return saveProjectFile(root, input, git, request.expected);
