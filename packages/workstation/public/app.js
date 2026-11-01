@@ -52,6 +52,7 @@ async function navigate(patch,{protect=true,replace=false}={}) {
   if(state.busy||state.transient)return;if(protect&&!await guard())return;
   Object.assign(state,patch);state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
   for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
+  $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';$('#workflow-state-info').textContent='';
   const url=new URL(location.href);url.pathname='/';url.search='';
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);}
   history[replace?'replaceState':'pushState']({},'',url);$('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');await refresh();
@@ -367,7 +368,7 @@ function reportCard(report, featureKey, inline=false) {
   const c=el('article',undefined,'card feature-report');c.dataset.runId=report.runId;c.dataset.reportKey=report.key;
   c.append(el('h3',report.runId),badge(report.testOutcome),document.createTextNode(' '),badge(report.verification),
     el('p',report.applicability==='CURRENT'?'對應目前內容':report.applicability==='CONFLICT'?'報告內容衝突，無法採用':'歷史版本，不代表目前內容已通過','muted'),
-    el('p',report.origin==='SPEC_REPO'?'已同步至遠端 · 來源：此規格庫的報告':report.publication?.status==='PUBLISHED'?'已同步至遠端 · 本機執行證據':'來源：本機執行，遠端同步時一併分享','muted'),
+    el('p',report.origin==='SPEC_REPO'?(report.ref?.startsWith('refs/remotes/')?'已同步至遠端 · 來源：此規格庫的報告':'來源：此規格庫版本中的報告'):report.publication?.status==='PUBLISHED'?'已同步至遠端 · 本機執行證據':'來源：本機執行，遠端同步時一併分享','muted'),
     el('p',report.path,'mono report-path'),el('p',`受測版本：${report.testedSpecCommit??'尚未記錄'}`,'mono report-path'));
   if(report.finishedAt)c.append(el('time',report.finishedAt));
   if(report.invalidReason)c.append(el('p','證據無法核對：'+report.invalidReason,'error'));
