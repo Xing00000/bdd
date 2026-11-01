@@ -389,8 +389,8 @@ async function advance() {
   if(result)await navigate({stage:result.nextStage},{protect:false});
 }
 async function renderProjects(epoch) {
-  const d=state.detail;$('#project-cards').replaceChildren();for(const p of d.modules??[]){const c=el('article',undefined,'card');c.append(el('h3',p.id),el('p',p.url,'mono muted'),button('編輯產品',()=>navigate({projectId:p.id}),'primary'));$('#project-cards').append(c);}
-  if(!d.modules?.length)$('#project-cards').append(el('p','此規格庫尚未設定產品來源。','muted'));
+  const d=state.detail;$('#project-cards').replaceChildren();for(const p of d.modules??[]){const c=el('article',undefined,'card');c.append(el('h3',p.id),el('p',p.url,'mono muted'),button('編輯專案',()=>navigate({projectId:p.id}),'primary'));$('#project-cards').append(c);}
+  if(!d.modules?.length)$('#project-cards').append(el('p','此規格庫尚未設定專案來源。','muted'));
   const p=d.modules?.find(x=>x.id===state.projectId);$('#project-editor-panel').hidden=!p;if(!p)return;
   $('#project-title').textContent=p.id;$('#product-state').textContent=p.dirty?'有本機變更':'已儲存';
   let list=await api(`/spec-repositories/${d.id}/projects/${p.id}/files`);if(epoch!==state.epoch)return;
@@ -400,12 +400,22 @@ async function renderProjects(epoch) {
     list=await api(`/spec-repositories/${d.id}/projects/${p.id}/files`);
   }
   if(epoch!==state.epoch)return;
-  const previous=state.product?.projectId===p.id?state.product.path:null;$('#project-file-select').replaceChildren(...list.files.map(x=>new Option(x,x)));if(previous&&list.files.includes(previous))$('#project-file-select').value=previous;if(list.files.length)await openProduct($('#project-file-select').value);
+  const previous=state.product?.projectId===p.id?state.product.path:null;
+  const selected=previous&&list.files.includes(previous)?previous:list.files[0];
+  renderProjectTree(list.files,selected);
+  $('.project-file-content').hidden=!selected;$('#save-project').hidden=!selected;
+  if(selected)await openProduct(selected);
+}
+function renderProjectTree(files,selected) {
+  const root=new Map();
+  for(const path of files){const parts=path.split('/');let node=root;for(const part of parts.slice(0,-1)){if(!node.has(part))node.set(part,new Map());node=node.get(part);}node.set(parts.at(-1),path);}
+  function render(node){const list=el('ul');for(const [name,value] of node){const item=el('li');if(value instanceof Map){const group=detailGroup(name,[render(value)],Boolean(selected&&[...value.values()].some(function contains(entry){return typeof entry==='string'?entry===selected:[...entry.values()].some(contains);})));item.append(group);}else{const file=button(name,async()=>{if(value===state.product?.path)return;if(await guard())await openProduct(value);});file.dataset.path=value;file.setAttribute('aria-current',value===selected?'true':'false');item.append(file);}list.append(item);}return list;}
+  $('#project-file-tree').replaceChildren(render(root));
 }
 async function openProduct(relative) {
   const repositoryId=state.repositoryId,projectId=state.projectId,request=++state.productRequest;$('#project-editor').readOnly=true;
   const file=await api(`/spec-repositories/${repositoryId}/projects/${projectId}/file?path=${encodeURIComponent(relative)}`);if(request!==state.productRequest||repositoryId!==state.repositoryId||projectId!==state.projectId)return;
-  state.product={...file,repositoryId};$('#project-editor').value=file.content;$('#project-file-path').textContent=relative;block();
+  state.product={...file,repositoryId};$('#project-editor').value=file.content;$('#project-file-path').textContent=relative;all('#project-file-tree button').forEach(n=>n.setAttribute('aria-current',String(n.dataset.path===relative)));block();
 }
 async function saveProduct() { const e=state.product;if(!e)return;const content=$('#project-editor').value;const result=await executeJob('repository.save',{kind:'project',projectId:e.projectId,path:e.path,content,expectedHash:e.sha256},{refreshAfter:false});state.product={...e,content,sha256:result.sha256};await refresh(); }
 function artifact(runId,file,key){return `${API}/spec-repositories/${state.repositoryId}/runs/${runId}/artifact?path=${encodeURIComponent(file)}${key?'&reportKey='+encodeURIComponent(key):''}`;}
@@ -506,7 +516,7 @@ on('#generate-gherkin','click',generateGherkin);on('#save-requirement','click',s
 on('#feature-select','change',()=>navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'}));on('#save-source','click',saveSource);on('#advance','click',advance);on('#report-problem','click',reportProblem);
 on('#source-select','change',async()=>{const value=$('#source-select').value;if(await guard())await openSource(value);});
 on('#source-editor','input',()=>{$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});on('#project-editor','input',()=>{$('#product-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
-on('#project-file-select','change',async()=>{const value=$('#project-file-select').value;if(await guard())await openProduct(value);});on('#save-project','click',saveProduct);on('#project-settings','click',()=>navigate({view:'settings'}));
+on('#save-project','click',saveProduct);on('#project-settings','click',()=>navigate({view:'settings'}));
 on('#settings-add-product','click',()=>{addSettingsProduct();state.formDirty=true;});on('#settings-form','input',()=>{state.formDirty=true;block();});on('#settings-form','submit',saveSettings);
 on('#scope-form','input',()=>{state.formDirty=true;block();});on('#scope-form','submit',async()=>{const f=feature();await executeJob('repository.save',{kind:'scope',requirementId:f.requirementId,featureId:f.id,expectedHash:state.scope.sha256,projectIds:all('[name=feature-project]:checked').map(x=>x.value),profiles:all('[name=profile]:checked').map(x=>x.value),caseIds:$('#case-ids').value.split('\n').map(x=>x.trim()).filter(Boolean)},{refreshAfter:false});state.formDirty=false;await refresh();});
 window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});window.addEventListener('popstate',()=>safe(async()=>{if(!await guard()){history.forward();return;}await route();}));
