@@ -58,7 +58,7 @@ async function navigate(patch,{protect=true,replace=false}={}) {
   $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';
   const url=new URL(location.href);url.pathname='/';url.search='';
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);}
-  history[replace?'replaceState':'pushState']({},'',url);$('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');await refresh();
+  history[replace?'replaceState':'pushState']({},'',url);if(mobileNavigation.matches){$('#sidebar').classList.remove('open');updateNavigationToggle();}await refresh();
 }
 async function route() { const q=new URLSearchParams(location.search);await navigate({repositoryId:q.get('repo'),view:q.get('view')??'features',featureKey:q.get('feature'),projectId:q.get('project'),stage:q.get('stage')??'GHERKIN'},{protect:false,replace:true}); }
 async function refresh() {
@@ -73,7 +73,7 @@ async function refresh() {
     $('#repository-error').hidden=!detail.specError&&!detail.moduleError;$('#repository-error').textContent=[detail.specError,detail.moduleError].filter(Boolean).map(x=>x.message).join('\n');
     const allReportsSynced=(detail.runs??[]).filter(r=>r.state==='SEALED').every(r=>r.publication?.status==='PUBLISHED');
     $('#sync-state').textContent=detail.sync?.status==='PARTIAL'?'上次同步未完成；本機內容已保留，可重試。':detail.sync?.sourceRevision===detail.authoring?.revision&&allReportsSynced?'已同步至遠端':'未同步';
-    all('[data-view]').forEach(n=>{n.classList.toggle('active',n.dataset.view===state.view);n.setAttribute('aria-current',n.dataset.view===state.view?'page':'false');});
+    all('[data-view]').forEach(n=>{const active=n.dataset.repositoryId===state.repositoryId&&n.dataset.view===state.view;n.classList.toggle('active',active);n.setAttribute('aria-current',active?'page':'false');});
     all('.view').forEach(n=>n.hidden=n.id!==`${state.view}-view`);
     if(state.view==='features')await renderWorkflow(epoch);
     if(state.view==='projects')await renderProjects(epoch);
@@ -162,7 +162,8 @@ async function flow(name,input) {
   }
 }
 function renderNavigation() {
-  $('#repository-nav').replaceChildren();for(const r of state.repositories){const n=button('',()=>navigate({repositoryId:r.id,featureKey:null,projectId:null,view:'features',stage:'GHERKIN'}),'repo-nav');n.setAttribute('aria-label',`開啟規格庫 ${r.title}`);n.append(el('strong',r.title),el('small',r.remoteUrl));n.classList.toggle('active',r.id===state.repositoryId);$('#repository-nav').append(n);if(r.id===state.repositoryId)for(const p of state.detail?.modules??[]){const child=button(`↳ ${p.id}`,()=>navigate({view:'projects',projectId:p.id}),'project-nav');child.setAttribute('aria-label',`開啟產品 ${p.id}`);$('#repository-nav').append(child);}}
+  const opened=new Set(all('#repository-nav details[open]').map(n=>n.dataset.repositoryId));
+  $('#repository-nav').replaceChildren();for(const r of state.repositories){const n=button('',()=>navigate({repositoryId:r.id,featureKey:null,projectId:null,view:'features',stage:'GHERKIN'}),'repo-nav');n.setAttribute('aria-label',`開啟規格庫 ${r.title}`);n.append(el('strong',r.title),el('small',r.remoteUrl));n.classList.toggle('active',r.id===state.repositoryId);$('#repository-nav').append(n);const menu=el('nav',undefined,'repository-menu');menu.setAttribute('aria-label',`${r.title} 功能`);for(const [view,label] of [['features','需求流程'],['projects','專案'],['reports','驗收紀錄'],['versions','版本與回歸'],['settings','設定']]){const item=button(label,()=>navigate(r.id===state.repositoryId?{view}:{repositoryId:r.id,view,featureKey:null,projectId:null,stage:'GHERKIN'}));item.dataset.view=view;item.dataset.repositoryId=r.id;menu.append(item);}const group=detailGroup('設定與功能',[menu],opened.has(r.id),'repository-group');group.dataset.repositoryId=r.id;$('#repository-nav').append(group);}
 }
 function renderHome() {
   $('#breadcrumbs').textContent='工作台';$('#repository-cards').replaceChildren();$('#empty-state').hidden=state.repositories.length>0;
@@ -489,7 +490,10 @@ async function showReport(runId,key,panelId='report-view',expectedFeature=null) 
 function on(selector,event,fn) { $(selector).addEventListener(event,e=>{if(event==='submit')e.preventDefault();safe(()=>fn(e));}); }
 for(const s of ['#bind-home','#bind-empty','#bind-sidebar'])on(s,'click',bindRepository);
 all('[data-home]').forEach(n=>n.onclick=e=>{e.preventDefault();safe(()=>navigate({repositoryId:null,featureKey:null,projectId:null}));});all('[data-view]').forEach(n=>n.onclick=()=>safe(()=>navigate({view:n.dataset.view})));
-on('#menu-toggle','click',()=>{$('#menu-toggle').setAttribute('aria-expanded',String($('#sidebar').classList.toggle('open')));});
+const mobileNavigation=matchMedia('(max-width: 760px)');
+function updateNavigationToggle(){const expanded=mobileNavigation.matches?$('#sidebar').classList.contains('open'):!$('.shell').classList.contains('sidebar-collapsed');$('#menu-toggle').setAttribute('aria-expanded',String(expanded));$('#menu-toggle').setAttribute('aria-label',expanded?'收合導覽':'展開導覽');}
+on('#menu-toggle','click',()=>{if(mobileNavigation.matches)$('#sidebar').classList.toggle('open');else $('.shell').classList.toggle('sidebar-collapsed');updateNavigationToggle();});
+mobileNavigation.addEventListener('change',updateNavigationToggle);updateNavigationToggle();
 on('#close-dialog','click',()=>closeDialog());on('#cancel-dialog','click',()=>closeDialog());
 $('#form-dialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog();});
 on('#cancel-job','click',()=>state.jobId&&api(`/operations/${state.jobId}/cancel`,'POST',{}));
