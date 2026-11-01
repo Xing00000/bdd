@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { testIdentity } from './tags.mjs';
 
 // This reporter runs inside the test process, not inside the workstation API.
 // Its receipt is evidence input; the publisher independently validates files/hashes.
@@ -13,13 +14,10 @@ export default class EvidenceReporter {
   }
   printsToStdio() { return false; }
   key(test) {
-    const examples = [...test.title.matchAll(/\[case:([A-Za-z0-9][A-Za-z0-9_-]{0,79})\]/g)].map(x => x[1]);
-    const tags = (test.tags ?? []).filter(x => x.startsWith('@case:')).map(x => x.slice(6));
-    const ids = [...new Set(examples.length ? examples : tags)];
-    if (ids.length !== 1) throw new Error(`Exactly one stable case ID is required: ${test.title}`);
+    const identity = testIdentity(test, process.env.WB_REQUIREMENT_ID, process.env.WB_FEATURE_ID);
     const profile = test.parent.project()?.name ?? '';
-    if (![ids[0], profile].every(value => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value))) throw new Error('Invalid case/profile identifier');
-    return { caseId: ids[0], profile, testId: test.id, title: test.title };
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(profile)) throw new Error('Invalid case/profile identifier');
+    return { ...identity, profile, testId: test.id, title: test.title };
   }
   event(value) { appendFileSync(path.join(this.output, 'events.ndjson'), JSON.stringify({ at: new Date().toISOString(), ...value }) + '\n'); }
   guarded(fn) { try { return fn(); } catch (error) { this.errors.push(String(error.message ?? error)); } }
