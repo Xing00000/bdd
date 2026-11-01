@@ -6,10 +6,10 @@ import { ensureDraft, editDraft } from '../../packages/workstation/authoring.mjs
 import { openStore } from '../../packages/workstation/store.mjs';
 import { fixture, toolkitRoot } from './helpers.mjs';
 
-test('editable seed pins the model and bundles the canonical skill',async()=>{
+test('editable seed pins the model without injecting a general-purpose skill manual',async()=>{
   const seed=validateAgentSettings();
   assert.deepEqual(seed.args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{prompt}']);
-  assert.equal(seed.skills,await readFile(new URL('../../skills/playwright-bdd/SKILL.md',import.meta.url),'utf8'));
+  assert.equal(seed.skills,'');
   assert.equal(seed.maxAttempts,3);assert.equal(seed.timeoutMs,900000);
 });
 
@@ -36,9 +36,42 @@ test('prompt and skills enforce text, template names and UTF-8 byte limits',()=>
 test('effective prompt substitutes once and appends literal skills without interpreting input',()=>{
   const values={requirementId:'REQ-X',featureId:'login',spec:'/tmp/a b',projects:'/tmp/product',feedback:'literal {spec} $(echo bad)',previousFailure:'retry'};
   const settings={prompt:'{requirementId}/{featureId}: {spec}; {projects}; {feedback}; {previousFailure}',skills:'skill {unknown}'};
-  assert.equal(renderAgentPrompt(settings,values),'REQ-X/login: /tmp/a b; /tmp/product; literal {spec} $(echo bad); retry\n\nskill {unknown}');
-  assert.equal(renderAgentPrompt({prompt:'{feedback}',skills:''},values),values.feedback);
+  assert.ok(renderAgentPrompt(settings,values).endsWith('REQ-X/login: /tmp/a b; /tmp/product; literal {spec} $(echo bad); retry\n\nskill {unknown}'));
+  assert.ok(renderAgentPrompt({prompt:'{feedback}',skills:''},values).endsWith('\n\n'+values.feedback));
   assert.throws(()=>renderAgentPrompt({prompt:'{spec}'},{}),{code:'INVALID_AGENT'});
+});
+
+test('both dispatch stages carry only the selected approved feature and stage contract',async()=>{
+  const legacy=await readFile(new URL('../../skills/playwright-bdd/SKILL.md',import.meta.url),'utf8');
+  assert.equal(seedAgentSettings({skills:legacy}).skills,'');
+  assert.equal(seedAgentSettings({skills:'Custom project instructions'}).skills,'Custom project instructions');
+  const values={requirementId:'REQ-X',featureId:'login',spec:'/spec-repo',projects:'/product',feedback:'',previousFailure:''};
+  for(const purpose of ['development','testPlan']) {
+    const prompt=renderAgentPrompt({skills:legacy},values,purpose);
+    assert.ok(prompt.includes('/spec-repo/spec/REQ-X/login/login.feature'));
+    assert.ok(prompt.includes('/spec-repo/spec/REQ-X/login/login.sd.md'));
+    assert.ok(prompt.includes('/spec-repo/tests/REQ-X/login/'));
+    assert.ok(prompt.includes('Do not restart specification writing'));
+    assert.ok(!prompt.includes('## Phase 1: Planning'));
+    assert.ok(!prompt.includes('Example Feature File'));
+    assert.ok(!prompt.includes('Shopping cart'));
+    assert.ok(prompt.includes(purpose==='testPlan'?'TEST PLAN COMPLETION':'PRODUCT IMPLEMENTATION'));
+    assert.ok(prompt.includes(purpose==='testPlan'?'Write only /spec-repo/tests/REQ-X/login/':'Modify only these products: /product'));
+  }
+});
+
+test('persisted factory skill retirement changes settings once and preserves sources and custom CLI configuration',async t=>{
+  const f=await fixture(t);const {mkdir}=await import('node:fs/promises');await mkdir(f.home,{recursive:true});
+  const store=openStore(f.home);t.after(()=>store.close());
+  const repositoryId='SPEC-context';store.register({id:repositoryId,title:'Context',remoteUrl:f.remote});
+  const context={root:f.repo,options:{toolkitRoot,allowLocal:true},store,repositoryId};
+  const initial=await ensureDraft(context),legacy=await readFile(new URL('../../skills/playwright-bdd/SKILL.md',import.meta.url),'utf8');
+  const agent={...initial.settings.agent,command:'custom-cli',args:['custom-mode','{prompt}'],prompt:'Custom task {spec}',skills:legacy};
+  store.saveDraft(repositoryId,{expectedRevision:initial.revision,settings:{...initial.settings,agent},files:[],operationId:'seed-factory-context',request:{fixture:'factory-context'}});
+  const before=store.draft(repositoryId),migrated=await ensureDraft(context);
+  assert.equal(migrated.revision,before.revision+1);
+  assert.deepEqual(migrated.settings.agent,{...agent,skills:''});assert.deepEqual(migrated.files,before.files);
+  assert.equal((await ensureDraft(context)).revision,migrated.revision);
 });
 
 test('SQLite seeds missing legacy fields once, preserves custom settings, and rejects saves atomically',async t=>{
