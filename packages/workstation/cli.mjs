@@ -15,7 +15,9 @@ export function environmentOptions() {
     allowLocal: process.env.WB_ALLOW_LOCAL_GIT === '1',
     legacyFile: process.env.WB_LEGACY_DB ? path.resolve(process.env.WB_LEGACY_DB) : undefined,
     legacyArtifactsRoot: process.env.WB_LEGACY_ARTIFACTS ? path.resolve(process.env.WB_LEGACY_ARTIFACTS) : undefined,
-    enableExecution: process.env.WB_ENABLE_TRUSTED_EXECUTION === '1',
+    // The loopback workstation can confirm and execute tests out of the box.
+    // Explicit opt-out remains available for read-only or untrusted hosts.
+    enableExecution: !['0', 'false', 'off'].includes((process.env.WB_ENABLE_TRUSTED_EXECUTION ?? '').trim().toLowerCase()),
     hosts: (process.env.WB_GIT_HOSTS ?? 'github.com').split(',').map(x => x.trim()).filter(Boolean)
   };
 }

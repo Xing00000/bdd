@@ -47,15 +47,16 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   }
   await add('REQ-101','readiness','產品可用狀態',"await expect(page.locator('h1')).toHaveText('Ready');");
   await add('REQ-102','title','頁面標題',"await expect(page).toHaveTitle('Catalog fixture');");
-  const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:browsers};
+  const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:browsers};delete env.WB_ENABLE_TRUSTED_EXECUTION;
   async function install(args,label){const r=await execute(args[0],args.slice(1),{cwd:source,env,timeoutMs:240000,maxBytes:24*1024*1024});await writeJson(path.join(artifacts,label+'.json'),r);assert.equal(r.exitCode,0,r.stderr+r.stdout);}
   await install(['npm','install','--ignore-scripts'],'dependency-install');await install([path.join(source,'node_modules/.bin/playwright'),'install','--with-deps','chromium'],'browser-install');await commitAll(source);
   const s1=await git.resolve(source);await git.command(source,['tag','release-v1']);
   await sealedBundle(path.join(source,'reports/REQ-102/title/RUN-history'),{schemaVersion:1,runId:'RUN-history',requirementId:'REQ-102',featureId:'title',testedSpecCommit:s1});
   await add('REQ-103','heading','頁面主標題',"await expect(page.locator('h1')).toBeVisible();");await commitAll(source);const s2=await git.resolve(source);
   await git.command(source,['remote','add','origin',remote]);await git.push(source,{},await git.inspect(source));await git.command(source,['push','origin','refs/tags/release-v1']);
-  server=spawn(process.execPath,[path.join(toolkitRoot,'scripts/workstation.mjs'),'serve'],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_PORT:String(uiPort),WB_ALLOW_LOCAL_GIT:'1',WB_ENABLE_TRUSTED_EXECUTION:'1'},stdio:['ignore','pipe','pipe']});server.stdout.on('data',c=>serverLog+=c);server.stderr.on('data',c=>serverLog+=c);
+  server=spawn(process.execPath,[path.join(toolkitRoot,'scripts/workstation.mjs'),'serve'],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_PORT:String(uiPort),WB_ALLOW_LOCAL_GIT:'1'},stdio:['ignore','pipe','pipe']});server.stdout.on('data',c=>serverLog+=c);server.stderr.on('data',c=>serverLog+=c);
   for(let i=0;i<200;i++){try{if((await fetch(origin)).ok)break;}catch{}await new Promise(r=>setTimeout(r,50));if(i===199)assert.fail(serverLog);}
+  assert.equal((await (await fetch(origin+'/repository-api/v1/capabilities')).json()).executionEnabled,true,'Normal startup must enable test execution without a flag');
   const {chromium,expect}=createRequire(path.join(source,'package.json'))('@playwright/test');browser=await chromium.launch({chromiumSandbox:true});context=await browser.newContext({viewport:{width:1440,height:1000}});await context.tracing.start({screenshots:true,snapshots:true,sources:true});page=await context.newPage();page.setDefaultTimeout(25000);
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().startsWith(origin))writes.push({path:new URL(r.url()).pathname,input:r.postDataJSON()});});
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
@@ -137,7 +138,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(artifacts,'04-regression-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   // CLI regression uses the same fixed-version engine and meaningful process exits.
   async function workflowCli(args,label) {
-    const output=await execute(process.execPath,[path.join(toolkitRoot,'scripts/bdd.mjs'),'workflow',...args],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_ALLOW_LOCAL_GIT:'1',WB_ENABLE_TRUSTED_EXECUTION:'1'},timeoutMs:480000});
+    const output=await execute(process.execPath,[path.join(toolkitRoot,'scripts/bdd.mjs'),'workflow',...args],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_ALLOW_LOCAL_GIT:'1'},timeoutMs:480000});
     await writeJson(path.join(artifacts,`cli-${label}.json`),output);return {...output,value:JSON.parse(output.stdout)};
   }
   const paused=await workflowCli(['next','--repo',repositoryId,'--feature','REQ-102/title'],'human-gate');assert.equal(paused.exitCode,2);assert.equal(paused.value.result.requiredReview,'gherkin');

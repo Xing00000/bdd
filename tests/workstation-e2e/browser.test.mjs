@@ -21,7 +21,7 @@ test('all-UI: two textareas → upload/generate/edit/restore → SQLite save →
   const artifacts=path.resolve(process.env.WB_E2E_ARTIFACTS??path.join(base,'evidence'));await mkdir(artifacts,{recursive:true});
   const driver=path.join(base,'driver');await mkdir(driver);
   const browsers=process.env.PLAYWRIGHT_BROWSERS_PATH??path.join(base,'browsers');
-  const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:browsers};const git=createGit({allowLocal:true});
+  const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:browsers};delete env.WB_ENABLE_TRUSTED_EXECUTION;const git=createGit({allowLocal:true});
   const remotes={alpha:path.join(base,'alpha.git'),beta:path.join(base,'beta.git'),mirror:path.join(base,'mirror.git'),product:path.join(base,'product.git')};
   for(const remote of Object.values(remotes))await git.command(undefined,['init','--bare','--initial-branch','main',remote]);
   const product=path.join(base,'product-source');await git.init(product);
@@ -46,7 +46,7 @@ const server=http.createServer((request,response)=>{
   const {IdGenerator}=require('@cucumber/messages');
   const parse=text=>new Parser(new AstBuilder(IdGenerator.incrementing()),new GherkinClassicTokenMatcher()).parse(text);
   const sitePort=await port(),productPort=await port(),site=`http://127.0.0.1:${sitePort}`,target=`http://127.0.0.1:${productPort}`;
-  const server=spawn(process.execPath,[path.join(toolkitRoot,'scripts/workstation.mjs'),'serve'],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_PORT:String(sitePort),WB_ALLOW_LOCAL_GIT:'1',WB_ENABLE_TRUSTED_EXECUTION:'1'},stdio:['ignore','pipe','pipe']});
+  const server=spawn(process.execPath,[path.join(toolkitRoot,'scripts/workstation.mjs'),'serve'],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_PORT:String(sitePort),WB_ALLOW_LOCAL_GIT:'1'},stdio:['ignore','pipe','pipe']});
   let serverLog='',browser,context,page;server.stdout.on('data',x=>serverLog+=x);server.stderr.on('data',x=>serverLog+=x);
   const events=[],browserErrors=[];
   t.after(async()=>{
@@ -58,6 +58,7 @@ const server=http.createServer((request,response)=>{
     if(process.env.WB_E2E_ARTIFACTS)await rm(base,{recursive:true,force:true});
   });
   for(let i=0;i<200;i++){try{const r=await fetch(site);if(r.ok)break;}catch{}await new Promise(r=>setTimeout(r,50));if(i===199)assert.fail(serverLog);}
+  assert.equal((await (await fetch(site+'/repository-api/v1/capabilities')).json()).executionEnabled,true,'Normal startup must allow test confirmation without an execution flag');
   // Read-only assertion: the retired workspace/product UI is not a second normal entry.
   assert.equal((await fetch(site+'/requirements')).status,404);
   browser=await chromium.launch({chromiumSandbox:true});context=await browser.newContext({viewport:{width:1440,height:1000}});await context.tracing.start({screenshots:true,snapshots:true,sources:true});page=await context.newPage();page.setDefaultTimeout(20000);
@@ -131,6 +132,7 @@ const server=http.createServer((request,response)=>{
   await editSource('# Sign-in design\n\nThe versioned product must display Signed in after clicking its sign-in button. Use the pinned source health identity and a screenshot for each real BDD step.\n');
   await job(page.getByRole('button',{name:'確認設計並繼續',exact:true}),'workflow.review');await expect(page.locator('#phase-title')).toHaveText('確認真正的操作與斷言');
   await editSource(`import { Given, When, Then } from '../../_shared/bdd';\nimport { expect } from '@playwright/test';\nGiven('the product is open', async ({ page }) => { await page.goto('/'); });\nWhen('I sign in', async ({ page }) => { await page.getByRole('button', { name: 'Sign in' }).click(); });\nThen('the product confirms I signed in', async ({ page }) => { await expect(page.getByRole('status')).toHaveText('Signed in'); });\n`);
+  await expect(page.getByRole('button',{name:'確認測試並繼續',exact:true})).toBeEnabled();
   await page.getByRole('button',{name:'確認測試並繼續',exact:true}).click();d=page.getByRole('dialog');await expect(d).toContainText('安裝必要套件並繼續');await expect(d).toContainText('@playwright/test');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(page.locator('#phase-title')).toHaveText('確認真正的操作與斷言');assert.equal(await exists(path.join(savedRoot,'node_modules')),false,'Cancel must not install');
   await page.getByRole('button',{name:'確認測試並繼續',exact:true}).click();await expect(d).toBeVisible();await job(d.getByRole('button',{name:'安裝並繼續',exact:true}),'workflow.review');await expect(d).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('讓產品符合已確認的測試');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'01-simple-workflow.png'),fullPage:true});
@@ -162,7 +164,7 @@ const server=http.createServer((request,response)=>{
   await page.reload();await ready();await expect(page.locator('#feature-report-list')).toContainText('已同步至遠端');await tab('需求流程');await expect(page.locator('#feature-status')).toHaveText('VERIFIED');
   // The same completed human UI workflow can be inspected/advanced/re-run by the CLI.
   async function workflowCli(args,label) {
-    const output=await execute(process.execPath,[path.join(toolkitRoot,'scripts/bdd.mjs'),'workflow',...args],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_ALLOW_LOCAL_GIT:'1',WB_ENABLE_TRUSTED_EXECUTION:'1'},timeoutMs:360000});
+    const output=await execute(process.execPath,[path.join(toolkitRoot,'scripts/bdd.mjs'),'workflow',...args],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_ALLOW_LOCAL_GIT:'1'},timeoutMs:360000});
     await writeJson(path.join(artifacts,`cli-${label}.json`),output);return {...output,value:JSON.parse(output.stdout)};
   }
   const cliStatus=await workflowCli(['status','--repo',alpha,'--feature','REQ-001/feature'],'status');assert.equal(cliStatus.exitCode,0);assert.equal(cliStatus.value.workflows[0].stage,'VERIFIED');

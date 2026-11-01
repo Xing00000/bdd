@@ -184,7 +184,7 @@ export async function verifyBundle(directory) {
   return manifest;
 }
 export async function executeRun({ home, runId, repositoryId, git, enabled = false }) {
-  invariant(enabled, 'EXECUTION_DISABLED', 'Set WB_ENABLE_TRUSTED_EXECUTION=1 only in a trusted, isolated worker environment', 403);
+  invariant(enabled, 'EXECUTION_DISABLED', 'Test execution is disabled by this workstation configuration', 403);
   const directory = await safePath(home, `executions/${id(runId)}`), plan = version(await readJson(path.join(directory, 'plan.json')));
   invariant((plan.repositoryId ?? plan.workspaceId) === repositoryId, 'RUN_REPOSITORY_MISMATCH', 'Run belongs to another workspace', 403);
   const evidence = path.join(directory, 'evidence');

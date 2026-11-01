@@ -226,7 +226,7 @@ function renderNext() {
   if(stage!=='GHERKIN'&&!f.review.confirmed.gherkin)blockers.push('先確認需求。');
   if(['TESTS','IMPLEMENTATION','VERIFICATION'].includes(stage)&&!f.review.confirmed.sd)blockers.push('先確認設計。');
   if(['IMPLEMENTATION','VERIFICATION'].includes(stage)&&!f.review.confirmed.tests)blockers.push('先確認測試。');
-  if(['TESTS','IMPLEMENTATION','VERIFICATION'].includes(stage)&&!state.capabilities.executionEnabled)blockers.push('管理者需先啟用受信任執行。');
+  if(['TESTS','IMPLEMENTATION','VERIFICATION'].includes(stage)&&!state.capabilities.executionEnabled)blockers.push('測試執行已被停用；請移除 WB_ENABLE_TRUSTED_EXECUTION=0 並以 npm start 重新啟動。');
   if(['IMPLEMENTATION','VERIFICATION'].includes(stage)&&!state.detail.spec.config.execution.service)blockers.push('請在設定中補上產品啟動方式。');
   $('#advance').textContent={GHERKIN:'確認需求並繼續',SD:'確認設計並繼續',TESTS:'確認測試並繼續',IMPLEMENTATION:'開始驗收',VERIFICATION:'再次驗收'}[stage];$('#advance').disabled=blockers.length>0;$('#advance').title=blockers.join(' ');
   $('#next-title').textContent=['IMPLEMENTATION','VERIFICATION'].includes(stage)?'準備、執行、報告，一次完成':'只確認內容，不處理版本操作';$('#next-reason').textContent=blockers.join(' ')||(['IMPLEMENTATION','VERIFICATION'].includes(stage)?'系統會使用目前已儲存的產品與規格，自動保存這次驗收證據。':'按下確認即代表你已審閱目前內容，系統會儲存並推進；不再重複彈出確認。');
@@ -477,7 +477,7 @@ async function loadVersion() {
     }));$('#catalog-features').append(row);
   }
   $('#start-regression').disabled=!state.capabilities.executionEnabled||!value.spec.features.length||regressionJobs.has(repositoryId);
-  $('#regression-status').textContent=state.capabilities.executionEnabled?'選擇版本後即可回歸，不需要重做歷史需求的人工確認。':'這台主機尚未啟用受信任執行；仍可查看歷史內容。';
+  $('#regression-status').textContent=state.capabilities.executionEnabled?'選擇版本後即可回歸，不需要重做歷史需求的人工確認。':'測試執行已被停用；移除 WB_ENABLE_TRUSTED_EXECUTION=0，正常使用 npm start 即可啟用。';
 }
 function renderRegressionHistory(batches) {
   $('#regression-list').replaceChildren();
@@ -532,4 +532,4 @@ $('#start-regression').addEventListener('click',()=>safe(()=>startRegression()))
 $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));
 
 // Initialize the route only after every view state and handler exists.
-await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'主機尚未啟用執行';await route();});
+await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'測試執行已停用';await route();});

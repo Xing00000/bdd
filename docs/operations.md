@@ -10,7 +10,7 @@ Node.js 24；管理入口使用 Node 內建模組，不需先安裝舊 Vue／PTY
 npm start
 ```
 
-預設 `http://127.0.0.1:4173/`，`WB_HOME` 預設 `~/.bdd-workstation`。需要測試執行時設定 `WB_ENABLE_TRUSTED_EXECUTION=1`。Git、SSH agent／known-host、系統瀏覽器相依套件仍由主機管理；不要把 Token 寫進 Git URL。
+預設 `http://127.0.0.1:4173/`，`WB_HOME` 預設 `~/.bdd-workstation`。**直接 `npm start` 即可在頁面確認測試與執行驗收，不需傳入旗標。** 測試僅由使用者明確觸發；首次安裝套件及瀏覽器仍必須同意，需求／設計／測試的人工審核也不會自動代簽。只有要刻意停用執行時才設定 `WB_ENABLE_TRUSTED_EXECUTION=0`（亦接受 `false` 或 `off`），並重啟服務。Git、SSH agent／known-host、系統瀏覽器相依套件仍由主機管理；不要把 Token 寫進 Git URL。本機服務與測試執行並非 OS 沙箱，僅適合可信任的使用環境。
 
 ## 規格庫的本地目錄
 
