@@ -136,7 +136,7 @@ async function startManagedService(repo, config, plan, environment) {
   const command = commandArray(service.command), cwd = await safePath(repo, project.path);
   if (currentProgress()) {
     let exited = false, errorText = '';
-    const child = startProgressPty(command[0], command.slice(1), { cwd, env: { ...environment, WB_SOURCE_COMMIT: project.commit }, onData: (_kind, data) => { errorText = (errorText + data.toString()).slice(-65536); } });
+    const child = startProgressPty(command[0], command.slice(1), { cwd, env: { ...environment, WB_SOURCE_COMMIT: project.commit }, role: 'service', onData: (_kind, data) => { errorText = (errorText + data.toString()).slice(-65536); } });
     child.done.then(() => { exited = true; });
     const stop = async () => { if (exited) return; child.stop(); let timer; await Promise.race([child.done, new Promise(resolve => { timer = setTimeout(resolve, 1500); })]); clearTimeout(timer); if (!exited) { child.stop('SIGKILL'); await child.done; } };
     try {

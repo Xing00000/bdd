@@ -92,3 +92,7 @@ Agent 結束後，工作台將產品修改保存到 SQLite 及本機版本，再
 驗收頁只呈現對應報告、Gherkin 步驟與截圖，也可展開原生 Playwright HTML 報告。沒有流程內的再次驗收區塊；整庫回歸在「版本與回歸」。問題回報保存在 `spec/<REQ>/<feature>/feedback.json`，隨明確同步分享到 Repo；新開發會讀取問題，原始報告不被刪除。
 
 設定中的「Playwright 整體逾時毫秒」可選填 1000–600000；留空時沿用測試庫原有的 Playwright globalTimeout。
+
+### Local read-only MCP progress
+
+The Settings page shows the `MCP 進度 API` URL for the running local workbench. A local stdio MCP client can run `node scripts/mcp-progress.mjs http://127.0.0.1:<port>/repository-api/v1/mcp/progress` with the actual port from Settings. The bridge forwards JSON-RPC to that loopback endpoint and does not configure any client automatically. A cloud parent conversation cannot directly reach the Mac's localhost; remote access is outside this feature.

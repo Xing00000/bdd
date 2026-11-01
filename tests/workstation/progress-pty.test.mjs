@@ -4,8 +4,53 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { withProgress } from '../../packages/git-core/progress.mjs';
-import { execute, processEnvironment } from '../../packages/git-core/index.mjs';
+import { execute, processEnvironment, terminateSpawnedPty } from '../../packages/git-core/index.mjs';
 import { readTerminal } from '../../packages/workstation/development.mjs';
+
+test('spawn failure cleanup only escalates while the PTY remains live', t => {
+  let exit, scheduled, cleared = false, closed = 0;
+  const signals = [];
+  const child = { pid: 123, onExit(callback) { exit = callback; }, kill(signal) { signals.push(signal); } };
+  t.mock.method(process, 'kill', (_pid, signal) => { signals.push(signal); });
+  t.mock.method(globalThis, 'setTimeout', callback => { scheduled = callback; return 42; });
+  t.mock.method(globalThis, 'clearTimeout', handle => { if (handle === 42) cleared = true; });
+  terminateSpawnedPty(child, () => closed++);
+  assert.deepEqual(signals, ['SIGTERM']);
+  exit();
+  assert.equal(cleared, true);
+  assert.equal(closed, 1);
+  scheduled(); // A timer callback already queued before cancellation must also be harmless.
+  assert.deepEqual(signals, ['SIGTERM']);
+});
+
+test('spawn failure cleanup escalates a live PTY and handles synchronous exit', t => {
+  let exit, scheduled, closed = 0;
+  const signals = [];
+  const child = { pid: 123, onExit(callback) { exit = callback; }, kill(signal) { signals.push(signal); } };
+  t.mock.method(process, 'kill', (_pid, signal) => { signals.push(signal); });
+  t.mock.method(globalThis, 'setTimeout', callback => { scheduled = callback; return 42; });
+  terminateSpawnedPty(child, () => closed++);
+  scheduled();
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  exit();
+  assert.equal(closed, 1);
+  signals.length = 0; scheduled = undefined;
+  child.onExit = callback => callback();
+  terminateSpawnedPty(child, () => closed++);
+  assert.equal(closed, 2);
+  assert.deepEqual(signals, []);
+  assert.equal(scheduled, undefined);
+});
+
+test('spawn failure cleanup does not schedule escalation when SIGTERM synchronously causes exit', t => {
+  let exit, scheduled = false, closed = 0;
+  const child = { pid: 123, onExit(callback) { exit = callback; }, kill() { exit(); } };
+  t.mock.method(process, 'kill', () => exit());
+  t.mock.method(globalThis, 'setTimeout', () => { scheduled = true; });
+  terminateSpawnedPty(child, () => closed++);
+  assert.equal(closed, 1);
+  assert.equal(scheduled, false);
+});
 
 test('progress captures live TTY output, redacts credentials and preserves offsets', async t => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'progress-')); t.after(() => rm(home, { recursive: true, force: true }));

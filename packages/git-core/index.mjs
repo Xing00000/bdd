@@ -12,6 +12,14 @@ const activeChildren = new Set();
 export function stopChildProcesses(signal = 'SIGTERM') {
   for (const child of activeChildren) { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} }
 }
+export function terminateSpawnedPty(child, onExit = () => {}) {
+  const kill = signal => { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} };
+  let exited = false, hardKill;
+  child.onExit(() => { exited = true; clearTimeout(hardKill); onExit(); });
+  if (exited) return;
+  kill('SIGTERM');
+  if (!exited) hardKill = setTimeout(() => { if (!exited) kill('SIGKILL'); }, 1000);
+}
 export function trackChild(child) { activeChildren.add(child); child.once('close', () => activeChildren.delete(child)); return child; }
 
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -68,7 +76,7 @@ export async function execute(executable, args, { cwd, env = {}, timeoutMs = 180
     child.once('close', (exitCode, signal) => { clearTimeout(timer); clearTimeout(hardKill); resolve({ exitCode, signal, timedOut, overflow, stdout: binaryOutput ? Buffer.concat(stdout) : Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') }); });
   });
 }
-export function startProgressPty(executable, args, { cwd, env, onData, supervised = false, input } = {}) {
+export function startProgressPty(executable, args, { cwd, env, onData, supervised = false, input, role = 'cli' } = {}) {
   let pty;
   try { pty = createRequire(import.meta.url)('node-pty'); }
   catch (error) {
@@ -80,8 +88,10 @@ export function startProgressPty(executable, args, { cwd, env, onData, supervise
   const argv = supervised ? [fileURLToPath(new URL('./pty-supervisor.mjs', import.meta.url))] : args;
   const child = pty.spawn(command, argv, { cwd, env: supervised ? { ...env, WB_PTY_CONFIG: Buffer.from(JSON.stringify(config)).toString('base64') } : { ...env, TERM: 'xterm-256color' }, name: 'xterm-256color', cols: 100, rows: 30 });
   const tracked = new EventEmitter(); tracked.pid = child.pid; tracked.kill = signal => child.kill(signal); trackChild(tracked);
-  const progress = currentProgress(); progress?.record(`\r\n[start ${supervised ? 'controlling-PTY pipe relay' : 'PTY'}] ${executable}${executable === 'git' ? ' ' + (args.find(arg => ['clone','fetch','push','commit-tree','submodule','checkout','switch','add','merge','init','update-ref','read-tree','write-tree','reset','remote','ls-remote'].includes(arg)) ?? 'command') : ''}\r\n`);
-  let pending = '', result;
+  const progress = currentProgress(); let commandId;
+  try { progress?.record(`\r\n[start ${supervised ? 'controlling-PTY pipe relay' : 'PTY'}] ${executable}${executable === 'git' ? ' ' + (args.find(arg => ['clone','fetch','push','commit-tree','submodule','checkout','switch','add','merge','init','update-ref','read-tree','write-tree','reset','remote','ls-remote'].includes(arg)) ?? 'command') : ''}\r\n`);
+  commandId = progress?.startProcess(executable, role, child.pid); } catch (error) { terminateSpawnedPty(child, () => tracked.emit('close')); throw error; }
+  let pending = '', result, timedOut = false;
   child.onData(data => {
     if (!supervised) { progress?.output(data); onData?.('stdout', Buffer.from(data)); return; }
     pending += data;
@@ -95,8 +105,8 @@ export function startProgressPty(executable, args, { cwd, env, onData, supervise
       else { const data = Buffer.from(frame.value, 'base64'); if (!data.includes(0)) progress?.output(data.toString('utf8')); onData?.(frame.kind, data); }
     }
   });
-  const done = new Promise(resolve => child.onExit(({ exitCode, signal }) => { tracked.emit('close'); const outcome = supervised && result ? { exitCode: result.code, signal: result.signal } : { exitCode, signal }; progress?.record(`\r\n[exit] code=${outcome.exitCode} signal=${outcome.signal ?? 'none'}\r\n`); progress?.exit(outcome); resolve(outcome); }));
-  return { pid: child.pid, done, stop(signal = 'SIGTERM') { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} }, write(data) { child.write(data); } };
+  const done = new Promise(resolve => child.onExit(({ exitCode, signal }) => { tracked.emit('close'); const outcome = supervised && result ? { exitCode: result.code, signal: result.signal } : { exitCode, signal }; progress?.record(`\r\n[exit] code=${outcome.exitCode} signal=${outcome.signal ?? 'none'}\r\n`); progress?.finishProcess(commandId, { ...outcome, timedOut }); progress?.exit(outcome); resolve(outcome); }));
+  return { pid: child.pid, done, markTimedOut() { timedOut = true; }, stop(signal = 'SIGTERM') { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} }, write(data) { child.write(data); } };
 }
 async function executePty(executable, args, options) {
   let stdout = [], stderr = [], bytes = 0, overflow = false, timedOut = false, hardKill;
@@ -105,7 +115,7 @@ async function executePty(executable, args, options) {
     (kind === 'stderr' ? stderr : stdout).push(data); options.onOutput?.(kind, data.toString('utf8'));
   } });
   const stop = () => { child.stop(); hardKill = setTimeout(() => child.stop('SIGKILL'), 1000); hardKill.unref(); };
-  const timer = setTimeout(() => { timedOut = true; stop(); }, options.timeoutMs); timer.unref();
+  const timer = setTimeout(() => { timedOut = true; child.markTimedOut(); stop(); }, options.timeoutMs); timer.unref();
   if (!options.supervised && options.input != null) child.write(String(options.input) + '\x04');
   const outcome = await child.done; clearTimeout(timer); clearTimeout(hardKill);
   if (timedOut || overflow) currentProgress()?.record(`[termination] timeout=${timedOut} overflow=${overflow}\r\n`);

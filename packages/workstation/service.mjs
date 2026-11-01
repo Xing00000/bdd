@@ -47,6 +47,7 @@ export async function createWorkstation(configuration) {
   for (const operationId of store.recover()) launch(operationId);
   const service = {
     options,
+    async mcpProgress(request) { const { handleProgress } = await import('./mcp-progress.mjs'); return handleProgress(store, options.home, request); },
     async terminal(operationId, offset=0) {
       const operation=this.operation(operationId);
       const { readTerminal }=await import('./development.mjs');

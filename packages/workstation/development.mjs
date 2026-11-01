@@ -7,7 +7,7 @@ import { currentProgress } from '../git-core/progress.mjs';
 import { readFile, mkdir, writeFile, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { WorkstationError, id, invariant, safePath, exists, digest, identity, writeJson } from '../contracts/index.mjs';
-import { execute, processEnvironment, trackChild } from '../git-core/index.mjs';
+import { execute, processEnvironment, trackChild, terminateSpawnedPty } from '../git-core/index.mjs';
 import { scan, reviewState } from '../spec-toolkit/index.mjs';
 import { ensureDraft, inDraftView } from './authoring.mjs';
 import { prepareProjection } from './projection.mjs';
@@ -61,6 +61,8 @@ export async function runPty(pty,command,args,cwd,{log,timeoutMs}) {
   for(const k of ['USERPROFILE','SYSTEMROOT','USER','TMPDIR'])if(process.env[k])env[k]=process.env[k];
   const progress=currentProgress(); progress?.record(`\r\n[start PTY] ${command}\r\n`);
   const child=pty.spawn(command,args,{cwd,env,name:'xterm-256color',cols:100,rows:30});
+  let commandId;
+  try { commandId=progress?.startProcess(command,'agent',child.pid); } catch(error) { terminateSpawnedPty(child); throw error; }
   const tracked=new EventEmitter();tracked.pid=child.pid;tracked.kill=signal=>child.kill(signal);trackChild(tracked);
   return new Promise((resolve,reject)=>{
     let ended=false,timedOut=false,limit=false,terminating=false,killTimer;
@@ -69,7 +71,7 @@ export async function runPty(pty,command,args,cwd,{log,timeoutMs}) {
     const message=m=>{if(m?.type!=='development.input'||ended)return;try{if(typeof m.data==='string')child.write(m.data);else child.resize(m.cols,m.rows);}catch{/* exited during input */}};
     process.on('message',message);
     child.onData(data=>{try{log(data);}catch{limit=true;terminate();}});
-    child.onExit(({exitCode,signal})=>{progress?.record(`\r\n[exit] code=${exitCode} signal=${signal ?? 'none'} timeout=${timedOut}\r\n`);progress?.exit({exitCode,signal,timedOut});ended=true;clearTimeout(timer);clearTimeout(killTimer);process.off('message',message);tracked.emit('close');if(limit)reject(new WorkstationError('TERMINAL_OUTPUT_LIMIT','終端輸出超過上限，開發已停止。'));else resolve({exitCode,signal,timedOut});});
+    child.onExit(({exitCode,signal})=>{progress?.record(`\r\n[exit] code=${exitCode} signal=${signal ?? 'none'} timeout=${timedOut}\r\n`);progress?.finishProcess(commandId,{exitCode,signal,timedOut});progress?.exit({exitCode,signal,timedOut});ended=true;clearTimeout(timer);clearTimeout(killTimer);process.off('message',message);tracked.emit('close');if(limit)reject(new WorkstationError('TERMINAL_OUTPUT_LIMIT','終端輸出超過上限，開發已停止。'));else resolve({exitCode,signal,timedOut});});
   });
 }
 /** Import only product files from this explicit development session. Never replace concurrent SQL edits. */

@@ -29,6 +29,11 @@ export async function dispatch(service, request) {
   if (!pathname.startsWith(prefix + '/')) return { status: 404, body: { code: 'NOT_FOUND', message: 'Unknown workstation route' } };
   const parts = pathname.slice(prefix.length + 1).split('/').map(decodeURIComponent);
   const method = request.method, input = request.body ?? {};
+  if (parts.join('/') === 'mcp/progress') {
+    invariant(Buffer.byteLength(JSON.stringify(input)) <= 2 * 1024 * 1024, 'REQUEST_TOO_LARGE', 'Request exceeds 2 MiB', 413);
+    const result = await service.mcpProgress(request);
+    return { ...result, headers: { ...securityHeaders, 'content-type': 'application/json; charset=utf-8', ...result.headers } };
+  }
   if (method !== 'GET') {
     invariant(request.headers['x-workbench-request'] === '1', 'REQUEST_HEADER_REQUIRED', 'Workbench request header is required', 403);
     if (request.headers.origin) {
@@ -98,6 +103,7 @@ export async function registerRepositoryRoutes(app, options) {
     return response.body;
   };
   for (const route of [...assets.keys(),'/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
+  app.route({ method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: `${prefix}/mcp/progress`, handler });
   app.route({ method: ['GET', 'POST'], url: `${prefix}/*`, handler });
   app.addHook('onClose', async () => service.close());
   return service;
@@ -112,7 +118,7 @@ export async function createStandaloneServer(options) {
       let body;
       if (chunks.length) { try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { invariant(false, 'INVALID_JSON', 'Expected a JSON request', 400); } }
       const result = await safeDispatch(service, { method: request.method, url: request.url, headers: request.headers, body });
-      response.writeHead(result.status, result.headers); response.end(Buffer.isBuffer(result.body) ? result.body : JSON.stringify(result.body));
+    response.writeHead(result.status, result.headers); response.end(result.body === '' ? '' : Buffer.isBuffer(result.body) ? result.body : JSON.stringify(result.body));
     } catch (error) { response.writeHead(error.statusCode || 500, { 'content-type': 'application/json' }); response.end(JSON.stringify(errorResult(error))); }
   });
   return { server, service, async close() { await service.close(); if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); } };

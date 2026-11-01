@@ -2,6 +2,7 @@ import { developmentView } from './development.js';
 const $ = selector => document.querySelector(selector);
 const all = selector => [...document.querySelectorAll(selector)];
 const API = '/repository-api/v1';
+document.addEventListener('DOMContentLoaded',()=>{ document.querySelector('#settings-mcp-progress').value = location.origin + API + '/mcp/progress'; });
 const stages = [
   ['GHERKIN','需求','需求'],['SD','設計','設計'],['TESTS','測試','測試'],['IMPLEMENTATION','開發','開發'],['VERIFICATION','驗收','驗收']
 ];

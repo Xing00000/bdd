@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { appendFileSync, mkdirSync, statSync, writeFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const storage = new AsyncLocalStorage();
 const limit = 4 * 1024 * 1024;
@@ -11,11 +12,17 @@ export function withProgress(home, operationId, callback) {
   let bytes = 0, pending = '', osc = false, escape = false, truncated = false;
   try { bytes = statSync(path.join(directory, 'terminal.log')).size; } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const marker = '\r\n[output truncated]\r\n';
+  const processes = [];
+  const saveProcesses = () => {
+    const target = path.join(directory, 'processes.json'), temporary = `${target}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, JSON.stringify(processes), { mode: 0o600 }); renameSync(temporary, target);
+  };
   const reserve = 4096;
   const append = (text, record = false) => {
     let data = Buffer.from(text);
     if (!record && bytes + data.length > limit - reserve) {
       if (!truncated) { truncated = true; append(marker, true); }
+      writeFileSync(path.join(directory, 'activity'), '', { mode: 0o600 });
       return;
     }
     if (bytes + data.length > limit) return;
@@ -28,6 +35,19 @@ export function withProgress(home, operationId, callback) {
   const flush = () => { if (pending) { append(clean(pending)); pending = ''; } };
   const progress = {
     home,
+    startProcess(command, role, pid) {
+      const item = { commandId: randomUUID(), command: path.basename(command), role, pid, state: 'RUNNING', startedAt: new Date().toISOString() };
+      processes.push(item); saveProcesses(); return item.commandId;
+    },
+    finishProcess(commandId, outcome) {
+      const item = processes.find(p => p.commandId === commandId);
+      if (!item) return;
+      Object.assign(item, { state: 'EXITED', finishedAt: new Date().toISOString(), exitCode: outcome.exitCode ?? null, signal: outcome.signal ?? null, timedOut: Boolean(outcome.timedOut) });
+      const completed = processes.filter(p => p.state === 'EXITED');
+      const latestAgent = [...completed].reverse().find(p => p.role === 'agent');
+      while (completed.length > 64) { const index = completed.findIndex(p => p !== latestAgent); if (index < 0) break; const [oldest] = completed.splice(index, 1); processes.splice(processes.indexOf(oldest), 1); }
+      saveProcesses();
+    },
     output(text) { let safe = ''; for (const char of text) { if (osc) { if (char === '\x07' || (escape && char === '\\')) { osc = false; escape = false; safe += '[OSC removed]'; } else escape = char === '\x1b'; } else if (escape) { if (char === ']') { osc = true; escape = false; } else { safe += '\x1b' + char; escape = false; } } else if (char === '\x1b') escape = true; else safe += char; } pending += safe; const end = Math.max(pending.lastIndexOf('\n'), pending.lastIndexOf('\r')); if (end >= 0) { append(clean(pending.slice(0, end + 1))); pending = pending.slice(end + 1); } if (pending.length > 65536) { pending = '[output redacted: unterminated line]\n'; flush(); } },
     record(text) { flush(); append(clean(text), true); },
     exit(outcome) { const target=path.join(directory, 'terminal-exit.json'), temporary=target+'.tmp'; writeFileSync(temporary, JSON.stringify(outcome), { mode: 0o600 }); renameSync(temporary,target); }, flush
