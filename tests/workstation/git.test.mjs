@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile, readFile, mkdir, symlink } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, symlink, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fixture, repository, git, commitAll } from './helpers.mjs';
-import { remoteUrl, branchName, createGit } from '../../packages/git-core/index.mjs';
+import { remoteUrl, branchName, createGit, execute, processEnvironment } from '../../packages/git-core/index.mjs';
+import { withProgress } from '../../packages/git-core/progress.mjs';
 import { safePath } from '../../packages/contracts/index.mjs';
 
 test('remote policy rejects credentials, unapproved hosts, executable transports and traversal', () => {
@@ -40,6 +41,37 @@ test('commit-selected supports literal filenames and never runs shell metacharac
   const name = 'literal[1];touch-PWNED.txt'; await writeFile(path.join(f.repo, name), 'safe');
   await git.commitSelected(f.repo, { paths: [name], message: 'Literal file' }, await git.inspect(f.repo));
   assert.equal((await git.command(f.repo, ['show', `HEAD:${name}`])).stdout, 'safe');
+});
+
+test('selected additions and deletions refresh the index without reset or changing unrelated staging',async t=>{
+  const f=await fixture(t);await repository(f.repo,{'removed.txt':'old','unrelated.txt':'original'});
+  await rm(path.join(f.repo,'removed.txt'));await writeFile(path.join(f.repo,'new.txt'),'new source');
+  await writeFile(path.join(f.repo,'unrelated.txt'),'staged work');await git.command(f.repo,['add','--','unrelated.txt']);
+  await writeFile(path.join(f.repo,'unrelated.txt'),'unstaged work');
+  const before=await git.inspect(f.repo);
+  await withProgress(f.home,'OP-index',()=>git.commitSelected(f.repo,{paths:['removed.txt','new.txt'],message:'Selected changes'},before));
+  assert.equal((await git.command(f.repo,['ls-files','--','removed.txt'])).stdout,'');
+  assert.equal((await git.command(f.repo,['show',':new.txt'])).stdout,'new source');
+  assert.equal((await git.command(f.repo,['show',':unrelated.txt'])).stdout,'staged work');
+  assert.equal(await readFile(path.join(f.repo,'unrelated.txt'),'utf8'),'unstaged work');
+  const log=await readFile(path.join(f.home,'development/OP-index/terminal.log'),'utf8');
+  assert.ok(log.includes('git update-index'));assert.ok(!log.includes('git reset'));
+});
+
+test('status honors native global excludes without enabling unrelated global Git configuration',async t=>{
+  const f=await fixture(t);await repository(f.repo);
+  const taskHome=path.join(f.base,'user-home'),excludes=path.join(f.base,'global-ignore');await mkdir(taskHome);
+  await writeFile(excludes,'editor-cache\n');
+  await git.command(undefined,['config','--file',path.join(taskHome,'.gitconfig'),'core.excludesFile',excludes]);
+  await writeFile(path.join(f.repo,'editor-cache'),'ignored artifact');
+  const script=`import {createGit} from ${JSON.stringify(new URL('../../packages/git-core/index.mjs',import.meta.url).href)};console.log(JSON.stringify(await createGit({allowLocal:true}).inspect(process.argv[1])));`;
+  const inspect=async()=>{
+    const result=await execute(process.execPath,['--input-type=module','-e',script,f.repo],{env:processEnvironment({HOME:taskHome})});
+    assert.equal(result.exitCode,0,result.stderr);return JSON.parse(result.stdout);
+  };
+  assert.equal((await inspect()).clean,true);
+  await writeFile(path.join(f.repo,'readme.txt'),'genuine tracked edit');
+  const changed=await inspect();assert.equal(changed.clean,false);assert.deepEqual(changed.changes.map(file=>file.path),['readme.txt']);
 });
 test('HEAD and content fingerprints prevent stale writes', async t => {
   const f = await fixture(t); await repository(f.repo); const initial = await git.inspect(f.repo);

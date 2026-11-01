@@ -9,6 +9,51 @@ import path from 'node:path';
 import { WorkstationError, invariant, id, relativePath, safePath, exists, digest, identity } from '../contracts/index.mjs';
 
 const activeChildren = new Set();
+/** Let Git own ignore semantics, including nested rules, negation and tracked files. */
+async function sourceGit(root, operation, input) {
+  let temporary;
+  const env=processEnvironment({HOME:process.env.HOME}),prefix=['-c',`core.hooksPath=${os.devNull}`,'-c','core.fsmonitor=false'];
+  try {
+    let args=[...prefix,'-C',root];
+    if(!await exists(path.join(root,'.git'))) {
+      temporary=await mkdtemp(path.join(os.tmpdir(),'bdd-ignore-'));
+      const initialized=await execute('git',[...prefix,'init','--bare','--quiet','--template=',temporary],{env,progress:false});
+      invariant(initialized.exitCode===0&&!initialized.timedOut&&!initialized.overflow,'GIT_IGNORE_FAILED',initialized.stderr);
+      args=[...prefix,`--git-dir=${temporary}`,`--work-tree=${root}`];
+    }
+    const result=await execute('git',[...args,...operation],{cwd:root,env,input,progress:false});
+    invariant((operation[0]==='check-ignore'?[0,1]:[0]).includes(result.exitCode)&&!result.timedOut&&!result.overflow,'GIT_IGNORE_FAILED',result.stderr);
+    return result;
+  } finally {if(temporary)await rm(temporary,{recursive:true,force:true});}
+}
+
+export async function gitSourcePaths(root,paths) {
+  if(!paths.length)return [];
+  const result=await sourceGit(root,['check-ignore','--stdin','-z'],paths.join('\0')+'\0');
+  const ignored=new Set(result.stdout.split('\0').filter(Boolean));return paths.filter(file=>!ignored.has(file));
+}
+
+/** Enumerate with Git before inspecting paths, so ignored trees are never traversed. */
+export async function gitSourceFiles(root,folders) {
+  const result=await sourceGit(root,['ls-files','--cached','--others','--exclude-standard','-z','--',...folders]);
+  const files=[];
+  for(const file of new Set(result.stdout.split('\0').filter(Boolean)))if(await exists(await safePath(root,file)))files.push(file);
+  const group=file=>folders.findIndex(folder=>file===folder||file.startsWith(folder+'/'));
+  return files.sort((a,b)=>{
+    const difference=group(a)-group(b);if(difference)return difference;
+    const left=a.split('/'),right=b.split('/');
+    for(let i=0;i<Math.min(left.length,right.length);i++){const order=left[i].localeCompare(right[i]);if(order)return order;}
+    return left.length-right.length;
+  });
+}
+
+/** SQLite materializations are already accepted sources, including tracked ignored paths. */
+export async function trackSourceView(root) {
+  for(const args of [['init','--quiet','--template='],['add','--force','--all']]) {
+    const result=await execute('git',['-c',`core.hooksPath=${os.devNull}`,'-c','core.fsmonitor=false','-C',root,...args],{env:processEnvironment({HOME:process.env.HOME},{git:true}),progress:false});
+    invariant(result.exitCode===0&&!result.timedOut&&!result.overflow,'GIT_SOURCE_VIEW_FAILED',result.stderr);
+  }
+}
 export function stopChildProcesses(signal = 'SIGTERM') {
   for (const child of activeChildren) { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} }
 }
@@ -89,7 +134,7 @@ export function startProgressPty(executable, args, { cwd, env, onData, supervise
   const child = pty.spawn(command, argv, { cwd, env: supervised ? { ...env, WB_PTY_CONFIG: Buffer.from(JSON.stringify(config)).toString('base64') } : { ...env, TERM: 'xterm-256color' }, name: 'xterm-256color', cols: 100, rows: 30 });
   const tracked = new EventEmitter(); tracked.pid = child.pid; tracked.kill = signal => child.kill(signal); trackChild(tracked);
   const progress = currentProgress(); let commandId;
-  try { progress?.record(`\r\n[start ${supervised ? 'controlling-PTY pipe relay' : 'PTY'}] ${executable}${executable === 'git' ? ' ' + (args.find(arg => ['clone','fetch','push','commit-tree','submodule','checkout','switch','add','merge','init','update-ref','read-tree','write-tree','reset','remote','ls-remote'].includes(arg)) ?? 'command') : ''}\r\n`);
+  try { progress?.record(`\r\n[start ${supervised ? 'controlling-PTY pipe relay' : 'PTY'}] ${executable}${executable === 'git' ? ' ' + (args.find(arg => ['clone','fetch','push','commit-tree','submodule','checkout','switch','add','merge','init','update-ref','read-tree','write-tree','update-index','remote','ls-remote'].includes(arg)) ?? 'command') : ''}\r\n`);
   commandId = progress?.startProcess(executable, role, child.pid); } catch (error) { terminateSpawnedPty(child, () => tracked.emit('close')); throw error; }
   let pending = '', result, timedOut = false;
   child.onData(data => {
@@ -125,7 +170,9 @@ export function createGit(policy = {}) {
   const settings = { allowLocal: false, hosts: ['github.com'], ...policy };
   async function command(repo, args, options = {}) {
     const readonly = new Set(['rev-parse', 'symbolic-ref', 'status', 'ls-files', 'cat-file', 'show', 'show-ref', 'diff', 'log', 'for-each-ref', 'ls-tree', 'merge-base']);
-    const query = readonly.has(args[0]) || (args[0] === 'config' && args.some(arg => ['--get', '--get-regexp', '--get-all', '--list', '-l'].includes(arg))) || (args[0] === 'remote' && (args.length === 1 || args[1] === 'get-url'));
+    let index=0;while(args[index]==='-c')index+=2;
+    const operation=args.slice(index);
+    const query = readonly.has(operation[0]) || (operation[0] === 'config' && operation.some(arg => ['--get', '--get-regexp', '--get-all', '--list', '-l'].includes(arg))) || (operation[0] === 'remote' && (operation.length === 1 || operation[1] === 'get-url'));
     const result = await execute('git', ['-c', `core.hooksPath=${os.devNull}`, '-c', 'core.fsmonitor=false',
       '-c', 'commit.gpgSign=false', '-c', 'protocol.ext.allow=never', '-c', `protocol.file.allow=${settings.allowLocal ? 'always' : 'never'}`,
       '-c', 'submodule.recurse=false', '-c', 'user.name=BDD Workstation', '-c', 'user.email=workstation@localhost',
@@ -145,11 +192,17 @@ export function createGit(policy = {}) {
     invariant(typeof ref === 'string' && ref.length <= 240 && !/[\x00-\x20]/.test(ref), 'INVALID_REF', 'Invalid revision');
     return commitId((await command(directory, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`])).stdout.trim());
   }
+  async function nativeStatus(directory) {
+    // Preserve Git's effective excludes without enabling unrelated global config.
+    const excludes=await execute('git',['-C',directory,'config','--path','--get','core.excludesFile'],{env:processEnvironment({HOME:process.env.HOME}),progress:false});
+    invariant([0,1].includes(excludes.exitCode)&&!excludes.timedOut&&!excludes.overflow,'GIT_IGNORE_FAILED',excludes.stderr);
+    return command(directory,[...(excludes.exitCode===0?['-c',`core.excludesFile=${excludes.stdout.trim()}`]:[]),'status','--porcelain=v1','-z','--untracked-files=all']);
+  }
   async function inspect(directory) {
     const repo = await root(directory);
     const resolved = await command(repo, ['rev-parse', '--verify', 'HEAD'], { allowFailure: true });
     const branch = (await command(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { allowFailure: true })).stdout.trim() || null;
-    const status = (await command(repo, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])).stdout.split('\0');
+    const status = (await nativeStatus(repo)).stdout.split('\0');
     const changes = [];
     for (let i = 0; i < status.length; i++) {
       if (!status[i]) continue;
@@ -165,7 +218,7 @@ export function createGit(policy = {}) {
         const info = await lstat(file);
         if (info.isFile()) hashes.push([change.path, digest(await readFile(file))]);
         else if (await exists(path.join(file, '.git'))) {
-          hashes.push([change.path, (await command(file, ['rev-parse', 'HEAD'])).stdout.trim(), (await command(file, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])).stdout]);
+          hashes.push([change.path, (await command(file, ['rev-parse', 'HEAD'])).stdout.trim(), (await nativeStatus(file)).stdout]);
         } else hashes.push([change.path, 'directory']);
       } else hashes.push([change.path, 'deleted']);
     }
@@ -325,7 +378,9 @@ export function createGit(policy = {}) {
         await expect(directory, expected, { attached: true });
         // Compare-and-swap: never attach the commit to a concurrently changed branch.
         await command(directory, ['update-ref', `refs/heads/${before.branch}`, sha, before.head ?? '0'.repeat(sha.length)]);
-        const refreshed = await command(directory, ['reset', '--quiet', 'HEAD', '--', ...input.paths], { allowFailure: true });
+        const entries=(await command(directory,['ls-files','--stage','-z','--',...input.paths],{env})).stdout;
+        const removals=input.paths.map(file=>`0 ${'0'.repeat(sha.length)}\t${file}\0`).join('');
+        const refreshed = await command(directory, ['update-index', '-z', '--index-info'], { input:removals+entries,allowFailure: true });
         return { ...(await inspect(directory)), commit: sha, changedPaths: input.paths, ...(refreshed.exitCode !== 0 ? { warning: 'COMMITTED_INDEX_REFRESH_REQUIRED' } : {}) };
       } finally { await rm(temporary, { recursive: true, force: true }); }
     },
