@@ -30,7 +30,7 @@ export function developmentView({api,view,feature,refresh,navigate,ask,note,show
       const result=await api(`/operations/${session.id}/terminal?offset=${offset}`);if(current!==session)return;
       session.status=result.status;session.phase=result.phase;
       $('#development-status').textContent=({CANCELLED:'已停止',INTERRUPTED:'已中斷'}[result.status])??result.error?.message??({RUNNING:'開發中',PREPARING:'準備中',CHECKING:'BDD 檢查中',COMPLETED:'已通過',FAILED:'未通過'}[result.phase]??result.status);
-      $('#develop').disabled=active(result.status);$('#stop-development').hidden=!active(result.status);
+      $('#develop').disabled=active(result.status)||feature()?.workflow?.status==='COMPLETE';$('#stop-development').hidden=!active(result.status);
       if(result.output||result.phase==='RUNNING'){await openTerminal(session);if(current!==session)return;terminal?.write(result.output);offset=result.nextOffset;}
       if(active(result.status)||result.hasMore){timer=setTimeout(()=>void poll(session),350);return;}
       if(session.handled)return;session.handled=true;
@@ -54,12 +54,14 @@ export function developmentView({api,view,feature,refresh,navigate,ask,note,show
     const state=view(),f=feature();if(!f)return;
     const operation=(state.detail.operations??[]).find(x=>x.request?.operation==='workflow.develop'&&`${x.request.input.requirementId}/${x.request.input.featureId}`===f.key);
     const key=`${state.repositoryId}/${f.key}`;
+    $('#develop').disabled=active(current?.status)||f.workflow?.status==='COMPLETE';
     if(current?.key===key&&(!operation||current.id===operation.id))return;
-    leave();$('#develop').disabled=false;$('#stop-development').hidden=true;$('#development-status').textContent='';
+    leave();$('#develop').disabled=f.workflow?.status==='COMPLETE';$('#stop-development').hidden=true;$('#development-status').textContent=f.workflow?.status==='COMPLETE'?'本階段已完成，唯讀':'';
     if(operation){current={key,id:operation.id,status:operation.status,autoAdvance:active(operation.status)&&canRecover(),actionVersion:actionVersion()};void poll(current);}
   }
   async function start(extra={}) {
     const s=view(),f=feature();if(!f)return;
+    if(f.workflow?.status==='COMPLETE')throw new Error('本階段已完成，請先從驗收回報問題。');
     if(current&&active(current.status))return;
     const version=beginAction();
     $('#develop').disabled=true;

@@ -1,0 +1,98 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { chromium, expect } from '@playwright/test';
+import { fixture,toolkitRoot,testBrowserRoot } from '../workstation/helpers.mjs';
+import { createStandaloneServer } from '../../packages/workstation/http.mjs';
+
+test('passed stages are read-only; returning from test plan clears its contents and restores design editing',async t=>{
+  const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false});
+  t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
+  const origin=`http://127.0.0.1:${app.server.address().port}`,service=app.service;
+  service.register({id:'SPEC-ui',title:'Lifecycle',remoteUrl:f.remote});
+  let n=0;
+  const job=async(operation,input={})=>{
+    const id=`OP-ui-${++n}`;service.enqueue({schemaVersion:1,operationId:id,repositoryId:'SPEC-ui',operation,input});return service.wait(id);
+  };
+  const ids={requirementId:'REQ-001',featureId:'reader'};
+  const current=async()=>(await service.detail('SPEC-ui')).spec.features[0];
+  const save=async(file,content)=>{const old=await service.readFile('SPEC-ui',file);const result=await job('repository.save',{kind:'source',path:file,expectedHash:old.sha256,content});assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));};
+  assert.equal((await job('repository.setup',{reviewer:'Human',projects:[]})).status,'SUCCEEDED');
+  assert.equal((await job('workflow.create',{...ids,title:'Reader',guided:true,acceptance:'Read all approved content'})).status,'SUCCEEDED');
+  await save('spec/REQ-001/reader/reader.sd.md','# Reader\n\n'+Array.from({length:80},(_,i)=>`Design section ${i+1}: render the full document without an inner scrollbar.`).join('\n'));
+  const approve=async stage=>job('workflow.review',{...ids,stage,expectedDigest:(await current()).review.hashes[stage]});
+  assert.equal((await approve('gherkin')).status,'SUCCEEDED');
+  const browser=await chromium.launch();t.after(()=>browser.close());
+  const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const go=stage=>page.goto(`${origin}/repositories?repo=SPEC-ui&view=features&feature=REQ-001%2Freader&stage=${stage}`);
+  await go('GHERKIN');await expect(page.locator('#requirement-gherkin')).toHaveAttribute('readonly','');
+  await expect(page.locator('#save-requirement')).toBeHidden();
+  await go('SD');await expect(page.locator('#source-editor')).toBeEditable();
+  await expect(page.locator('#advance')).toHaveText('確認系統設計');
+  await expect(page.locator('#source-actions #save-source')).toBeVisible();await expect(page.locator('#source-actions #advance')).toBeVisible();
+  const layout=await page.locator('#source-editor').evaluate(node=>({client:node.clientHeight,scroll:node.scrollHeight}));assert.ok(layout.client>=layout.scroll,'The document must expand to display all lines');
+  const artifacts=process.env.WB_TEST_ARTIFACTS??path.join(os.tmpdir(),'bdd-test-plan-ui');await mkdir(artifacts,{recursive:true});
+  await page.screenshot({path:path.join(artifacts,'design-expanded.png'),fullPage:true});
+  const failure=await approve('sd');assert.equal(failure.status,'FAILED');assert.equal(failure.error.code,'EXECUTION_DISABLED');
+  await save('tests/REQ-001/reader/reader.steps.ts',"import {Then} from '../../_shared/bdd';\nimport {expect} from '@playwright/test';\nThen('the document is readable',async({page})=>{await expect(page.locator('#source-editor')).toBeVisible();});\n");
+  await save('tests/REQ-001/reader/reader.hooks.ts',"import {AfterStep} from '../../_shared/bdd';\nAfterStep(async({page,$testInfo,$step})=>{await $testInfo.attach('step-'+$step.title,{contentType:'image/png',body:await page.screenshot()});});\n");
+  await go('SD');await expect(page.locator('#source-editor')).toHaveAttribute('readonly','');await expect(page.locator('#save-source')).toBeHidden();
+  await go('TESTS');await expect(page.locator('#source-editor')).toBeEditable();
+  await expect(page.locator('#source-picker')).toBeHidden();await expect(page.locator('#hook-editor')).toBeEditable();
+  await expect(page.locator('#source-path')).toContainText('reader.steps.ts');await expect(page.locator('#hook-path')).toContainText('reader.hooks.ts');
+  await expect(page.locator('#complete-test-plan')).toHaveText('LLM 生成測試計劃');
+  await expect(page.locator('#complete-test-plan')).toBeVisible();await expect(page.locator('#generate-test-plan')).toBeHidden();
+  await page.locator('#restart-stage').click();
+  await expect(page.locator('#phase-title')).toHaveText('設計');await expect(page.locator('#source-editor')).toBeEditable();
+  assert.equal((await service.readFile('SPEC-ui','tests/REQ-001/reader/reader.steps.ts')).content,'');
+  assert.equal((await service.readFile('SPEC-ui','tests/REQ-001/reader/reader.hooks.ts')).content,'');
+  await go('TESTS');await expect(page.locator('#source-editor')).toHaveValue('');await expect(page.locator('#source-editor')).toHaveAttribute('readonly','');
+  await page.reload();await expect(page.locator('#source-editor')).toHaveValue('');
+  assert.deepEqual(errors,[]);
+});
+
+test('settings prepares packages, design confirmation codegens, and only the separate LLM button completes the plan',async t=>{
+  const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,allowLocal:true,autoAcquire:false,enableExecution:true});
+  t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
+  const origin=`http://127.0.0.1:${app.server.address().port}`,service=app.service;
+  service.register({id:'SPEC-split',title:'Split generation',remoteUrl:f.remote});
+  const ids={requirementId:'REQ-001',featureId:'sum'},stepPath='tests/REQ-001/sum/sum.steps.ts',hookPath='tests/REQ-001/sum/sum.hooks.ts';
+  const steps="import {Then} from '../../_shared/bdd';\nimport {expect} from '@playwright/test';\nThen('two plus three is five',async()=>{expect(2+3).toBe(5);});\n";
+  const hooks="import {AfterStep} from '../../_shared/bdd';\nAfterStep(async({page,$testInfo,$step})=>{await $testInfo.attach('step-'+$step.title,{contentType:'image/png',body:await page.screenshot()});});\n";
+  const agent=path.join(f.base,'complete-plan.mjs');
+  await writeFile(agent,`import {writeFile} from 'node:fs/promises';const root=process.argv[2];await writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});await writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});`);
+  let sequence=0;
+  const job=async(operation,input={})=>{
+    const operationId=`OP-split-${++sequence}`;service.enqueue({schemaVersion:1,repositoryId:'SPEC-split',operationId,operation,input});
+    const result=await service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));return result;
+  };
+  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agent,'{spec}'],skills:''}});
+  await job('workflow.create',{...ids,title:'Sum'});
+  for(const [file,content] of [['spec/REQ-001/sum/sum.feature','Feature: Sum\n  @case:CASE-001\n  Scenario: Addition\n    Then two plus three is five\n'],['spec/REQ-001/sum/sum.sd.md','# Sum\nAssert that two plus three equals five and capture step screenshots.\n']]) {
+    const old=await service.readFile('SPEC-split',file);await job('repository.save',{kind:'source',path:file,content,expectedHash:old.sha256});
+  }
+  const feature=async()=>(await service.detail('SPEC-split')).spec.features[0];
+  await job('workflow.review',{...ids,stage:'gherkin',expectedDigest:(await feature()).review.hashes.gherkin});
+  const browser=await chromium.launch();t.after(()=>browser.close());
+  const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto(`${origin}/?repo=SPEC-split&view=settings`);
+  await page.getByRole('button',{name:'儲存設定',exact:true}).click();
+  const dialog=page.getByRole('dialog');await expect(dialog).toContainText('安裝必要套件並繼續');
+  await dialog.getByRole('button',{name:'安裝並繼續',exact:true}).click();
+  await expect(page.locator('#notice')).toHaveAttribute('data-operation','repository.tools.prepare',{timeout:120000});
+  await expect(page.locator('#notice')).toHaveAttribute('data-outcome','SUCCEEDED',{timeout:120000});
+  await readFile(path.join(f.home,'repositories/SPEC-split/test-tools/node_modules/playwright-bdd/package.json'));
+  await page.goto(`${origin}/?repo=SPEC-split&view=features&feature=REQ-001%2Fsum&stage=SD`);
+  await page.locator('#advance').click();
+  await expect(page.locator('#source-editor')).toHaveValue(/Step implementation required/,{timeout:30000});
+  await expect(page.locator('#hook-editor')).toHaveValue(/AfterStep/);
+  await expect(page.locator('#complete-test-plan')).toBeVisible();await expect(page.locator('#generate-test-plan')).toBeHidden();
+  assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);
+  await page.locator('#complete-test-plan').click();
+  await expect(page.locator('#source-editor')).toHaveValue(steps,{timeout:60000});
+  await expect(page.locator('#hook-editor')).toHaveValue(hooks);
+  assert.equal((await feature()).review.confirmed.tests,false);
+  assert.deepEqual(errors,[]);
+});

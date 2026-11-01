@@ -4,9 +4,9 @@ const all = selector => [...document.querySelectorAll(selector)];
 const API = '/repository-api/v1';
 document.addEventListener('DOMContentLoaded',()=>{ document.querySelector('#settings-mcp-progress').value = location.origin + API + '/mcp/progress'; });
 const stages = [
-  ['GHERKIN','需求','需求'],['SD','設計','設計'],['TESTS','測試','測試'],['IMPLEMENTATION','開發','開發'],['VERIFICATION','驗收','驗收']
+  ['GHERKIN','需求確認','需求'],['SD','系統設計','設計'],['TESTS','測試計劃','測試'],['IMPLEMENTATION','開發實作','開發'],['VERIFICATION','驗收','驗收']
 ];
-const labels = { 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
+const labels = { 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
 const state = { repositories:[], repositoryId:null, detail:null, view:'features', stage:'GHERKIN', featureKey:null, projectId:null, editor:null, composer:null, composerRequest:0, transient:false, product:null, busy:false, loading:false, epoch:0, sourceRequest:0, productRequest:0, reportRequest:0, formDirty:false, capabilities:null, scope:null };
 function el(tag,text,cls) { const n=document.createElement(tag); if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n; }
 function button(text, action, cls) { const n=el('button',text,cls);n.type='button';n.onclick=()=>safe(action);return n; }
@@ -22,17 +22,20 @@ function detailGroup(title,children,open=false,cls='') {
 
 async function safe(fn) { try { await fn(); } catch(error) { note(error.message,true); } }
 async function api(route,method='GET',body) {
-  const r=await fetch(API+route,{method,headers:{'content-type':'application/json','x-workbench-request':'1'},...(body===undefined?{}:{body:JSON.stringify(body)})});
+  let r;
+  try { r=await fetch(API+route,{method,headers:{'content-type':'application/json','x-workbench-request':'1'},...(body===undefined?{}:{body:JSON.stringify(body)})}); }
+  catch(error) { if(error instanceof TypeError) throw new Error('無法連線到工作台服務，請確認本機服務正在執行；若剛提交操作，請先查看執行紀錄再重試。'); throw error; }
   const value=await r.json();if(!r.ok)throw Object.assign(new Error(value.message??'操作失敗'),value);return value;
 }
 const feature=()=>state.detail?.spec?.features.find(f=>f.key===state.featureKey);
 const composerInput=()=>({description:$('#requirement-description').value,gherkin:$('#requirement-gherkin').value});
 const composerDirty=()=>Boolean(state.composer && (composerInput().description!==state.composer.description||composerInput().gherkin!==state.composer.gherkin));
-const dirty=()=>state.formDirty||composerDirty()||Boolean(state.editor&&$('#source-editor').value!==state.editor.content||state.product&&$('#project-editor').value!==state.product.content);
+const dirty=()=>state.formDirty||composerDirty()||Boolean(state.editor&&$('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content||state.product&&$('#project-editor').value!==state.product.content);
 function block() {
   const value=state.busy||state.loading||state.transient;
   $('#content').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
-  $('#sidebar').inert=value;$('#source-editor').readOnly=value;$('#project-editor').readOnly=value;$('#requirement-description').readOnly=value;$('#requirement-gherkin').readOnly=value;$('#generate-gherkin').disabled=value||!$('#requirement-description').value.trim();
+  const editable=feature()?.review.editable??{gherkin:true,sd:false,tests:false};
+  $('#sidebar').inert=value;$('#source-editor').readOnly=value||!editable[state.stage==='SD'?'sd':'tests'];$('#hook-editor').readOnly=value||!editable.tests;$('#project-editor').readOnly=value;$('#requirement-description').readOnly=value||!editable.gherkin;$('#requirement-gherkin').readOnly=value||!editable.gherkin;$('#generate-gherkin').disabled=value||!editable.gherkin||!$('#requirement-description').value.trim();$('#upload-requirement').disabled=value||!editable.gherkin;
   $('#sync').disabled=value||dirty()||!state.detail?.preferences?.configured;
 }
 let dialogResolve;
@@ -45,7 +48,7 @@ function dialog(title,description,fields,submit,action) {
   $('#dialog-form').onsubmit=async event=>{event.preventDefault();$('#dialog-submit').disabled=true;try{await action(new FormData(event.target));closeDialog(true);}catch(error){$('#dialog-error').textContent=error.message;}finally{$('#dialog-submit').disabled=false;}};$('#form-dialog').showModal();
 }
 function ask(title,text,submit) { return new Promise(resolve=>{dialogResolve=resolve;dialog(title,text,[],submit,async()=>{});}); }
-async function guard() { if(!dirty())return true;if(!await ask('有尚未儲存的編輯','離開會捨棄畫面中的草稿；已存入 SQLite 的內容不受影響。','捨棄草稿並離開'))return false;state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.formDirty=false;return true; }
+async function guard() { if(!dirty())return true;if(!await ask('有尚未儲存的編輯','離開會捨棄畫面中的草稿；已存入 SQLite 的內容不受影響。','捨棄草稿並離開'))return false;state.editor=null;state.hookEditor=null;state.composer=null;state.composerRequest++;state.product=null;state.formDirty=false;return true; }
 async function navigate(patch,{protect=true,replace=false}={}) {
   if(state.busy||state.transient)return;if(protect&&!await guard())return;
   if ((Object.hasOwn(patch,'repositoryId')&&patch.repositoryId!==state.repositoryId)
@@ -88,7 +91,7 @@ async function refresh() {
 const activeOperation = status => ['QUEUED','RUNNING','CANCELLING'].includes(status);
 let actionVersion=0;
 const beginAction=()=>++actionVersion;
-const cliOperations = new Set(['repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
+const cliOperations = new Set(['repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
 let terminalSession = null, terminalTimer;
 function showOperation(op) {
   if (!op || op.request?.repositoryId !== state.repositoryId) return;
@@ -98,14 +101,16 @@ function showOperation(op) {
   const session = terminalSession = {id:op.id, repositoryId:state.repositoryId, offset:0};
   const text=$('#operation-terminal-text');
   details.hidden=false;details.dataset.operationId=op.id;text.textContent='';
-  text.hidden=false;
+  text.hidden=op.request.operation==='workflow.develop';
   if(op.request.operation!=='workflow.develop')$('#development-terminal').hidden=true;
   async function poll() {
     if (terminalSession!==session || session.repositoryId!==state.repositoryId) return;
     try {
       const result=await api(`/operations/${session.id}/terminal?offset=${session.offset}`);
       if (terminalSession!==session || session.repositoryId!==state.repositoryId) return;
+      const followOutput=text.scrollHeight-text.clientHeight-text.scrollTop<=1;
       text.append(document.createTextNode(result.output));session.offset=result.nextOffset;
+      if(followOutput)text.scrollTop=text.scrollHeight;
       const outcome=result.result?.testOutcome ?? result.result?.outcome;
       $('#operation-terminal-status').textContent=[result.status,outcome,result.latestExit && `${activeOperation(result.status)?'上一次程序 ':''}exit ${result.latestExit.exitCode} · signal ${result.latestExit.signal ?? 'none'}`,result.error?.message].filter(Boolean).join(' · ');
       if(activeOperation(result.status)||result.hasMore)terminalTimer=setTimeout(poll,result.hasMore?0:350);
@@ -222,6 +227,7 @@ async function bindRepository() {
       } finally { $('#content').before(panel); }
       if(loaded.status!=='SUCCEEDED')note('綁定與設定已保存，內容尚未取得：'+(loaded.error?.message??'請重試'),true);
     }
+    await flow('repository.tools.prepare',{});
     localStorage.setItem('bdd-reviewer',input.reviewer);await navigate({repositoryId:registered.id,view:'features',stage:'GHERKIN',featureKey:null,projectId:null},{protect:false});
   });
 }
@@ -230,7 +236,7 @@ function renderSettings() {
   for(const p of d.modules??[])addSettingsProduct(p);if(!d.modules?.length)addSettingsProduct();
   $('#settings-global-timeout').value=d.preferences?.globalTimeoutMs??c?.execution?.globalTimeoutMs??'';
   const agent=d.preferences.agent;
-  for(const key of ['command','prompt','skills','maxAttempts','timeoutMs'])$('#settings-agent-'+key).value=agent[key];
+  for(const key of ['command','prompt','testPlanPrompt','skills','maxAttempts','timeoutMs'])$('#settings-agent-'+key).value=agent[key];
   $('#settings-agent-args').value=agent.args.join('\n');
   updateServices();$('#settings-service').value=c?.execution.service?.projectId??'';$('#settings-url').value=c?.execution.environment?.WB_TARGET_BASE_URL??'';$('#settings-health').value=c?.execution.service?.healthUrl??'';$('#settings-program').value=c?.execution.service?.command[0]??'node';$('#settings-args').value=c?.execution.service?.command.slice(1).join('\n')??'';
   $('#operation-list').replaceChildren();for(const op of d.operations??[]){const item=el('details');item.append(el('summary',`${labels[op.request.operation]??'系統操作'} · ${op.status}`));if(op.error)item.append(el('p',op.error.message??'這次操作未完成，已保留內容。','muted'));const technical=detailGroup('檢視技術細節',[el('pre',JSON.stringify({id:op.id,result:op.result,error:op.error},null,2))]);item.append(technical);if(cliOperations.has(op.request.operation))item.append(button('查看執行過程',()=>showOperation(op)));$('#operation-list').append(item);}
@@ -246,7 +252,7 @@ function addSettingsProduct(p={}) {
 function updateServices() { const select=$('#settings-service'),previous=select.value;select.replaceChildren(new Option('暫不設定',''));all('#settings-products .product-repo-input').forEach(row=>{const id=row.querySelector('[name=productId]').value.trim()||guessName(row.querySelector('[name=productUrl]').value);if(id)select.append(new Option(id,id));});select.value=previous; }
 async function saveSettings() {
   const localPath=$('#settings-local-path').value.trim(),expectedLocalPath=state.detail.localPath;
-  const form=new FormData($('#settings-form')),input={reviewer:$('#settings-reviewer').value,projects:formProducts(form),expectedSettings:state.detail.settingsToken,agent:{...state.detail.preferences?.agent,command:$('#settings-agent-command').value.trim()||'codex',args:$('#settings-agent-args').value.split('\n').filter(Boolean),prompt:$('#settings-agent-prompt').value,skills:$('#settings-agent-skills').value,maxAttempts:Number($('#settings-agent-maxAttempts').value),timeoutMs:Number($('#settings-agent-timeoutMs').value)}};
+  const form=new FormData($('#settings-form')),input={reviewer:$('#settings-reviewer').value,projects:formProducts(form),expectedSettings:state.detail.settingsToken,agent:{...state.detail.preferences?.agent,command:$('#settings-agent-command').value.trim()||'codex',args:$('#settings-agent-args').value.split('\n').filter(Boolean),prompt:$('#settings-agent-prompt').value,testPlanPrompt:$('#settings-agent-testPlanPrompt').value,skills:$('#settings-agent-skills').value,maxAttempts:Number($('#settings-agent-maxAttempts').value),timeoutMs:Number($('#settings-agent-timeoutMs').value)}};
   input.globalTimeoutMs=$('#settings-global-timeout').value===''?null:Number($('#settings-global-timeout').value);
   if($('#settings-service').value){const baseUrl=$('#settings-url').value;input.execution={projectId:$('#settings-service').value,baseUrl,healthUrl:$('#settings-health').value||new URL('/health',baseUrl).href,command:[$('#settings-program').value,...$('#settings-args').value.split('\n').map(x=>x.trim()).filter(Boolean)]};}
   await executeJob('repository.setup',input,{refreshAfter:false});localStorage.setItem('bdd-reviewer',input.reviewer);
@@ -254,7 +260,7 @@ async function saveSettings() {
     try { await executeJob('repository.location',{localPath,expectedLocalPath},{refreshAfter:false}); }
     catch(error) { state.detail=await api(`/spec-repositories/${state.repositoryId}`);state.formDirty=true;renderBinding();note('其他設定已儲存至 SQLite；本地目錄尚未就緒：'+error.message,true);return; }
   }
-  state.formDirty=false;await refresh();
+  state.formDirty=false;await flow('repository.tools.prepare',{});await refresh();
 }
 async function createFeature() {
   await navigate({view:'features',featureKey:'__new__',stage:'GHERKIN'});
@@ -266,27 +272,43 @@ async function renderWorkflow(epoch) {
   const titleCounts=new Map();for(const item of features)titleCounts.set(item.title,(titleCounts.get(item.title)??0)+1);
   $('#feature-select').replaceChildren(...features.map(f=>new Option(titleCounts.get(f.title)>1?`${f.title} (${f.requirementId})`:f.title,f.key)));$('#feature-select').value=state.featureKey??'';
   const f=feature();$('#workflow').hidden=false;$('#feature-empty').hidden=Boolean(f);
-  $('#stage-nav').hidden=!f;$('#scope-details').hidden=!f||state.stage!=='TESTS';
+  $('#stage-nav').hidden=!f;$('#scope-details').hidden=!f||state.stage!=='SD'||!f.review.editable.sd;
   if(!f){
     state.stage='GHERKIN';$('#phase-title').textContent='需求';$('#feature-status').textContent='草稿';
     $('#requirement-panel').hidden=false;$('#source-panel').hidden=true;$('#implementation-panel').hidden=true;$('#verification-panel').hidden=true;
     await openComposer(null,epoch);renderNext();return;
   }
-  if(!stages.some(x=>x[0]===state.stage))state.stage='GHERKIN';$('#stage-nav').replaceChildren();
-  stages.forEach(([key,title],i)=>{const n=button('',()=>navigate({stage:key}));n.setAttribute('aria-label',`${i+1} ${title}`);n.setAttribute('aria-current',key===state.stage?'step':'false');const done=i<3?f.review.confirmed[['gherkin','sd','tests'][i]]:i===4&&f.verification.status==='VERIFIED';n.classList.toggle('complete',Boolean(done));n.append(el('span',done?'✓':String(i+1),'step-number'),el('span',title));$('#stage-nav').append(n);});
+  if(!stages.some(x=>x[0]===state.stage)||f.authoringOnly&&!['GHERKIN','SD'].includes(state.stage))state.stage='GHERKIN';$('#stage-nav').replaceChildren();
+  stages.filter(x=>!f.authoringOnly||['GHERKIN','SD'].includes(x[0])).forEach(([key,title],i)=>{const n=button('',()=>navigate({stage:key}));n.setAttribute('aria-label',`${i+1} ${title}`);n.setAttribute('aria-current',key===state.stage?'step':'false');const done=i<3?f.review.confirmed[['gherkin','sd','tests'][i]]:i===4&&f.verification.status==='VERIFIED';n.classList.toggle('complete',Boolean(done));n.append(el('span',done?'✓':String(i+1),'step-number'),el('span',title));$('#stage-nav').append(n);});
   const phase=stages.find(x=>x[0]===state.stage);$('#phase-title').textContent=phase[2];$('#feature-status').replaceWith(Object.assign(badge(f.verification.status==='VERIFIED'?'VERIFIED':f.review.stage),{id:'feature-status'}));
   const editing=['SD','TESTS'].includes(state.stage);$('#requirement-panel').hidden=state.stage!=='GHERKIN';$('#source-panel').hidden=!editing;$('#implementation-panel').hidden=state.stage!=='IMPLEMENTATION';$('#verification-panel').hidden=state.stage!=='VERIFICATION';
+  $('#source-picker').hidden=state.stage==='TESTS';$('#hook-panel').hidden=state.stage!=='TESTS';
   const sources=state.stage==='GHERKIN'?[`spec/${f.key}/${f.id}.feature`]:state.stage==='SD'?[`spec/${f.key}/${f.id}.sd.md`]:[`tests/${f.key}/${f.id}.steps.ts`,`tests/${f.key}/${f.id}.hooks.ts`];
   const selected=sources.includes(state.editor?.path)?state.editor.path:sources[0];$('#source-select').replaceChildren(...sources.map(x=>new Option(x.split('/').at(-1),x)));$('#source-select').value=selected;
   if(!state.formDirty){$('#case-ids').value=f.caseIds.join('\n');all('[name=profile]').forEach(n=>n.checked=f.profiles.includes(n.value));$('#feature-projects').replaceChildren(el('legend','關聯產品'));for(const p of d.modules??[]){const l=el('label',undefined,'check'),n=document.createElement('input');n.type='checkbox';n.name='feature-project';n.value=p.id;n.checked=f.projectIds.includes(p.id);l.append(n,document.createTextNode(p.id));$('#feature-projects').append(l);}}
   state.scope=await api(`/spec-repositories/${d.id}/file?path=${encodeURIComponent(`spec/${f.key}/feature.yaml`)}`);if(epoch!==state.epoch)return;
-  if(state.stage==='GHERKIN')await openComposer(f,epoch);else if(editing)await openSource(selected);if(epoch!==state.epoch)return;if(state.stage==='VERIFICATION')await renderFeatureReports();renderNext();if(state.stage==='IMPLEMENTATION')await development.open();else development.leave();
+  if(state.stage==='GHERKIN')await openComposer(f,epoch);else if(editing){await openSource(state.stage==='TESTS'?sources[0]:selected);if(state.stage==='TESTS'){const file=await api(`/spec-repositories/${state.repositoryId}/file?path=${encodeURIComponent(sources[1])}`);if(epoch!==state.epoch)return;if(!(state.hookEditor?.path===file.path&&state.hookEditor.repositoryId===state.repositoryId&&$('#hook-editor').value!==state.hookEditor.content)){state.hookEditor={...file,repositoryId:state.repositoryId};$('#hook-editor').value=file.content;}$('#hook-path').textContent=file.path;resizeWorkflowEditor($('#hook-editor'));}else state.hookEditor=null;}if(epoch!==state.epoch)return;if(state.stage==='GHERKIN'||editing)resizeWorkflowEditor($(state.stage==='GHERKIN'?'#requirement-gherkin':'#source-editor'));if(state.stage==='VERIFICATION')await renderFeatureReports();renderNext();if(state.stage==='IMPLEMENTATION')await development.open();else development.leave();
 }
+function resizeWorkflowEditor(editor) {
+  if(!editor.getClientRects().length)return;
+  editor.style.height='auto';
+  editor.style.height=`${editor.scrollHeight+editor.offsetHeight-editor.clientHeight}px`;
+}
+window.addEventListener('resize',()=>{for(const selector of ['#requirement-gherkin','#source-editor','#hook-editor'])resizeWorkflowEditor($(selector));});
 function renderNext() {
   const f=feature(),stage=state.stage,advance=$('#advance');
-  advance.hidden=!['GHERKIN','SD','TESTS'].includes(stage);
-  (stage==='GHERKIN'?$('#requirement-buttons'):$('#source-panel .editor-toolbar')).append(advance);
-  advance.textContent={GHERKIN:'確認需求並繼續',SD:'確認設計並繼續',TESTS:'確認測試並繼續'}[stage]??'';
+  const editable=f?.review.editable??{gherkin:true,sd:false,tests:false},kind={GHERKIN:'gherkin',SD:'sd',TESTS:'tests'}[stage];
+  advance.hidden=!kind||!editable[kind]||stage==='TESTS'&&!f?.testPlan.ready||f?.authoringOnly&&stage==='SD';
+  $('#save-requirement').hidden=!editable.gherkin;
+  $('#save-source').hidden=!editable[kind];
+  const sourceActions=['SD','TESTS'].includes(stage)?$('#source-actions'):$('#source-panel .editor-toolbar');
+  sourceActions.append($('#save-source'));
+  (stage==='GHERKIN'?$('#requirement-buttons'):sourceActions).append(advance);
+  $('#generate-test-plan').hidden=f?.authoringOnly||!f?.review.confirmed.sd||f.testPlan.ready||!['SD','TESTS'].includes(stage);
+  $('#complete-test-plan').hidden=f?.authoringOnly||stage!=='TESTS'||!editable.tests||!f?.testPlan.ready;
+  $('#restart-stage').hidden=!f||!kind||stage==='GHERKIN'&&!f.review.records.gherkin;
+  $('#restart-stage').textContent=editable[kind]&&stage!=='GHERKIN'?'退回上階段':'退回此階段修改';
+  advance.textContent={GHERKIN:'確認需求並繼續',SD:'確認系統設計',TESTS:'確認測試並繼續'}[stage]??'';
   advance.disabled=stage==='GHERKIN'&&!$('#requirement-gherkin').value.trim();
   advance.title='';
 }
@@ -295,7 +317,7 @@ async function openSource(relative) {
   const repositoryId=state.repositoryId,request=++state.sourceRequest;$('#source-editor').readOnly=true;
   const file=await api(`/spec-repositories/${repositoryId}/file?path=${encodeURIComponent(relative)}`);if(request!==state.sourceRequest||repositoryId!==state.repositoryId)return;
   state.editor={...file,repositoryId};$('#source-editor').value=file.content;$('#source-path').textContent=relative;$('#editor-state').textContent='已儲存';
-  block();
+  resizeWorkflowEditor($('#source-editor'));block();
 }
 async function openComposer(f,epoch) {
   const repositoryId=state.repositoryId,request=++state.composerRequest;
@@ -310,6 +332,7 @@ async function openComposer(f,epoch) {
   if(request!==state.composerRequest||epoch!==state.epoch||repositoryId!==state.repositoryId)return;
   state.composer={...value,repositoryId,featureKey:f?.key??null};
   $('#requirement-description').value=value.description;$('#requirement-gherkin').value=value.gherkin;
+  resizeWorkflowEditor($('#requirement-gherkin'));
   $('#requirement-state').textContent=f?'已儲存':'尚未儲存';
   $('#document-info').textContent='TXT、Markdown、Gherkin、DOCX · 最大 1 MiB';
   renderRequirementHistory(value.proposals??[]);
@@ -335,6 +358,7 @@ async function restoreRequirement(gherkin,description) {
   $('#requirement-gherkin').value=gherkin;if(description!==undefined)$('#requirement-description').value=description;composerChanged();
 }
 function composerChanged() {
+  resizeWorkflowEditor($('#requirement-gherkin'));
   $('#requirement-state').textContent=composerDirty()?'尚未儲存':'已儲存';
   $('#requirement-feedback').textContent='';$('#requirement-feedback').hidden=true;renderNext();block();
 }
@@ -376,17 +400,39 @@ async function saveRequirement() {
 }
 async function saveSource() {
   if(!state.editor)return;const e=state.editor,content=$('#source-editor').value;
-  const r=await executeJob('repository.save',{kind:'source',path:e.path,content,expectedHash:e.sha256},{refreshAfter:false});state.editor={...e,content,sha256:r.sha256};await refresh();
+  if(content!==e.content){const r=await executeJob('repository.save',{kind:'source',path:e.path,content,expectedHash:e.sha256},{refreshAfter:false});state.editor={...e,content,sha256:r.sha256};}
+  const h=state.hookEditor;if(state.stage==='TESTS'&&h&&$('#hook-editor').value!==h.content){const content=$('#hook-editor').value;const r=await executeJob('repository.save',{kind:'source',path:h.path,content,expectedHash:h.sha256},{refreshAfter:false});state.hookEditor={...h,content,sha256:r.sha256};}await refresh();
 }
 async function advance() {
   if(state.formDirty)throw new Error('請先儲存範圍設定。');
   if(state.stage==='GHERKIN'&&(composerDirty()||!feature()))await saveRequirement();
-  if(state.editor&&$('#source-editor').value!==state.editor.content)await saveSource();
+  if(state.editor&&($('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content))await saveSource();
   const f=feature(), stage=state.stage;
   if(!['GHERKIN','SD','TESTS'].includes(stage))return;
   const name={GHERKIN:'gherkin',SD:'sd',TESTS:'tests'}[stage];
+  if(stage==='SD')await navigate({stage:'TESTS'},{protect:false});
   const result=await flow('workflow.review',{requirementId:f.requirementId,featureId:f.id,stage:name,expectedDigest:f.review.hashes[name]});
   if(result)await navigate({stage:result.nextStage},{protect:false});
+}
+async function generateTestPlan() {
+  const f=feature();if(!f)return;
+  const result=await flow('workflow.tests.generate',{requirementId:f.requirementId,featureId:f.id});
+  if(result)await navigate({stage:result.nextStage},{protect:false});
+}
+async function completeTestPlan() {
+  if(state.editor&&($('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content))await saveSource();
+  const f=feature();if(!f)return;
+  const result=await flow('workflow.tests.complete',{requirementId:f.requirementId,featureId:f.id,expectedDigest:f.review.hashes.tests});
+  if(result)await navigate({stage:result.nextStage},{protect:false});
+}
+async function restartStage() {
+  const f=feature();if(!f||!await guard())return;
+  const kind={GHERKIN:'gherkin',SD:'sd',TESTS:'tests'}[state.stage];if(!kind)return;
+  const target=f.review.editable[kind]?{sd:'gherkin',tests:'sd'}[kind]:kind;
+  if(!target)return;
+  const result=await executeJob('workflow.restart',{requirementId:f.requirementId,featureId:f.id,stage:target,expectedDigest:f.review.hashes.tests});
+  state.editor=null;state.hookEditor=null;state.composer=null;
+  await navigate({stage:result.nextStage},{protect:false});
 }
 async function renderProjects(epoch) {
   const d=state.detail;$('#project-cards').replaceChildren();for(const p of d.modules??[]){const c=el('article',undefined,'card');c.append(el('h3',p.id),el('p',p.url,'mono muted'),button('編輯專案',()=>navigate({projectId:p.id}),'primary'));$('#project-cards').append(c);}
@@ -515,7 +561,9 @@ on('#requirement-description','input',composerChanged);on('#requirement-gherkin'
 on('#generate-gherkin','click',generateGherkin);on('#save-requirement','click',saveRequirement);
 on('#feature-select','change',()=>navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'}));on('#save-source','click',saveSource);on('#advance','click',advance);on('#report-problem','click',reportProblem);
 on('#source-select','change',async()=>{const value=$('#source-select').value;if(await guard())await openSource(value);});
-on('#source-editor','input',()=>{$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});on('#project-editor','input',()=>{$('#product-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
+on('#generate-test-plan','click',generateTestPlan);on('#complete-test-plan','click',completeTestPlan);on('#restart-stage','click',restartStage);
+on('#source-editor','input',()=>{resizeWorkflowEditor($('#source-editor'));$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});on('#project-editor','input',()=>{$('#product-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
+on('#hook-editor','input',()=>{resizeWorkflowEditor($('#hook-editor'));$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
 on('#save-project','click',saveProduct);on('#project-settings','click',()=>navigate({view:'settings'}));
 on('#settings-add-product','click',()=>{addSettingsProduct();state.formDirty=true;});on('#settings-form','input',()=>{state.formDirty=true;block();});on('#settings-form','submit',saveSettings);
 on('#scope-form','input',()=>{state.formDirty=true;block();});on('#scope-form','submit',async()=>{const f=feature();await executeJob('repository.save',{kind:'scope',requirementId:f.requirementId,featureId:f.id,expectedHash:state.scope.sha256,projectIds:all('[name=feature-project]:checked').map(x=>x.value),profiles:all('[name=profile]:checked').map(x=>x.value),caseIds:$('#case-ids').value.split('\n').map(x=>x.trim()).filter(Boolean)},{refreshAfter:false});state.formDirty=false;await refresh();});
