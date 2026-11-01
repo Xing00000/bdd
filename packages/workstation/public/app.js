@@ -33,7 +33,7 @@ const composerDirty=()=>Boolean(state.composer && (composerInput().description!=
 const dirty=()=>state.formDirty||composerDirty()||Boolean(state.editor&&$('#source-editor').value!==state.editor.content||state.product&&$('#project-editor').value!==state.product.content);
 function block() {
   const value=state.busy||state.loading||state.transient;
-  $('#content').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
+  $('#home-view').inert=value;$('#repository-view').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
   $('#sidebar').inert=value;$('#source-editor').readOnly=value;$('#project-editor').readOnly=value;$('#requirement-description').readOnly=value;$('#requirement-gherkin').readOnly=value;$('#generate-gherkin').disabled=value||!$('#requirement-description').value.trim();
   $('#sync').disabled=value||dirty()||!state.detail?.preferences?.configured;
 }
@@ -77,20 +77,29 @@ async function refresh() {
     if(state.view==='settings')renderSettings();
   } finally {if(epoch===state.epoch){state.loading=false;block();}}
 }
+function renderJob(result) {
+  $('#job-status').textContent=result.status;
+  $('#job-error').textContent=result.error?.message??'';$('#job-error').hidden=!result.error?.message;
+  $('#cancel-job').disabled=!state.jobId||result.status==='CANCELLING';
+}
 async function executeJob(name,input, {refreshAfter=true}={}) {
   if(state.busy)throw new Error('目前流程正在執行，請勿重複送出。');
   const repositoryId=state.repositoryId, d=state.detail;
   const expected=typeof d?.state==='object'?{head:d.state.head,branch:d.state.branch,fingerprint:d.state.fingerprint}:{head:null};
-  state.busy=true;block();$('#job-progress').hidden=false;$('#job-title').textContent=labels[name]??'處理中';
+  state.busy=true;block();$('#job-title').textContent=labels[name]??name;
+  $('#job-status').textContent='送出中';$('#job-error').textContent='';$('#job-error').hidden=true;$('#cancel-job').disabled=true;
   $('#job-step').textContent=name==='workflow.verify'?'自動準備版本 → 執行測試 → 儲存報告':name==='repository.sync'?'同步已儲存產品 → 規格 → 報告；不會覆寫衝突內容':name==='workflow.review'?'檢查必要環境與內容，再推進下一步':'系統正在處理，不需要操作版本工具。';
   let result;
   try {
-    result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected});state.jobId=result.id;
-    while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){await new Promise(r=>setTimeout(r,350));result=await api(`/operations/${result.id}`);}
+    result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected});state.jobId=result.id;renderJob(result);
+    while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){await new Promise(r=>setTimeout(r,350));result=await api(`/operations/${result.id}`);renderJob(result);}
     if(result.status!=='SUCCEEDED')throw Object.assign(new Error(result.error?.message??'流程未完成，內容已保留。'),result.error??{});
     note(name==='repository.sync'?'已同步至遠端。':name==='workflow.verify'?'驗收完成，報告已自動儲存。':'已儲存至 SQLite。');return result.result;
+  } catch(error) {
+    if(!result||['QUEUED','RUNNING','CANCELLING'].includes(result.status))$('#job-status').textContent='無法取得執行結果';
+    $('#job-error').textContent=error.message;$('#job-error').hidden=false;throw error;
   } finally {
-    state.busy=false;state.jobId=null;$('#job-progress').hidden=true;
+    state.busy=false;state.jobId=null;$('#cancel-job').disabled=true;
     if(refreshAfter&&repositoryId===state.repositoryId)await refresh();block();
     $('#notice').dataset.operation=name;$('#notice').dataset.outcome=result?.status??'FAILED';$('#notice').dataset.jobId=result?.id??'';
   }
