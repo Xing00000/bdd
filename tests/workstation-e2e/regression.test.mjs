@@ -60,12 +60,15 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   const {chromium,expect}=createRequire(path.join(source,'package.json'))('@playwright/test');browser=await chromium.launch({chromiumSandbox:true});context=await browser.newContext({viewport:{width:1440,height:1000}});await context.tracing.start({screenshots:true,snapshots:true,sources:true});page=await context.newPage();page.setDefaultTimeout(25000);
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().startsWith(origin))writes.push({path:new URL(r.url()).pathname,input:r.postDataJSON()});});
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
-  async function tab(name){await page.getByRole('button',{name,exact:true}).click();await ready();}
+  async function job(locator,name,outcome='SUCCEEDED') { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
+  async function tab(name){if(!await page.locator('#sidebar').isVisible())await page.locator('#menu-toggle').click();const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();await group.getByRole('button',{name,exact:true}).click();await ready();}
   await page.goto(origin);await page.locator('#bind-sidebar').click();const dialog=page.getByRole('dialog');
   await dialog.getByLabel('Spec Repo Git 網址',{exact:true}).fill(remote);await dialog.getByLabel('顯示名稱（選填，自動從網址帶入）',{exact:true}).fill('既有規格與回歸');await dialog.getByLabel('需求確認者',{exact:true}).fill('UI reviewer');
   await dialog.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true}).fill(selectedLocalPath);
   await page.screenshot({path:path.join(artifacts,'00-custom-directory.png'),fullPage:true});
-  await dialog.getByRole('button',{name:'開始使用',exact:true}).click();await expect(dialog).not.toBeVisible();await ready();
+  // Binding acquires the Spec Repo, product and history before preparing its tools.
+  await job(dialog.getByRole('button',{name:'開始使用',exact:true}),'repository.tools.prepare','FAILED');await expect(dialog).toContainText('安裝必要套件並繼續');await expect(dialog).toContainText('@playwright/test');
+  await job(dialog.getByRole('button',{name:'安裝並繼續',exact:true}),'repository.tools.prepare');await expect(dialog).not.toBeVisible();await ready();
   await expect(page.locator('#binding-status')).toContainText('已連接');await expect(page.locator('#feature-select option')).toHaveCount(3);
   const repositoryId=new URL(page.url()).searchParams.get('repo'),checkout=selectedLocalPath;
   await expect(page.locator('#binding-status')).toContainText(selectedLocalPath);
@@ -79,21 +82,20 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id','RUN-history');
   await page.screenshot({path:path.join(artifacts,'06-imported-requirement-report.png'),fullPage:true});
   await page.locator('#feature-select').selectOption('REQ-101/readiness');await ready();await expect(page.locator('#feature-report-list .feature-report')).toHaveCount(0);await expect(page.locator('#feature-report-view')).not.toBeVisible();
-  await page.getByRole('button',{name:'1 需求',exact:true}).click();await ready();
+  await page.getByRole('button',{name:'1 需求確認',exact:true}).click();await ready();
 
   await tab('版本與回歸');await expect(page.locator('#catalog-count')).toContainText('3 個功能');
   await page.locator('#catalog-features').getByRole('button',{name:'設計',exact:true}).first().click();await expect(page.locator('#catalog-source')).toContainText('Historical design');
   await page.screenshot({path:path.join(artifacts,'01-bound-catalog.png'),fullPage:true});
   await page.getByLabel('規格與測試版本',{exact:true}).fill('release-v1');await page.getByLabel('規格與測試版本',{exact:true}).press('Tab');await expect(page.locator('#catalog-count')).toContainText('2 個功能');
   const originalHead=await git.resolve(checkout), originalStatus=await git.inspect(checkout);
-  async function startAndWait(click,expected,{consent=false,during}={}) {
+  async function startAndWait(click,expected,{during}={}) {
     const before=await page.locator('#notice').getAttribute('data-job-id');await click();
-    if(consent){await expect(dialog).toContainText('安裝必要套件並繼續');await dialog.getByRole('button',{name:'安裝並繼續',exact:true}).click();}
     if(during){await expect(page.locator('.regression-card').first()).toContainText('RUNNING',{timeout:60000});await during();}
     await page.waitForFunction(previous=>{const n=document.querySelector('#notice');return n.dataset.operation==='regression.start'&&n.dataset.jobId&&n.dataset.jobId!==previous;},before,{timeout:480000});
     await expect(page.locator('#notice')).toHaveAttribute('data-outcome','SUCCEEDED');await expect(page.locator('#regression-status')).toContainText(expected);
   }
-  await startAndWait(()=>page.getByRole('button',{name:'執行全部回歸測試',exact:true}).click(),'FAILED',{consent:true});
+  await startAndWait(()=>page.getByRole('button',{name:'執行全部回歸測試',exact:true}).click(),'FAILED');
   let latest=page.locator('.regression-card').first();await expect(latest).toContainText('通過 1 / 全部 2');await expect(latest).toContainText('頁面標題 · PASSED');await expect(latest).toContainText(p1);
   const firstBatch=await latest.getAttribute('data-batch-id');await page.screenshot({path:path.join(artifacts,'02-old-product-failed.png'),fullPage:true});
   assert.deepEqual(await git.inspect(checkout),originalStatus);
@@ -124,8 +126,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   const existingBefore=await git.inspect(existingPath),oldBefore=await git.inspect(checkout);
   await tab('設定');await expect(page.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true})).toHaveValue(await realpath(selectedLocalPath));
   await page.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true}).fill(existingPath);
-  await page.getByRole('button',{name:'儲存設定',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('#notice').dataset.operation==='repository.location'&&document.querySelector('#notice').dataset.outcome==='SUCCEEDED');await ready();
+  await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.tools.prepare');
   await expect(page.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true})).toHaveValue(await realpath(existingPath));
   assert.deepEqual(await git.inspect(checkout),oldBefore);
   assert.deepEqual(await git.inspect(existingPath),existingBefore);
@@ -147,5 +148,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   await page.reload();await ready();await expect(page.locator('.regression-card')).toHaveCount(5);
   assert.deepEqual(await git.inspect(existingPath),existingBefore);
   assert.deepEqual(errors,[]);assert.ok(writes.filter(x=>x.path.endsWith('/operations')).every(x=>!x.input.operation.startsWith('git.')));
-  await writeJson(path.join(artifacts,'regression-ui-receipt.json'),{repositoryId,firstBatch,secondBatch,specVersions:{s1,s2},productVersions:{p1,p2},outcomes:rows.map(r=>r.outcome),noCheckoutMutation:true,noImplicitApproval:true,uiWrites:writes.length});
+  const installs=writes.filter(x=>x.path.endsWith('/operations')).map(x=>x.input).filter(x=>x.input.installConsent);
+  assert.deepEqual(installs.map(x=>({repositoryId:x.repositoryId,operation:x.operation})),[{repositoryId,operation:'repository.tools.prepare'}],'Regressions, replay and location changes must reuse the prepared Spec Repo tools');
+  await writeJson(path.join(artifacts,'regression-ui-receipt.json'),{repositoryId,firstBatch,secondBatch,specVersions:{s1,s2},productVersions:{p1,p2},outcomes:rows.map(r=>r.outcome),noCheckoutMutation:true,noImplicitApproval:true,installationConsentsByRepository:{[repositoryId]:installs.length},uiWrites:writes.length});
 });
