@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createWorkstation } from './service.mjs';
 import { invariant, id, safePath, errorResult } from '../contracts/index.mjs';
 import { verifyBundle } from '../spec-toolkit/engine.mjs';
+import { renderNativeReport } from './native-report.mjs';
 
 const prefix = '/repository-api/v1';
 const assets = new Map([
@@ -67,7 +68,8 @@ export async function dispatch(service, request) {
     invariant(relative.startsWith('native/')&&manifest.artifacts.some(a=>a.path===relative),'ARTIFACT_NOT_FOUND','Unknown report artifact',404);
     const types={html:'text/html; charset=utf-8',js:'text/javascript',css:'text/css',png:'image/png',jpg:'image/jpeg',json:'application/json'};
     const type=types[relative.split('.').at(-1)]??'application/octet-stream';
-    return {status:200,headers:{...securityHeaders,'content-type':type,'content-security-policy':"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src data:; connect-src 'self' data: blob:; worker-src blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"},body:await readFile(await safePath(directory,relative,{missing:false}))};
+    const bytes=await readFile(await safePath(directory,relative,{missing:false}));
+    return {status:200,headers:{...securityHeaders,'content-type':type,'content-security-policy':"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src data:; connect-src 'self' data: blob:; worker-src blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"},body:type.startsWith('text/html')?renderNativeReport(bytes):bytes};
   }
   else if (parts[0] === 'spec-repositories' && parts[2] === 'runs' && parts[4] === 'artifact' && parts.length === 5 && method === 'GET') {
     const repositoryId = id(parts[1]), runId = id(parts[3]), relative = url.searchParams.get('path');

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp,rm } from 'node:fs/promises';
 import pty from 'node-pty';
-import { runPty } from '../../packages/workstation/development.mjs';
+import { runPty, createDevelopmentLog } from '../../packages/workstation/development.mjs';
 import { stopChildProcesses } from '../../packages/git-core/index.mjs';
 
 async function directory(t){const cwd=await mkdtemp(path.join(os.tmpdir(),'bdd-real-pty-'));t.after(()=>rm(cwd,{recursive:true,force:true}));return cwd;}
@@ -20,4 +20,12 @@ test('real PTY timeout terminates an agent that ignores ordinary termination',{t
 test('worker cancellation tracks and stops the real PTY process group',{timeout:10000},async t=>{
  const cwd=await directory(t);let cancelled=false;const result=await runPty(pty,process.execPath,['-e',`console.log('CANCEL_READY');setInterval(()=>{},100);`],cwd,{timeoutMs:8000,log:text=>{if(!cancelled&&text.includes('CANCEL_READY')){cancelled=true;void stopChildProcesses();}}});
  assert.equal(cancelled,true);assert.ok(result.exitCode!==0||result.signal);
+});
+
+test('Agent output limit stops the real process in a progress context', {timeout:15000}, async t=>{
+ const cwd=await directory(t);const {withProgress}=await import('../../packages/git-core/progress.mjs');
+ await withProgress(cwd,'OP-limit',async()=>{
+  const log=createDevelopmentLog(path.join(cwd,'development/OP-limit/terminal.log'));
+  await assert.rejects(runPty(pty,process.execPath,['-e',"setInterval(()=>process.stdout.write('x'.repeat(65536)),1)"],cwd,{timeoutMs:8000,log}),{code:'TERMINAL_OUTPUT_LIMIT'});
+ });
 });

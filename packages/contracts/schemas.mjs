@@ -14,7 +14,7 @@ export const schemas = Object.freeze({
     schemaVersion: { const: 1 }, specRepositoryId: identifier,
     layout: object({ specRoot: { const: 'spec' }, testsRoot: { const: 'tests' }, reportsRoot: { const: 'reports' }, projectsRoot: { const: 'projects' } }),
     projects: array(object({ id: identifier, path: { type: 'string', pattern: '^projects/[A-Za-z0-9][A-Za-z0-9_-]{0,79}$' } })),
-    execution: object({ featureIsolation: { const: 'process' }, install: { anyOf: [command, { type: 'null' }] }, prepare: array(command), teardown: array(command), timeoutMs: { type: 'integer', minimum: 1000, maximum: 600000 },
+    execution: object({ featureIsolation: { const: 'process' }, install: { anyOf: [command, { type: 'null' }] }, prepare: array(command), teardown: array(command), timeoutMs: { type: 'integer', minimum: 1000, maximum: 600000 }, globalTimeoutMs: { type: 'integer', minimum: 1000, maximum: 600000 },
       environment: object({ WB_TARGET_BASE_URL: text, NODE_ENV: text, TZ: text }, []),
       service: object({ projectId: identifier, command, healthUrl: text }) }, ['featureIsolation']),
     reports: object({ storage: { const: 'git' }, publishMode: { const: 'explicit' } })

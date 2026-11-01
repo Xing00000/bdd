@@ -125,3 +125,17 @@ test('an unconfigured legacy checkout can save its first SQLite settings from th
   await f.job('repository.setup',{...input,expectedSettings:shown.settingsToken});
   assert.equal((await f.service.detail('SPEC-sql')).preferences.configured,true);
 });
+
+test('optional Playwright timeout validates, persists without a service, and clears atomically',async t=>{
+  const f=await scenario(t);await f.job('repository.setup',input);
+  const config=async()=>JSON.parse((await f.service.readFile('SPEC-sql','workbench.yaml')).content);
+  const before=await config();assert.equal(before.execution.globalTimeoutMs,undefined);
+  for(const value of [999,600001,1000.5,'1000']) {
+    const failed=await f.job('repository.setup',{...input,globalTimeoutMs:value},true);assert.equal(failed.error.code,'INVALID_GLOBAL_TIMEOUT');
+    assert.deepEqual(await config(),before);
+  }
+  await f.job('repository.setup',{...input,globalTimeoutMs:1000});await f.restart();
+  assert.equal((await f.service.detail('SPEC-sql')).preferences.globalTimeoutMs,1000);assert.equal((await config()).execution.globalTimeoutMs,1000);
+  await f.job('repository.setup',{...input,globalTimeoutMs:600000});assert.equal((await config()).execution.globalTimeoutMs,600000);
+  await f.job('repository.setup',{...input,globalTimeoutMs:null});assert.deepEqual(await config(),before);
+});

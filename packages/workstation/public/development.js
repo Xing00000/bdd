@@ -1,5 +1,5 @@
 /** Development view attaches to a real durable worker; page navigation never kills it. */
-export function developmentView({api,view,feature,refresh,navigate,ask,note}) {
+export function developmentView({api,view,feature,refresh,navigate,ask,note,showOperation,beginAction,actionVersion,canRecover}) {
   const $=s=>document.querySelector(s);
   let terminal=null,subscription=null,resizeObserver=null,timer=null,current=null,offset=0,loadPromise;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
@@ -34,6 +34,7 @@ export function developmentView({api,view,feature,refresh,navigate,ask,note}) {
       if(result.output||result.phase==='RUNNING'){await openTerminal(session);if(current!==session)return;terminal?.write(result.output);offset=result.nextOffset;}
       if(active(result.status)||result.hasMore){timer=setTimeout(()=>void poll(session),350);return;}
       if(session.handled)return;session.handled=true;
+      if(!session.autoAdvance||session.actionVersion!==actionVersion())return;
       $('#notice').dataset.operation='workflow.develop';$('#notice').dataset.outcome=result.status;$('#notice').dataset.jobId=session.id;
       if(result.error?.code==='INSTALL_REQUIRED'&&session.autoAdvance) {
         const plan=result.error.details.install;
@@ -47,7 +48,7 @@ export function developmentView({api,view,feature,refresh,navigate,ask,note}) {
         if(result.result?.testOutcome==='PASSED'&&result.result?.verification==='VERIFIED')await navigate({stage:'VERIFICATION'},{protect:false});
         else await refresh();
       }
-    } catch(error){if(current===session){note(error.message,true);timer=setTimeout(()=>void poll(session),1000);}}
+    } catch(error){if(current===session){if(session.autoAdvance&&session.actionVersion===actionVersion())note(error.message,true);timer=setTimeout(()=>void poll(session),1000);}}
   }
   async function open() {
     const state=view(),f=feature();if(!f)return;
@@ -55,15 +56,17 @@ export function developmentView({api,view,feature,refresh,navigate,ask,note}) {
     const key=`${state.repositoryId}/${f.key}`;
     if(current?.key===key&&(!operation||current.id===operation.id))return;
     leave();$('#develop').disabled=false;$('#stop-development').hidden=true;$('#development-status').textContent='';
-    if(operation){current={key,id:operation.id,status:operation.status,autoAdvance:active(operation.status)};void poll(current);}
+    if(operation){current={key,id:operation.id,status:operation.status,autoAdvance:active(operation.status)&&canRecover(),actionVersion:actionVersion()};void poll(current);}
   }
   async function start(extra={}) {
     const s=view(),f=feature();if(!f)return;
     if(current&&active(current.status))return;
+    const version=beginAction();
     $('#develop').disabled=true;
     try {
       const result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId:s.repositoryId,operation:'workflow.develop',input:{requirementId:f.requirementId,featureId:f.id,...extra}});
-      leave();current={key:`${s.repositoryId}/${f.key}`,id:result.id,status:result.status,autoAdvance:true};void poll(current);
+      showOperation({...result,request:{repositoryId:s.repositoryId,operation:'workflow.develop'}});
+      leave();current={key:`${s.repositoryId}/${f.key}`,id:result.id,status:result.status,autoAdvance:true,actionVersion:version};void poll(current);
     } catch(error){$('#develop').disabled=false;throw error;}
   }
   async function stop(){if(current&&active(current.status))await api(`/operations/${current.id}/cancel`,'POST',{});}

@@ -85,8 +85,10 @@ npm run bdd -- workflow regress --repo bdd-spec --spec main --project bdd=main
 
 需求、設計、測試的確認按鈕與各自「儲存」並列；本地目錄、連線及同步狀態集中在設定，不佔需求頁版面。
 
-開發只有「確認開發」與執行中的終端。先在設定確認本機已安裝、登入的 CLI Agent；預設為 `codex exec --sandbox workspace-write {prompt}`，可設定其他執行檔及參數。工作台不安裝或替你登入付費 Agent，也不使用跳過授權／沙箱的選項。終端可輸入、取消與重新連接，頁面切換不會終止開發。
+開發只有「確認開發」與執行中的終端。先在設定確認本機已安裝、登入的 CLI Agent；新設定預設為 `codex exec --model gpt-6.1-sol --sandbox workspace-write {prompt}`，可編輯執行檔、參數、Prompt、Skills 與執行限制。既有自訂值不被種子覆寫。工作台不安裝或替你登入付費 Agent，也不使用跳過授權／沙箱的選項。終端可輸入、取消與重新連接，頁面切換不會終止開發。
 
 Agent 結束後，工作台將產品修改保存到 SQLite 及本機版本，再獨立執行該功能全部 BDD 案例／瀏覽器組合。失敗時將結果回交 Agent（最多三次）；未完整通過就停留開發，不把 Agent 的結束碼當驗收成功。此流程不自動遠端同步。
 
 驗收頁只呈現對應報告、Gherkin 步驟與截圖，也可展開原生 Playwright HTML 報告。沒有流程內的再次驗收區塊；整庫回歸在「版本與回歸」。問題回報保存在 `spec/<REQ>/<feature>/feedback.json`，隨明確同步分享到 Repo；新開發會讀取問題，原始報告不被刪除。
+
+設定中的「Playwright 整體逾時毫秒」可選填 1000–600000；留空時沿用測試庫原有的 Playwright globalTimeout。

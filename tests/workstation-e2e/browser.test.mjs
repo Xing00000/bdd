@@ -152,6 +152,7 @@ const server=http.createServer((request,response)=>{
   const beforeDevelopment=await page.locator('#notice').getAttribute('data-job-id');
   await expect(page.locator('#implementation-panel')).toBeVisible();await expect(page.locator('#source-panel')).not.toBeVisible();await expect(page.locator('#scope-details')).not.toBeVisible();
   await page.getByRole('button',{name:'確認開發',exact:true}).click();await expect(page.locator('#development-terminal')).toBeVisible({timeout:30000});
+  await expect(page.locator('#development-terminal')).toContainText('PTY_READY real-terminal=true');
   await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('terminal-probe');await page.keyboard.press('Enter');
   await page.screenshot({path:path.join(artifacts,'10-real-agent-terminal.png'),fullPage:true});
   await page.waitForFunction(before=>{const n=document.querySelector('#notice');return n.dataset.operation==='workflow.develop'&&n.dataset.jobId!==before;},beforeDevelopment,{timeout:360000});await ready();

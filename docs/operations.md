@@ -143,6 +143,8 @@ npm run bdd -- workflow regress --repo bdd-spec --spec main --project bdd=main
 
 在集中設定指定 **CLI Agent 執行檔** 和逐行參數，執行檔使用本機 PATH 或完整路徑。`{prompt}`、`{spec}`、`{project}` 只能作為整個參數，會由系統替換成需求指令、Spec 目錄及產品目錄；不使用 shell 拼接。未提供 `{prompt}` 時會將指令追加為最後一個參數。登入由該 CLI 的正常機制管理，不在需求文件存 Token。
 
+同頁可編輯 **CLI Agent Prompt**、**CLI Agent Skills**、最大嘗試次數與逾時毫秒，保存至所選規格庫的 SQLite 設定。Prompt 支援 `{requirementId}`、`{featureId}`、`{spec}`、`{projects}`、`{feedback}`、`{previousFailure}`；未知變數、空白 Prompt 與超出大小限制會拒絕整次設定保存，已存內容保留。Skills 是附加至有效 Prompt 的純文字，可清空停用。重開設定或保存其他欄位不會重設自訂內容；登入憑證不在此表單顯示。
+
 開發時按「確認開發」，真實 PTY 會顯示 Agent 的輸出，支援輸入、尺寸變更及停止。首次缺少 PTY／終端元件時在流程內確認安裝；這包含 node-pty 原生編譯，主機需具備編譯工具。正常 `npm ci` 已安裝這些鎖定依賴時不會另問。安裝終端元件不代表同意更換測試依賴，測試套件仍按原有精確計畫授權。
 
 Agent 在關聯產品目錄內執行；多產品需求以 Spec 目錄為 cwd，指令列出允許的產品。這不是額外的 OS 沙箱。不要對不信任的 Repo 執行任意 Agent。已存在外部產品草稿時會停止，並保留原檔。Agent 修改已確認規格、測試、其他產品或遇到新的 SQLite 修訂時，不會覆蓋或代簽；必須處理實際差異。支援產品 UTF-8 文字新增、修改及刪除，二進位或超大檔案會保留在原處並回報，不冒充保存成功。

@@ -3,7 +3,8 @@ import { mkdir, readFile, copyFile, rename, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { invariant, id, version, exists, safePath, walk, writeJson, readJson, atomicWrite, digest, identity, escapeHtml, errorResult } from '../contracts/index.mjs';
-import { execute, processEnvironment, trackChild } from '../git-core/index.mjs';
+import { execute, processEnvironment, trackChild, startProgressPty } from '../git-core/index.mjs';
+import { currentProgress } from '../git-core/progress.mjs';
 import { validate, reviewState, configuration, featureKey } from './index.mjs';
 
 import { validateContract } from '../contracts/schemas.mjs';
@@ -113,6 +114,7 @@ export async function runBddCommand(root, mode, requirementId, featureId, option
   const executable = path.join(root, 'node_modules', '.bin', mode === 'generate' ? 'bddgen' : 'playwright');
   invariant(await exists(executable), 'DEPENDENCIES_NOT_INSTALLED', 'Install the pinned dependencies first');
   const args = mode === 'generate' ? ['--config', 'bdd.config.ts'] : ['test', '--config', 'playwright.config.ts', ...(mode === 'list' ? ['--list'] : [])];
+  if (mode === 'test' && options.globalTimeoutMs !== undefined) args.push('--global-timeout', String(options.globalTimeoutMs));
   if (mode === 'test' && options.caseIds) {
     const escaped = options.caseIds.map(value => id(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     args.push('--grep', `(?:@case:(?:${escaped.join('|')})(?![A-Za-z0-9_-])|\\[case:(?:${escaped.join('|')})\\])`);
@@ -132,6 +134,21 @@ async function startManagedService(repo, config, plan, environment) {
   invariant(!existing, 'SERVICE_PORT_IN_USE', 'The health URL already responds; use a dedicated test port');
   invariant(environment.WB_TARGET_BASE_URL && new URL(environment.WB_TARGET_BASE_URL).origin === url.origin, 'TARGET_ORIGIN_MISMATCH', 'Tests must target the managed service origin');
   const command = commandArray(service.command), cwd = await safePath(repo, project.path);
+  if (currentProgress()) {
+    let exited = false, errorText = '';
+    const child = startProgressPty(command[0], command.slice(1), { cwd, env: { ...environment, WB_SOURCE_COMMIT: project.commit }, onData: (_kind, data) => { errorText = (errorText + data.toString()).slice(-65536); } });
+    child.done.then(() => { exited = true; });
+    const stop = async () => { if (exited) return; child.stop(); let timer; await Promise.race([child.done, new Promise(resolve => { timer = setTimeout(resolve, 1500); })]); clearTimeout(timer); if (!exited) { child.stop('SIGKILL'); await child.done; } };
+    try {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        invariant(!exited, 'SERVICE_EXITED', errorText || 'Managed service exited before readiness');
+        try { const response = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: 'error' }); const health = await response.json(); if (response.ok && health.commit === project.commit) return { stop, receipt: { verified: true, projectId: project.id, commit: project.commit, healthUrl: url.href, pid: child.pid, reportedCommit: health.commit } }; } catch {}
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      throw new Error('Managed health endpoint did not report the pinned project commit');
+    } catch (error) { await stop(); throw error; }
+  }
   const child = trackChild(spawn(command[0], command.slice(1), { cwd, env: { ...environment, WB_SOURCE_COMMIT: project.commit }, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'] }));
   let errorText = '', startupError;
   child.stderr.on('data', chunk => { errorText = (errorText + chunk.toString()).slice(-65536); });
@@ -159,9 +176,16 @@ async function startManagedService(repo, config, plan, environment) {
   } catch (error) { await stop(); throw error; }
 }
 async function copyArtifacts(source, destination) {
-  const entries = []; let total = 0;
-  for (const relative of await walk(source)) {
-    if (!(relative.startsWith('screenshots/') || relative.startsWith('traces/') || relative.startsWith('native/') || relative.startsWith('logs/') || ['events.ndjson', 'execution.json', 'discovery.json'].includes(relative))) continue;
+  const entries = [], files = []; let total = 0;
+  // Runtime HOME/TMPDIR may contain Git repositories or symlinks. They are not
+  // evidence: enumerate only approved roots before applying the strict walker.
+  for (const prefix of ['screenshots', 'traces', 'native', 'logs']) {
+    const directory = await safePath(source, prefix);
+    if (await exists(directory)) for (const relative of await walk(directory)) files.push(`${prefix}/${relative}`);
+  }
+  for (const relative of ['events.ndjson', 'execution.json', 'discovery.json'])
+    if (await exists(await safePath(source, relative))) files.push(relative);
+  for (const relative of files.sort()) {
     const file = await safePath(source, relative), stat = await lstat(file); total += stat.size;
     invariant(stat.size <= 32 * 1024 * 1024 && total <= 256 * 1024 * 1024, 'ARTIFACT_SIZE_LIMIT', 'Evidence bundle exceeds configured v1 limits');
     const target = await safePath(destination, relative); await mkdir(path.dirname(target), { recursive: true }); await copyFile(file, target);
@@ -182,6 +206,9 @@ export async function verifyBundle(directory) {
     invariant(bytes.length === item.size && digest(bytes) === item.sha256, 'EVIDENCE_HASH_MISMATCH', item.path);
   }
   return manifest;
+}
+export function testProcessTimeout(timeoutMs, globalTimeoutMs) {
+  return globalTimeoutMs === undefined ? timeoutMs : Math.max(timeoutMs, globalTimeoutMs + 5000);
 }
 export async function executeRun({ home, runId, repositoryId, git, enabled = false }) {
   invariant(enabled, 'EXECUTION_DISABLED', 'Test execution is disabled by this workstation configuration', 403);
@@ -212,7 +239,7 @@ export async function executeRun({ home, runId, repositoryId, git, enabled = fal
     for (const command of config.execution.prepare ?? []) await invoke(command);
     managed = await startManagedService(repo, config, plan, environment);
     for (const mode of ['generate', 'list', 'test']) {
-      result = await runBddCommand(repo, mode, plan.requirementId, plan.featureId, { output: scratch, environment, timeoutMs, ...(mode === 'test' && plan.scope !== 'ALL_CASES' ? { caseIds: plan.caseIds } : {}) });
+      result = await runBddCommand(repo, mode, plan.requirementId, plan.featureId, { output: scratch, environment, timeoutMs: mode === 'test' ? testProcessTimeout(timeoutMs, config.execution.globalTimeoutMs) : timeoutMs, ...(mode === 'test' && config.execution.globalTimeoutMs !== undefined ? { globalTimeoutMs: config.execution.globalTimeoutMs } : {}), ...(mode === 'test' && plan.scope !== 'ALL_CASES' ? { caseIds: plan.caseIds } : {}) });
       await writeJson(path.join(scratch, 'logs', `${++step}-${mode}.json`), result);
       if (mode !== 'test') invariant(result.exitCode === 0 && !result.timedOut && !result.overflow, 'BDD_TOOLING_FAILED', `${mode} failed`);
       if (mode === 'list') {
@@ -261,13 +288,20 @@ export async function publishRun({ root, home, repositoryId, runId, git, push = 
   invariant((plan.repositoryId ?? plan.workspaceId) === repositoryId, 'RUN_REPOSITORY_MISMATCH', 'Run belongs to another workspace', 403);
   const evidence = path.join(directory, 'evidence'), manifest = await verifyBundle(evidence);
   invariant(manifest.testedSpecCommit === plan.testedSpecCommit && manifest.runId === plan.runId, 'RUN_ID_MISMATCH', 'Sealed evidence belongs to another run');
-  const publicationFile = path.join(directory, 'publication.json'), publisher = await safePath(home, `publishers/${runId}/repo`);
-  let publication;
+  const publicationFile = path.join(directory, 'publication.json'), defaultPath = `publishers/${runId}/repo`;
+  let publication, publisher;
   if (await exists(publicationFile)) {
     publication = await readJson(publicationFile);
+    const publisherPath = Object.hasOwn(publication, 'publisherPath') ? publication.publisherPath : defaultPath;
+    const parts = typeof publisherPath === 'string' ? publisherPath.split('/') : [];
+    invariant(publisherPath === defaultPath || (parts.length === 4 && parts[0] === 'publishers' && parts[1] === runId && /^attempt-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(parts[2]) && parts[3] === 'repo'), 'INVALID_PUBLISHER_PATH', 'Publisher path must belong to this run', 403);
+    publisher = await safePath(home, publisherPath, { missing: false });
     invariant(await git.resolve(publisher) === publication.reportCommit, 'PUBLICATION_CHANGED', 'Publisher branch was changed', 409);
   } else {
-    invariant(!await exists(publisher), 'PUBLICATION_RECOVERY_REQUIRED', 'An interrupted publisher exists; inspect it before retrying', 409);
+    const defaultPublisher = await safePath(home, defaultPath);
+    const preservedPublisherPath = await exists(defaultPublisher) ? defaultPath : undefined;
+    const publisherPath = preservedPublisherPath ? `publishers/${runId}/attempt-${randomUUID()}/repo` : defaultPath;
+    publisher = await safePath(home, publisherPath);
     await git.cloneCandidate(root, publisher, plan.testedSpecCommit);
     const branch = `evidence/${runId}`;
     await git.branch(publisher, { name: branch, create: true }, { head: plan.testedSpecCommit });
@@ -280,7 +314,7 @@ export async function publishRun({ root, home, repositoryId, runId, git, push = 
     const summaryPath = `reports/_runs/${runId}/summary.json`;
     await writeJson(await safePath(publisher, summaryPath), { schemaVersion: 1, runId, testedSpecCommit: plan.testedSpecCommit, features: [{ requirementId: plan.requirementId, featureId: plan.featureId, path: prefix }] }); selected.push(summaryPath);
     const commit = await git.commitSelected(publisher, { paths: selected, message: `Record BDD evidence ${runId} (tested ${plan.testedSpecCommit})` }, { head: plan.testedSpecCommit, branch });
-    publication = { schemaVersion: 1, runId, testedSpecCommit: plan.testedSpecCommit, reportCommit: commit.commit, branch, status: 'LOCAL_COMMIT', path: prefix };
+    publication = { schemaVersion: 1, runId, testedSpecCommit: plan.testedSpecCommit, reportCommit: commit.commit, branch, status: 'LOCAL_COMMIT', path: prefix, publisherPath, ...(preservedPublisherPath && { preservedPublisherPath }) };
     await writeJson(publicationFile, publication);
   }
   if (push && publication.status !== 'PUBLISHED') {

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +8,7 @@ import { writeJson, digest } from '../../packages/contracts/index.mjs';
 export const toolkitRoot = fileURLToPath(new URL('../..', import.meta.url));
 export const git = createGit({ allowLocal: true });
 export async function fixture(t) {
-  const base = await mkdtemp(path.join(os.tmpdir(), 'bdd-workstation-test-'));
+  const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'bdd-workstation-test-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   return { base, repo: path.join(base, 'repo'), home: path.join(base, 'home'), remote: path.join(base, 'remote.git') };
 }

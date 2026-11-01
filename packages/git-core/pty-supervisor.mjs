@@ -1,0 +1,10 @@
+import { spawn } from 'node:child_process';
+const config = JSON.parse(Buffer.from(process.env.WB_PTY_CONFIG, 'base64').toString());
+delete process.env.WB_PTY_CONFIG;
+const send = (kind, value) => process.stdout.write(JSON.stringify({ kind, value }) + '\n');
+const child = spawn(config.executable, config.args, { cwd: config.cwd, env: config.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+child.stdout.on('data', data => send('stdout', data.toString('base64')));
+child.stderr.on('data', data => send('stderr', data.toString('base64')));
+child.stdin.on('error', () => {}); child.stdin.end(config.input ? Buffer.from(config.input, 'base64') : undefined);
+child.on('error', error => send('error', error.message));
+child.on('close', (code, signal) => { send('exit', { code, signal }); });

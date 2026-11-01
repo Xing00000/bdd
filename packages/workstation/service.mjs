@@ -49,7 +49,6 @@ export async function createWorkstation(configuration) {
     options,
     async terminal(operationId, offset=0) {
       const operation=this.operation(operationId);
-      invariant(operation.request.operation==='workflow.develop','NOT_TERMINAL','這不是開發工作。',404);
       const { readTerminal }=await import('./development.mjs');
       return {...await readTerminal(options.home,operationId,offset),status:operation.status,result:operation.result,error:operation.error};
     },

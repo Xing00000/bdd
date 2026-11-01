@@ -47,6 +47,10 @@ function ask(title,text,submit) { return new Promise(resolve=>{dialogResolve=res
 async function guard() { if(!dirty())return true;if(!await ask('有尚未儲存的編輯','離開會捨棄畫面中的草稿；已存入 SQLite 的內容不受影響。','捨棄草稿並離開'))return false;state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.formDirty=false;return true; }
 async function navigate(patch,{protect=true,replace=false}={}) {
   if(state.busy||state.transient)return;if(protect&&!await guard())return;
+  if ((Object.hasOwn(patch,'repositoryId')&&patch.repositoryId!==state.repositoryId)
+    ||(Object.hasOwn(patch,'featureKey')&&patch.featureKey!==state.featureKey)) {
+    note('');
+  }
   development.leave();
   Object.assign(state,patch);state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
   for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
@@ -62,7 +66,7 @@ async function refresh() {
     const repositories=await api('/spec-repositories');if(epoch!==state.epoch)return;state.repositories=repositories;
     const detail=state.repositoryId?await api(`/spec-repositories/${state.repositoryId}`):null;if(epoch!==state.epoch)return;state.detail=detail;
     renderNavigation();$('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
-    if(!detail){renderHome();return;}
+    if(!detail){clearTimeout(terminalTimer);terminalSession=null;$('#operation-terminal-details').hidden=true;renderHome();return;}
     if(!['features','projects','reports','settings','versions'].includes(state.view))state.view='features';if(!detail.preferences?.configured && state.view!=='versions')state.view='settings';
     $('#repository-title').textContent=detail.title;$('#breadcrumbs').textContent=`工作台 / ${detail.title}`;
     $('#repository-error').hidden=!detail.specError&&!detail.moduleError;$('#repository-error').textContent=[detail.specError,detail.moduleError].filter(Boolean).map(x=>x.message).join('\n');
@@ -75,11 +79,55 @@ async function refresh() {
     if(state.view==='reports')renderReports();
     if(state.view==='settings')renderSettings();
     renderBinding();
+    await selectOperation(detail,epoch);
+    restoreRegression(detail);
     if(state.view==='versions')await renderVersions(epoch);
   } finally {if(epoch===state.epoch){state.loading=false;block();}}
 }
+const activeOperation = status => ['QUEUED','RUNNING','CANCELLING'].includes(status);
+let actionVersion=0;
+const beginAction=()=>++actionVersion;
+const cliOperations = new Set(['repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
+let terminalSession = null, terminalTimer;
+function showOperation(op) {
+  if (!op || op.request?.repositoryId !== state.repositoryId) return;
+  const details=$('#operation-terminal-details');details.hidden=false;details.dataset.operationId=op.id;
+  if (terminalSession?.id === op.id) return;
+  clearTimeout(terminalTimer);
+  const session = terminalSession = {id:op.id, repositoryId:state.repositoryId, offset:0};
+  const text=$('#operation-terminal-text');
+  details.hidden=false;details.dataset.operationId=op.id;text.textContent='';
+  text.hidden=false;
+  if(op.request.operation!=='workflow.develop')$('#development-terminal').hidden=true;
+  async function poll() {
+    if (terminalSession!==session || session.repositoryId!==state.repositoryId) return;
+    try {
+      const result=await api(`/operations/${session.id}/terminal?offset=${session.offset}`);
+      if (terminalSession!==session || session.repositoryId!==state.repositoryId) return;
+      text.append(document.createTextNode(result.output));session.offset=result.nextOffset;
+      const outcome=result.result?.testOutcome ?? result.result?.outcome;
+      $('#operation-terminal-status').textContent=[result.status,outcome,result.latestExit && `${activeOperation(result.status)?'上一次程序 ':''}exit ${result.latestExit.exitCode} · signal ${result.latestExit.signal ?? 'none'}`,result.error?.message].filter(Boolean).join(' · ');
+      if(activeOperation(result.status)||result.hasMore)terminalTimer=setTimeout(poll,result.hasMore?0:350);
+    } catch(error) { if(terminalSession===session){$('#operation-terminal-status').textContent=error.message;terminalTimer=setTimeout(poll,1000);} }
+  }
+  void poll();
+}
+async function selectOperation(detail,epoch) {
+  const operations=(detail.operations??[]).filter(op=>cliOperations.has(op.request?.operation));
+  const f=feature();
+  const preferred=state.view==='features'&&state.stage==='IMPLEMENTATION'&&f && operations.find(op=>op.request.operation==='workflow.develop'&&`${op.request.input.requirementId}/${op.request.input.featureId}`===f.key);
+  const ordered=[preferred,...operations.filter(op=>activeOperation(op.status)),...operations].filter(Boolean);
+  for(const op of new Map(ordered.map(op=>[op.id,op])).values()) {
+    const result=await api(`/operations/${op.id}/terminal?offset=0`);
+    if(epoch!==state.epoch)return;
+    if(result.hasProgress){showOperation(op);return;}
+  }
+  if(terminalSession?.repositoryId===state.repositoryId){$('#operation-terminal-details').hidden=false;return;}
+  clearTimeout(terminalTimer);terminalSession=null;$('#operation-terminal-details').hidden=true;
+}
 async function executeJob(name,input, {refreshAfter=true}={}) {
   if(state.busy)throw new Error('目前流程正在執行，請勿重複送出。');
+  beginAction();
   const repositoryId=state.repositoryId, d=state.detail;
   const expected=typeof d?.state==='object'?{head:d.state.head,branch:d.state.branch,fingerprint:d.state.fingerprint}:{head:null};
   state.busy=true;block();$('#job-progress').hidden=false;$('#job-title').textContent=labels[name]??'處理中';
@@ -87,12 +135,17 @@ async function executeJob(name,input, {refreshAfter=true}={}) {
   let result;
   try {
     result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected});state.jobId=result.id;
-    while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){await new Promise(r=>setTimeout(r,350));result=await api(`/operations/${result.id}`);}
+    let selected=false;
+    while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){
+      if(!selected&&cliOperations.has(name)){const terminal=await api(`/operations/${result.id}/terminal?offset=0`);if(terminal.hasProgress){showOperation({...result,request:{repositoryId,operation:name}});selected=true;}}
+      await new Promise(r=>setTimeout(r,350));result=await api(`/operations/${result.id}`);
+    }
+    if(!selected&&cliOperations.has(name)){const terminal=await api(`/operations/${result.id}/terminal?offset=0`);if(terminal.hasProgress)showOperation({...result,request:{repositoryId,operation:name}});}
     if(result.status!=='SUCCEEDED')throw Object.assign(new Error(result.error?.message??'流程未完成，內容已保留。'),result.error??{});
-    note(name==='repository.sync'?'已同步至遠端。':name==='workflow.verify'?'驗收完成，報告已自動儲存。':'已儲存。');return result.result;
+    note(result.result?.testOutcome==='FAILED'||result.result?.outcome==='FAILED'?'執行完成，但測試未通過。':name==='repository.sync'?'已同步至遠端。':name==='workflow.verify'?'驗收完成，報告已自動儲存。':'已儲存。');return result.result;
   } finally {
-    state.busy=false;state.jobId=null;$('#job-progress').hidden=true;
-    if(refreshAfter&&repositoryId===state.repositoryId)await refresh();block();
+    state.busy=false;$('#job-progress').hidden=true;
+    try { if(refreshAfter&&repositoryId===state.repositoryId)await refresh(); } finally { state.jobId=null;block(); }
     $('#notice').dataset.operation=name;$('#notice').dataset.outcome=result?.status??'FAILED';$('#notice').dataset.jobId=result?.id??'';
   }
 }
@@ -158,8 +211,13 @@ async function bindRepository() {
     await executeJob('repository.setup',input,{refreshAfter:false});
     if(registered.connection?.operationId) {
       $('#dialog-description').textContent='設定已儲存；正在取得規格、產品及歷史。';
-      let loaded=await api(`/operations/${registered.connection.operationId}`);
-      while(['QUEUED','RUNNING','CANCELLING'].includes(loaded.status)){await new Promise(r=>setTimeout(r,350));loaded=await api(`/operations/${registered.connection.operationId}`);}
+      const panel=$('#operation-terminal-details');$('#dialog-form').insertBefore(panel,$('#dialog-error'));
+      showOperation({id:registered.connection.operationId,request:{repositoryId:registered.id,operation:'repository.acquire'}});
+      let loaded;
+      try {
+        loaded=await api(`/operations/${registered.connection.operationId}`);
+        while(['QUEUED','RUNNING','CANCELLING'].includes(loaded.status)){await new Promise(r=>setTimeout(r,350));loaded=await api(`/operations/${registered.connection.operationId}`);}
+      } finally { $('#content').before(panel); }
       if(loaded.status!=='SUCCEEDED')note('綁定與設定已保存，內容尚未取得：'+(loaded.error?.message??'請重試'),true);
     }
     localStorage.setItem('bdd-reviewer',input.reviewer);await navigate({repositoryId:registered.id,view:'features',stage:'GHERKIN',featureKey:null,projectId:null},{protect:false});
@@ -168,9 +226,12 @@ async function bindRepository() {
 function renderSettings() {
   const d=state.detail,c=d.spec?.config;$('#settings-reviewer').value=d.preferences?.reviewer??localStorage.getItem('bdd-reviewer')??'';$('#settings-remote').textContent=d.remoteUrl;$('#settings-local-path').value=d.localPath??d.connection?.localPath??'';$('#settings-products').replaceChildren();
   for(const p of d.modules??[])addSettingsProduct(p);if(!d.modules?.length)addSettingsProduct();
-  $('#settings-agent-command').value=d.preferences?.agent?.command??'codex';$('#settings-agent-args').value=(d.preferences?.agent?.args??['exec','--sandbox','workspace-write','{prompt}']).join('\n');
+  $('#settings-global-timeout').value=d.preferences?.globalTimeoutMs??c?.execution?.globalTimeoutMs??'';
+  const agent=d.preferences.agent;
+  for(const key of ['command','prompt','skills','maxAttempts','timeoutMs'])$('#settings-agent-'+key).value=agent[key];
+  $('#settings-agent-args').value=agent.args.join('\n');
   updateServices();$('#settings-service').value=c?.execution.service?.projectId??'';$('#settings-url').value=c?.execution.environment?.WB_TARGET_BASE_URL??'';$('#settings-health').value=c?.execution.service?.healthUrl??'';$('#settings-program').value=c?.execution.service?.command[0]??'node';$('#settings-args').value=c?.execution.service?.command.slice(1).join('\n')??'';
-  $('#operation-list').replaceChildren();for(const op of d.operations??[]){const item=el('details');item.append(el('summary',`${labels[op.request.operation]??'系統操作'} · ${op.status}`));if(op.error)item.append(el('p',op.error.message??'這次操作未完成，已保留內容。','muted'));const technical=detailGroup('檢視技術細節',[el('pre',JSON.stringify({id:op.id,result:op.result,error:op.error},null,2))]);item.append(technical);$('#operation-list').append(item);}
+  $('#operation-list').replaceChildren();for(const op of d.operations??[]){const item=el('details');item.append(el('summary',`${labels[op.request.operation]??'系統操作'} · ${op.status}`));if(op.error)item.append(el('p',op.error.message??'這次操作未完成，已保留內容。','muted'));const technical=detailGroup('檢視技術細節',[el('pre',JSON.stringify({id:op.id,result:op.result,error:op.error},null,2))]);item.append(technical);if(cliOperations.has(op.request.operation))item.append(button('查看執行過程',()=>showOperation(op)));$('#operation-list').append(item);}
 }
 function addSettingsProduct(p={}) {
   const row=el('div',undefined,'product-repo-input');const url=field('產品原始碼 Git 網址','productUrl',p.url??'',{required:false,placeholder:'https://github.com/owner/product.git'});
@@ -183,7 +244,8 @@ function addSettingsProduct(p={}) {
 function updateServices() { const select=$('#settings-service'),previous=select.value;select.replaceChildren(new Option('暫不設定',''));all('#settings-products .product-repo-input').forEach(row=>{const id=row.querySelector('[name=productId]').value.trim()||guessName(row.querySelector('[name=productUrl]').value);if(id)select.append(new Option(id,id));});select.value=previous; }
 async function saveSettings() {
   const localPath=$('#settings-local-path').value.trim(),expectedLocalPath=state.detail.localPath;
-  const form=new FormData($('#settings-form')),input={reviewer:$('#settings-reviewer').value,projects:formProducts(form),expectedSettings:state.detail.settingsToken,agent:{...state.detail.preferences?.agent,command:$('#settings-agent-command').value.trim()||'codex',args:$('#settings-agent-args').value.split('\n').filter(Boolean)}};
+  const form=new FormData($('#settings-form')),input={reviewer:$('#settings-reviewer').value,projects:formProducts(form),expectedSettings:state.detail.settingsToken,agent:{...state.detail.preferences?.agent,command:$('#settings-agent-command').value.trim()||'codex',args:$('#settings-agent-args').value.split('\n').filter(Boolean),prompt:$('#settings-agent-prompt').value,skills:$('#settings-agent-skills').value,maxAttempts:Number($('#settings-agent-maxAttempts').value),timeoutMs:Number($('#settings-agent-timeoutMs').value)}};
+  input.globalTimeoutMs=$('#settings-global-timeout').value===''?null:Number($('#settings-global-timeout').value);
   if($('#settings-service').value){const baseUrl=$('#settings-url').value;input.execution={projectId:$('#settings-service').value,baseUrl,healthUrl:$('#settings-health').value||new URL('/health',baseUrl).href,command:[$('#settings-program').value,...$('#settings-args').value.split('\n').map(x=>x.trim()).filter(Boolean)]};}
   await executeJob('repository.setup',input,{refreshAfter:false});localStorage.setItem('bdd-reviewer',input.reviewer);
   if(localPath!==expectedLocalPath) {
@@ -518,8 +580,17 @@ function renderRegressionHistory(batches) {
 async function startRegression(selection) {
   const repositoryId=state.repositoryId;
   if(regressionJobs.has(repositoryId))throw new Error('這個規格庫已有回歸正在執行。');
+  beginAction();
   const input=selection??{specRef:$('#regression-spec').value.trim(),projects:Object.fromEntries(all('#regression-products input').map(n=>[n.dataset.projectId,n.value.trim()]).filter(([,v])=>v))};
   const accepted=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:'regression.start',input});
+  showOperation({...accepted,request:{repositoryId,operation:'regression.start'}});
+  return monitorRegression(repositoryId,accepted,input);
+}
+function restoreRegression(detail) {
+  const op=(detail.operations??[]).find(x=>x.request.operation==='regression.start'&&activeOperation(x.status));
+  if(op&&!regressionJobs.has(detail.id))void monitorRegression(detail.id,op,op.request.input).catch(error=>note(error.message,true));
+}
+async function monitorRegression(repositoryId,accepted,input) {
   regressionJobs.set(repositoryId,accepted.id);$('#cancel-regression').hidden=false;$('#start-regression').disabled=true;
   note('回歸正在執行；可以繼續編輯及儲存，這次仍使用開始時固定的版本。');
   let result=accepted;
@@ -540,7 +611,7 @@ async function startRegression(selection) {
   if(state.repositoryId===repositoryId) {
     if(state.view==='versions'){const data=await api(`/spec-repositories/${repositoryId}`);renderRegressionHistory(data.regressions??[]);}
     $('#regression-status').textContent=result.status==='SUCCEEDED'?`回歸完成：${result.result.outcome}`:result.error?.message??result.status;
-    note(result.status==='SUCCEEDED'?`回歸完成：${result.result.outcome}，歷史已保留。`:result.error?.message??'回歸未完成。',result.status!=='SUCCEEDED');
+    note(result.status==='SUCCEEDED'?`回歸完成：${result.result.outcome}，歷史已保留。`:result.error?.message??'回歸未完成。',result.status!=='SUCCEEDED'||result.result?.outcome==='FAILED');
     $('#notice').dataset.operation='regression.start';$('#notice').dataset.outcome=result.status;$('#notice').dataset.jobId=result.id;
   }
 }
@@ -549,7 +620,7 @@ $('#refresh-versions').addEventListener('click',()=>safe(()=>executeJob('reposit
 $('#start-regression').addEventListener('click',()=>safe(()=>startRegression()));
 $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));
 
-const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,note,safe});
+const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,note,safe,showOperation,beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
 // Initialize the route only after every view state and handler exists.

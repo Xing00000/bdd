@@ -1,4 +1,8 @@
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { fileURLToPath } from 'node:url';
+import { currentProgress } from './progress.mjs';
 import { mkdir, mkdtemp, readFile, realpath, rm, lstat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,8 +47,9 @@ export function processEnvironment(extra = {}, { git = false } = {}) {
   }
   return env;
 }
-export async function execute(executable, args, { cwd, env = {}, timeoutMs = 180000, input, maxBytes = 8 * 1024 * 1024, onOutput, binaryOutput = false } = {}) {
+export async function execute(executable, args, { cwd, env = {}, timeoutMs = 180000, input, maxBytes = 8 * 1024 * 1024, onOutput, binaryOutput = false, progress = true } = {}) {
   invariant(typeof executable === 'string' && executable && Array.isArray(args) && args.every(v => typeof v === 'string' && !v.includes('\0')), 'INVALID_COMMAND', 'Invalid executable/arguments');
+  if (progress && currentProgress()) return executePty(executable, args, { cwd, env, timeoutMs, input, maxBytes, onOutput, binaryOutput, supervised: binaryOutput || executable === 'git' });
   return new Promise((resolve, reject) => {
     const child = trackChild(spawn(executable, args, { cwd, env, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }));
     let stdout = [], stderr = [], bytes = 0, timedOut = false, overflow = false, hardKill;
@@ -63,13 +68,58 @@ export async function execute(executable, args, { cwd, env = {}, timeoutMs = 180
     child.once('close', (exitCode, signal) => { clearTimeout(timer); clearTimeout(hardKill); resolve({ exitCode, signal, timedOut, overflow, stdout: binaryOutput ? Buffer.concat(stdout) : Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') }); });
   });
 }
+export function startProgressPty(executable, args, { cwd, env, onData, supervised = false, input } = {}) {
+  let pty;
+  try { pty = createRequire(import.meta.url)('node-pty'); }
+  catch (error) {
+    if (error.code !== 'MODULE_NOT_FOUND' || !currentProgress()?.home) throw error;
+    pty = createRequire(path.join(currentProgress().home, 'runtime', 'terminal', 'package.json'))('node-pty');
+  }
+  const config = { executable, args, cwd, env, input: input == null ? null : Buffer.from(input).toString('base64') };
+  const command = supervised ? process.execPath : executable;
+  const argv = supervised ? [fileURLToPath(new URL('./pty-supervisor.mjs', import.meta.url))] : args;
+  const child = pty.spawn(command, argv, { cwd, env: supervised ? { ...env, WB_PTY_CONFIG: Buffer.from(JSON.stringify(config)).toString('base64') } : { ...env, TERM: 'xterm-256color' }, name: 'xterm-256color', cols: 100, rows: 30 });
+  const tracked = new EventEmitter(); tracked.pid = child.pid; tracked.kill = signal => child.kill(signal); trackChild(tracked);
+  const progress = currentProgress(); progress?.record(`\r\n[start ${supervised ? 'controlling-PTY pipe relay' : 'PTY'}] ${executable}${executable === 'git' ? ' ' + (args.find(arg => ['clone','fetch','push','commit-tree','submodule','checkout','switch','add','merge','init','update-ref','read-tree','write-tree','reset','remote','ls-remote'].includes(arg)) ?? 'command') : ''}\r\n`);
+  let pending = '', result;
+  child.onData(data => {
+    if (!supervised) { progress?.output(data); onData?.('stdout', Buffer.from(data)); return; }
+    pending += data;
+    let index;
+    while ((index = pending.indexOf('\n')) >= 0) {
+      const line = pending.slice(0, index).trim(); pending = pending.slice(index + 1);
+      if (!line) continue;
+      const frame = JSON.parse(line);
+      if (frame.kind === 'exit') result = frame.value;
+      else if (frame.kind === 'error') progress?.record(`[spawn error] ${frame.value}\r\n`);
+      else { const data = Buffer.from(frame.value, 'base64'); if (!data.includes(0)) progress?.output(data.toString('utf8')); onData?.(frame.kind, data); }
+    }
+  });
+  const done = new Promise(resolve => child.onExit(({ exitCode, signal }) => { tracked.emit('close'); const outcome = supervised && result ? { exitCode: result.code, signal: result.signal } : { exitCode, signal }; progress?.record(`\r\n[exit] code=${outcome.exitCode} signal=${outcome.signal ?? 'none'}\r\n`); progress?.exit(outcome); resolve(outcome); }));
+  return { pid: child.pid, done, stop(signal = 'SIGTERM') { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} }, write(data) { child.write(data); } };
+}
+async function executePty(executable, args, options) {
+  let stdout = [], stderr = [], bytes = 0, overflow = false, timedOut = false, hardKill;
+  const child = startProgressPty(executable, args, { ...options, onData(kind, data) {
+    bytes += data.length; if (bytes > options.maxBytes) { if (!overflow) { overflow = true; stop(); } return; }
+    (kind === 'stderr' ? stderr : stdout).push(data); options.onOutput?.(kind, data.toString('utf8'));
+  } });
+  const stop = () => { child.stop(); hardKill = setTimeout(() => child.stop('SIGKILL'), 1000); hardKill.unref(); };
+  const timer = setTimeout(() => { timedOut = true; stop(); }, options.timeoutMs); timer.unref();
+  if (!options.supervised && options.input != null) child.write(String(options.input) + '\x04');
+  const outcome = await child.done; clearTimeout(timer); clearTimeout(hardKill);
+  if (timedOut || overflow) currentProgress()?.record(`[termination] timeout=${timedOut} overflow=${overflow}\r\n`);
+  return { ...outcome, timedOut, overflow, stdout: options.binaryOutput ? Buffer.concat(stdout) : Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') };
+}
 export function createGit(policy = {}) {
   const settings = { allowLocal: false, hosts: ['github.com'], ...policy };
   async function command(repo, args, options = {}) {
+    const readonly = new Set(['rev-parse', 'symbolic-ref', 'status', 'ls-files', 'cat-file', 'show', 'show-ref', 'diff', 'log', 'for-each-ref', 'ls-tree', 'merge-base']);
+    const query = readonly.has(args[0]) || (args[0] === 'config' && args.some(arg => ['--get', '--get-regexp', '--get-all', '--list', '-l'].includes(arg))) || (args[0] === 'remote' && (args.length === 1 || args[1] === 'get-url'));
     const result = await execute('git', ['-c', `core.hooksPath=${os.devNull}`, '-c', 'core.fsmonitor=false',
       '-c', 'commit.gpgSign=false', '-c', 'protocol.ext.allow=never', '-c', `protocol.file.allow=${settings.allowLocal ? 'always' : 'never'}`,
       '-c', 'submodule.recurse=false', '-c', 'user.name=BDD Workstation', '-c', 'user.email=workstation@localhost',
-      ...(repo ? ['-C', repo] : []), ...args], { ...options, cwd: repo, env: processEnvironment(options.env, { git: true }) });
+      ...(repo ? ['-C', repo] : []), ...args], { ...options, progress: !query, cwd: repo, env: processEnvironment(options.env, { git: true }) });
     if (!options.allowFailure && (result.exitCode !== 0 || result.timedOut || result.overflow))
       throw new WorkstationError(result.timedOut ? 'GIT_TIMEOUT' : result.overflow ? 'GIT_OUTPUT_LIMIT' : 'GIT_COMMAND_FAILED',
         result.stderr.trim() || `Git exited ${result.exitCode}`, 422, { exitCode: result.exitCode, signal: result.signal });

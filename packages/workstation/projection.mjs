@@ -134,6 +134,10 @@ async function importBoundSnapshot(context,snapshot) {
     if(!binding)settings.projects.push({id:module.id,url:module.url});
   }
   config.projects=settings.projects.map(p=>({id:p.id,path:`projects/${p.id}`}));
+  if(Object.hasOwn(settings,'globalTimeoutMs')) {
+    if(settings.globalTimeoutMs===null) delete config.execution.globalTimeoutMs;
+    else config.execution.globalTimeoutMs=settings.globalTimeoutMs;
+  } else settings.globalTimeoutMs=config.execution.globalTimeoutMs??null;
   const changes=[];
   for(const file of incoming) {
     const current=snapshot.files.find(f=>key(f)===key(file));

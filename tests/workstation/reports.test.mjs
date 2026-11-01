@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile, readFile, mkdir } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, unlink, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fixture, git, specRepository, approve, sealedBundle } from './helpers.mjs';
 import { writeJson } from '../../packages/contracts/index.mjs';
@@ -85,6 +85,49 @@ test('report push is explicit, uses an evidence branch and is independently retr
   const local = await publishRun({ root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git }); assert.equal(local.status, 'LOCAL_COMMIT');
   const pushed = await publishRun({ root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git, push: true }); assert.equal(pushed.status, 'PUBLISHED'); assert.equal(pushed.reportCommit, local.reportCommit);
   assert.equal((await git.command(undefined, ['--git-dir', f.remote, 'rev-parse', 'refs/heads/main'])).stdout.trim(), testedSpecCommit);
+});
+
+test('interrupted publisher is preserved while a fresh sealed report is pushed and reused', async t => {
+  const f = await fixture(t); await mkdir(f.home); await specRepository(f.repo);
+  await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', f.remote]); await git.command(f.repo, ['remote', 'add', 'origin', f.remote]);
+  const testedSpecCommit = await git.resolve(f.repo), directory = path.join(f.home, 'executions', plan.runId);
+  await mkdir(directory, { recursive: true }); const runPlan = { ...plan, testedSpecCommit, state: 'SEALED' };
+  await writeJson(path.join(directory, 'plan.json'), runPlan); await sealedBundle(path.join(directory, 'evidence'), runPlan);
+  const input = { root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git };
+  const original = await publishRun(input), old = path.join(f.home, original.publisherPath);
+  await writeFile(path.join(old, 'private-work.txt'), 'preserve me'); await unlink(path.join(directory, 'publication.json'));
+  const manifest = await readFile(path.join(directory, 'evidence', 'manifest.json'));
+  const recovered = await publishRun(input);
+  assert.match(recovered.publisherPath, /^publishers\/RUN-fixture\/attempt-[0-9a-f-]+\/repo$/);
+  assert.equal(recovered.preservedPublisherPath, original.publisherPath);
+  assert.equal(await readFile(path.join(old, 'private-work.txt'), 'utf8'), 'preserve me');
+  assert.equal(await git.resolve(old), original.reportCommit);
+  assert.deepEqual(await readFile(path.join(directory, 'evidence', 'manifest.json')), manifest);
+  const fresh = path.join(f.home, recovered.publisherPath);
+  await assert.rejects(readFile(path.join(fresh, 'private-work.txt')), { code: 'ENOENT' });
+  const pushed = await publishRun({ ...input, push: true }); assert.equal(pushed.status, 'PUBLISHED');
+  assert.equal(pushed.reportCommit, recovered.reportCommit);
+  const remoteFiles = (await git.command(undefined, ['--git-dir', f.remote, 'ls-tree', '-r', '--name-only', pushed.reportCommit])).stdout;
+  assert.ok(!remoteFiles.includes('private-work.txt'));
+});
+
+test('legacy receipts use the default publisher and reject paths outside the run or through symlinks', async t => {
+  const f = await fixture(t); await mkdir(f.home); await specRepository(f.repo);
+  const testedSpecCommit = await git.resolve(f.repo), directory = path.join(f.home, 'executions', plan.runId);
+  await mkdir(directory, { recursive: true }); const runPlan = { ...plan, testedSpecCommit, state: 'SEALED' };
+  await writeJson(path.join(directory, 'plan.json'), runPlan); await sealedBundle(path.join(directory, 'evidence'), runPlan);
+  const input = { root: f.repo, home: f.home, repositoryId: plan.repositoryId, runId: plan.runId, git };
+  const publication = await publishRun(input), receiptFile = path.join(directory, 'publication.json');
+  const { publisherPath, ...legacy } = publication; await writeJson(receiptFile, legacy);
+  assert.equal((await publishRun(input)).reportCommit, publication.reportCommit);
+  for (const invalid of [null, 'publishers/other/repo', `publishers/${plan.runId}/../other/repo`, `publishers/${plan.runId}/attempt-invalid/repo`]) {
+    await writeJson(receiptFile, { ...publication, publisherPath: invalid });
+    await assert.rejects(publishRun(input), { code: 'INVALID_PUBLISHER_PATH' });
+  }
+  const attempt = `publishers/${plan.runId}/attempt-12345678-1234-4234-8234-123456789abc`;
+  await symlink(path.join(f.home, 'publishers', plan.runId, 'repo'), path.join(f.home, attempt));
+  await writeJson(receiptFile, { ...publication, publisherPath: `${attempt}/repo` });
+  await assert.rejects(publishRun(input), { code: 'SYMLINK_FORBIDDEN' });
 });
 
 test('real playwright-bdd hook titles omit keywords while reporter steps include them', () => {

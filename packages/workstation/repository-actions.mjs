@@ -63,7 +63,7 @@ export async function configureExecution(root, input) {
   const file = await safePath(root, 'workbench.yaml', { missing: false }), previous = await readFile(file);
   invariant(digest(previous) === input.expectedHash, 'CONTENT_CHANGED', 'Execution configuration changed', 409);
   const config = JSON.parse(previous);
-  const execution = { ...config.execution, environment: { WB_TARGET_BASE_URL: input.baseUrl },
+  const execution = { ...config.execution, environment: { ...config.execution.environment, WB_TARGET_BASE_URL: input.baseUrl },
     service: { projectId: input.projectId, command: input.command, healthUrl: input.healthUrl } };
   const updated = { ...config, execution }; validateContract('workbench', updated);
   invariant(config.projects.some(p => p.id === input.projectId), 'UNKNOWN_PROJECT', 'Service must be a Project under this Spec Repo');

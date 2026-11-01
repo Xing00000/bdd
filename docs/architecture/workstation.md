@@ -66,6 +66,8 @@ Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<RE
 
 驗收把固定 SQLite 內容輸出成 source commit S，再從本機產品版本建立隔離候選，不要求先同步。報告 commit R 記錄受測 S，而不是聲稱 R 已被測試。歷史通過要與目前 SQL 的內容摘要、產品編輯及已輸出版本相符，否則過期。
 
+報告發布使用獨立 publisher。若預設 `publishers/<run>/repo` 已存在但 publication receipt 尚未寫入，原目錄及其所有內容保持原路徑不變；系統從已驗證的 sealed evidence 和固定的 S 在 `publishers/<run>/attempt-<uuid>/repo` 建立新 publisher，不複製原目錄的工作檔。receipt 記錄相對 home 的 `publisherPath` 和保留原目錄時的 `preservedPublisherPath`；後續發布使用該路徑，舊 receipt 缺少路徑時使用預設位置。路徑必須屬於同一 run，且不可經由 symlink；既有 HEAD 與遠端推送檢查仍適用。只有明確同步才推送，不重新執行測試或變更驗證結果。
+
 ## 安全與範圍
 
 儲存與讀取不執行 Repo 設定程式。路徑、文字大小、symlink、私密檔案及跨規格庫存取有檢查。SQLite 與歷史可能包含敏感原文，備份必須保密。主機為 loopback 信任模型，沒有公開多租戶 ACL 或 OS sandbox；Agent、MCP、Terminal、錄製的新 UI 完整接線仍未全部提供。
@@ -107,6 +109,8 @@ A report is identified by binding + requirement + feature + run. Local and Git-i
 ## Development PTY and acceptance feedback
 
 `workflow.develop` is a durable, repository-locked worker operation. `development.mjs` resolves the host-local Agent command, starts node-pty with explicit argv/cwd and a reduced environment, and streams a bounded transcript through a scoped polling API. Input/resize uses IPC only to the owning live worker. Cancellation participates in the existing process-group termination and repository-lock lifecycle. The browser reconnects to an existing operation rather than launching duplicates.
+
+`packages/workstation/agent-settings.mjs` owns the editable dispatch seed, validation and template expansion. The skill seed reads the bundled `skills/playwright-bdd/SKILL.md`; it does not read host credentials or arbitrary user files. Authoring fills only undefined settings fields into SQLite, both at bootstrap and when opening legacy drafts. Existing argv, custom text and explicitly empty skills survive. Partial Agent updates merge saved settings before validation. The settings UI renders those saved values rather than maintaining a second seed. Development expands the saved template once, appends skills literally, and records the effective text in the existing local `prompt.txt` before sending it through argv to the PTY. Repository or feature navigation clears the old visible notice after the unsaved-draft guard accepts navigation; operation receipts remain available for diagnosis.
 
 Product changes are imported with SQLite revision compare-and-swap, including explicit text deletions. Local commits contain those exact product changes and updated gitlinks; no push occurs. Independently sealed BDD evidence, not CLI exit status, controls acceptance. A source review change, concurrent authoring change or unsupported product file retains on-disk work and stops automatic promotion.
 

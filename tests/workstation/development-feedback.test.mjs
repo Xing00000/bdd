@@ -42,7 +42,7 @@ test('only a newer genuine passing run clears feedback; an old success or a newe
  assert.equal(state({...manifest,testOutcome:'FAILED',startedAt:'2026-01-03T00:00:00Z'}).stage,'IMPLEMENTATION');
 });
 test('development settings use executable and argument arrays, never a shell command or approval bypass',async()=>{
- assert.deepEqual(validateAgentSettings().args,['exec','--sandbox','workspace-write','{prompt}']);
+ assert.deepEqual(validateAgentSettings().args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{prompt}']);
  assert.equal(await agentExecutable(process.execPath),process.execPath);
  for(const value of [{command:''},{command:'x\nrm'},{args:'rm -rf'},{maxAttempts:10},{timeoutMs:0}])assert.throws(()=>validateAgentSettings(value),{code:'INVALID_AGENT'});
  await assert.rejects(()=>agentExecutable('bdd-agent-certainly-absent-123'),{code:'AGENT_NOT_INSTALLED'});
@@ -55,13 +55,13 @@ test('compact UI contains none of the removed instructional blocks and confirmat
  assert.ok(html.indexOf('id="binding-status"')>html.indexOf('id="settings-view"'));
  assert.ok(!html.includes('class="next-action'));
  const dev=html.slice(html.indexOf('<section id="implementation-panel"'),html.indexOf('<section id="verification-panel"'));
- assert.ok(dev.includes('確認開發'));assert.ok(dev.includes('CLI Agent 終端'));assert.ok(!dev.includes('產品原始碼'));assert.ok(!dev.includes('驗收範圍'));
+ assert.ok(dev.includes('確認開發'));assert.ok(html.includes('CLI Agent 終端')); assert.ok(!dev.includes('產品原始碼'));assert.ok(!dev.includes('驗收範圍'));
 });
 test('development cannot start without existing human approvals and input cannot target a different operation',async t=>{
  const f=await fixture(t),s=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false,enableExecution:true});t.after(()=>s.close());
  s.register({id:'SPEC-one',title:'Spec',remoteUrl:f.remote});await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});await job(s,'workflow.create',{title:'Login',guided:true});
  const r=await job(s,'workflow.develop',{requirementId:'REQ-001',featureId:'login'});assert.equal(r.status,'FAILED');assert.equal(r.error.code,'REVIEWS_REQUIRED');
- const op=await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});await assert.rejects(()=>s.terminal(op.id),{code:'NOT_TERMINAL'});
+ const op=await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});const terminal=await s.terminal(op.id);assert.equal(terminal.status,op.status);assert.equal(typeof terminal.output,'string');assert.throws(()=>s.terminalInput(op.id,{data:'input'}),{code:'TERMINAL_UNAVAILABLE'});await assert.rejects(()=>s.terminal('OP-missing'),{code:'OPERATION_NOT_FOUND'});
 });
 
 async function captureFixture(t) {

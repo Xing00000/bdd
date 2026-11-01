@@ -41,7 +41,7 @@ export function validateLocation(options, repositoryId, input, repositories = []
   if (options.toolkitRoot) invariant(!overlaps(selected, canonicalLocation(options.toolkitRoot)), 'LOCAL_PATH_PROTECTED', '這是工作台程式所在的目錄，請改用獨立的 bdd-spec 資料夾。');
   // System directories are not checkout destinations. Dedicated /tmp fixtures remain usable.
   for (const system of ['/etc', '/usr', '/bin', '/sbin', '/dev', '/proc', '/sys', '/System', '/Library'])
-    invariant(!overlaps(selected, system), 'LOCAL_PATH_PROTECTED', '系統資料夾不能作為規格庫目錄。');
+    invariant(!overlaps(selected, stat(system) ? realpathSync(system) : system), 'LOCAL_PATH_PROTECTED', '系統資料夾不能作為規格庫目錄。');
   for (const record of repositories) if (record.id !== repositoryId) {
     const other = canonicalLocation(record.localPath ?? managedLocation(options.home, record.id));
     invariant(!overlaps(selected, other), 'LOCAL_PATH_IN_USE', `這個位置已由「${record.title}」使用，兩個規格庫不能共用或互相包含。`, 409);

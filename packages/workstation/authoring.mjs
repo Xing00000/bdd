@@ -1,5 +1,5 @@
 import { draftModules, workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules } from './workflow-state.mjs';
-import { validateAgentSettings } from './development.mjs';
+import { seedAgentSettings, validateAgentSettings } from './agent-settings.mjs';
 import { saveFeedback, readFeedback } from './feedback.mjs';
 import { canonicalLocation } from './locations.mjs';
 /** Authoring does not invoke Git, create branches, download repositories or execute repository code. */
@@ -41,7 +41,17 @@ export async function sourceFiles(root) {
 }
 /** Import an existing local checkout read-only, once. No clean-status/HEAD check. */
 export async function ensureDraft({ root, options, store, repositoryId }) {
-  const current = store.draft(repositoryId); if (current) return current;
+  const current = store.draft(repositoryId);
+  if (current) {
+    const agent=seedAgentSettings(current.settings.agent);
+    if(identity(agent)!==identity(current.settings.agent??{})) {
+      try { store.saveDraft(repositoryId,{expectedRevision:current.revision,settings:{...current.settings,agent},files:[],
+        operationId:`agent-seed-${current.revision}`,request:{agentSeed:1,revision:current.revision},result:{seeded:true}}); }
+      catch(error) { if(error.code!=='DRAFT_REVISION_CHANGED')throw error; }
+      return store.draft(repositoryId);
+    }
+    return current;
+  }
   const temporary = await mkdtemp(path.join(os.tmpdir(),'bdd-authoring-seed-'));
   try {
     await initialize(temporary,{specRepositoryId:repositoryId,templateRoot:path.join(options.toolkitRoot,'templates/spec-repo/v1'),toolkitRoot:path.join(options.toolkitRoot,'packages')});
@@ -66,7 +76,7 @@ export async function ensureDraft({ root, options, store, repositoryId }) {
         if(p&&url&&!projects.some(x=>x.id===p))projects.push({id:p,url});
       }
     }
-    const settings={...prior,schemaVersion:1,reviewer:prior?.reviewer??'',configured:Boolean(prior?.configured),projects,
+    const settings={...prior,agent:seedAgentSettings(prior?.agent),schemaVersion:1,reviewer:prior?.reviewer??'',configured:Boolean(prior?.configured),projects,globalTimeoutMs:prior && Object.hasOwn(prior,'globalTimeoutMs') ? prior.globalTimeoutMs : config?.execution?.globalTimeoutMs??null,
       ...(config?.execution?.service ? {execution:{projectId:config.execution.service.projectId,baseUrl:config.execution.environment?.WB_TARGET_BASE_URL,healthUrl:config.execution.service.healthUrl,command:config.execution.service.command}} : {})};
     try { store.saveDraft(repositoryId,{expectedRevision:null,settings,files,operationId:'sqlite-bootstrap-v5',request:{bootstrap:5},result:{imported:true,previousSettingsToken:identity(prior)}}); }
     catch(error) { if(error.code!=='DRAFT_REVISION_CHANGED'&&error.code!=='OPERATION_ID_CONFLICT')throw error; }
@@ -145,8 +155,13 @@ export async function editDraft(context) {
       for(const p of input.projects??[]){id(p.id);remoteUrl(p.url,options);const previous=projects.find(x=>x.id===p.id);invariant(!previous||previous.url===p.url,'PROJECT_SOURCE_CHANGED','不能默默替換既有產品的來源。',409);if(!previous)projects.push({id:p.id,url:p.url});}
       invariant(new Set((input.projects??[]).map(p=>p.id)).size===(input.projects??[]).length,'DUPLICATE_PROJECT','產品代號不能重複。');
       let config;try{config=await configuration(root);}catch{config=JSON.parse(await readFile(path.join(options.toolkitRoot,'templates/spec-repo/v1/workbench.yaml'),'utf8'));config.specRepositoryId=repositoryId;}
+      if(Object.hasOwn(input,'globalTimeoutMs')) {
+        invariant(input.globalTimeoutMs===null || (Number.isInteger(input.globalTimeoutMs) && input.globalTimeoutMs>=1000 && input.globalTimeoutMs<=600000),'INVALID_GLOBAL_TIMEOUT','Playwright 整體逾時必須是 1000 到 600000 的整數。');
+        if(input.globalTimeoutMs===null) delete config.execution.globalTimeoutMs; else config.execution.globalTimeoutMs=input.globalTimeoutMs;
+        settings.globalTimeoutMs=input.globalTimeoutMs;
+      }
       config.projects=projects.map(p=>({id:p.id,path:`projects/${p.id}`}));await writeJson(path.join(root,'workbench.yaml'),config);
-      if(input.agent!==undefined)settings.agent=validateAgentSettings(input.agent);
+      if(input.agent!==undefined)settings.agent=validateAgentSettings(input.agent,settings.agent);
       if(input.execution)await configureExecution(root,{...input.execution,expectedHash:digest(await readFile(path.join(root,'workbench.yaml')))});
       Object.assign(settings,{schemaVersion:1,reviewer:input.reviewer.trim(),configured:true,projects,...(input.execution?{execution:input.execution}:{}),updatedAt:new Date().toISOString()});
       result={ready:true,settings,connection:'NOT_CHECKED'};

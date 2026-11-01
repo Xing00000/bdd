@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execute, processEnvironment } from '../../packages/git-core/index.mjs';
 import { writeJson, exists } from '../../packages/contracts/index.mjs';
 import { createWorkstation } from '../../packages/workstation/service.mjs';
-import { prepareRun, executeRun, verifyBundle } from '../../packages/spec-toolkit/engine.mjs';
+import { prepareRun, executeRun, verifyBundle, runBddCommand, testProcessTimeout } from '../../packages/spec-toolkit/engine.mjs';
 import { fixture, git, toolkitRoot, specRepository, approve } from './helpers.mjs';
 
 async function eventually(check, timeout = 10000) {
@@ -68,4 +68,24 @@ test('cancellation holds the workspace lock until the real worker and child stop
   const stopped = await service.wait('OP-execute'); assert.equal(stopped.status, 'CANCELLED');
   await eventually(async () => { try { process.kill(childPid, 0); return false; } catch { return true; } });
   service.enqueue(request('OP-after', 'repository.validate', {})); assert.equal((await service.wait('OP-after')).status, 'SUCCEEDED');
+});
+
+test('Playwright global timeout affects only test argv and adds bounded cleanup grace', async t => {
+  const { mkdtemp, mkdir, writeFile, chmod, rm } = await import('node:fs/promises');
+  const os = await import('node:os');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'bdd-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = path.join(root, 'node_modules', '.bin'); await mkdir(bin, { recursive: true });
+  for (const name of ['playwright', 'bddgen']) {
+    const file = path.join(bin, name);
+    await writeFile(file, '#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)))\n'); await chmod(file, 0o755);
+  }
+  const args = async (mode, options = {}) => { const r = await runBddCommand(root, mode, 'REQ-1', 'feature', options); assert.equal(r.exitCode, 0); return JSON.parse(r.stdout); };
+  assert.deepEqual(await args('test'), ['test', '--config', 'playwright.config.ts']);
+  assert.deepEqual(await args('test', { globalTimeoutMs: 1000 }), ['test', '--config', 'playwright.config.ts', '--global-timeout', '1000']);
+  assert.deepEqual(await args('list', { globalTimeoutMs: 1000 }), ['test', '--config', 'playwright.config.ts', '--list']);
+  assert.deepEqual(await args('generate', { globalTimeoutMs: 1000 }), ['--config', 'bdd.config.ts']);
+  assert.equal(testProcessTimeout(180000, undefined), 180000);
+  assert.equal(testProcessTimeout(180000, 1000), 180000);
+  assert.equal(testProcessTimeout(180000, 600000), 605000);
 });
