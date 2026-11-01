@@ -9,6 +9,7 @@ import { scan, reviewState } from '../spec-toolkit/index.mjs';
 import { executeRun, inputSnapshot } from '../spec-toolkit/engine.mjs';
 import { snapshotRepository, productCache, selectedCommit } from './catalog.mjs';
 import { ensureInstallation, installationPlan } from './flows.mjs';
+import { commitId, remoteUrl } from '../git-core/index.mjs';
 
 async function cloneProduct(git, source, destination, commit, url) {
   if (await exists(destination)) await rmdir(destination); // Git creates empty gitlink directories
@@ -55,7 +56,15 @@ export async function prepareRegression(context) {
   for (const p of modules) {
     const requested = input.projects?.[p.id] || null;
     const cache = await productCache({ ...context, repositoryId }, p, Boolean(requested&&!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(requested)));
-    const commit = requested ? await selectedCommit(cache, requested, git) : await git.resolve(cache, p.commit);
+    const ref = requested ?? p.commit;
+    if (/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(ref)) {
+      const sha = commitId(ref);
+      const object = (await git.command(cache, ['cat-file', '--batch-check'], { input: `${sha}\n` })).stdout.trim();
+      if (object === `${sha} missing`) {
+        await git.command(cache, ['fetch', '--no-tags', '--no-recurse-submodules', '--', remoteUrl(p.url, git.policy), sha]);
+      }
+    }
+    const commit = await selectedCommit(cache, ref, git);
     await cloneProduct(git, cache, path.join(candidate, p.path), commit, p.url);
     projects.push({ id: p.id, path: p.path, url: p.url, commit, recordedCommit: p.commit, requestedRef: requested ?? 'SPEC_PIN' });
   }
