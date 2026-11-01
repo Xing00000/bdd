@@ -1,3 +1,4 @@
+import { draftModules, workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules } from './workflow-state.mjs';
 import { canonicalLocation } from './locations.mjs';
 /** Authoring does not invoke Git, create branches, download repositories or execute repository code. */
 import path from 'node:path';
@@ -74,13 +75,16 @@ export async function draftDetail(context) {
   const repositoryId=context.repository.id;
   const snapshot=await ensureDraft({...context,repositoryId}), projection=context.store.projection(repositoryId);
   let spec,specError;
+  const workflowModules=await liveWorkflowModules(context,snapshot);
   await inDraftView(snapshot,async root=>{
-    try { spec=await scan(root); for(const f of spec.features) f.review=await reviewState(root,f.requirementId,f.id); }
+    try { spec=await scan(root); for(const f of spec.features) {
+      f.review=await reviewState(root,f.requirementId,f.id);
+      f.workflow=workflowState(f,workflowModules,context.store.runs(repositoryId),context.store.reports(repositoryId),spec.config.specRepositoryId);
+      f.workflow.portableState=await recordedWorkflow(root,f,f.workflow);
+    } }
     catch(error){specError={code:error.code,message:error.message};}
   });
-  const modules=(snapshot.settings.projects??[]).map(p=>({id:p.id,path:`projects/${p.id}`,url:p.url,
-    ...projection?.modules?.find(x=>x.id===p.id),
-    dirty:snapshot.files.some(f=>f.target===`project:${p.id}`&&!projection?.files?.some(m=>m.target===f.target&&m.path===f.path&&m.sha256===f.sha256))}));
+  const modules=workflowModules;
   return {...context.repository,initialized:true,state:{head:projection?.head??null,branch:projection?.branch??null,clean:true,changes:[]},
     spec,specError,modules,dependencies:{installed:false},preferences:snapshot.settings,
     authoring:{storage:'sqlite',revision:snapshot.revision,projectedRevision:projection?.revision??null,updatedAt:snapshot.updatedAt},projection};
@@ -176,6 +180,8 @@ export async function editDraft(context) {
         result={...await confirm(root,{...input,confirmedBy:settings.reviewer}),nextStage:input.stage==='gherkin'?'SD':'TESTS'};
       }
     }
+    const nextFiles=[...snapshot.files.filter(f=>!extra.some(x=>fileKey(x)===fileKey(f))),...extra];
+    await refreshWorkflowFiles(root,{modules:draftModules({...snapshot,settings,files:nextFiles},store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId)});
     const after=await sourceFiles(root),changes=after.filter(f=>!snapshot.files.some(x=>fileKey(x)===fileKey(f)&&x.sha256===digest(f.content))).map(f=>({...f,baseHash:snapshot.files.find(x=>fileKey(x)===fileKey(f))?.baseHash??null}));
     return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,files:[...changes,...extra],settings,operationId:request.operationId,request,result,proposalKey:request.operation==='workflow.requirement.save'?input.editorKey:undefined});
   });

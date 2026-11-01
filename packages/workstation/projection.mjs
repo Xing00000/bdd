@@ -152,6 +152,9 @@ async function importBoundSnapshot(context,snapshot) {
       else if(config.execution.service)settings.execution={projectId:config.execution.service.projectId,baseUrl:config.execution.environment?.WB_TARGET_BASE_URL,healthUrl:config.execution.service.healthUrl,command:config.execution.service.command};
       changes.push({...file,content});continue;
     }
+    // Derived progress is recomputed from accepted sources/reviews/evidence; its
+    // cached timestamp or last-run pointer must not veto an otherwise safe import.
+    if(/^spec\/[^/]+\/[^/]+\/workflow\.json$/.test(file.path)){changes.push(file);continue;}
     invariant(!current||current.sha256===digest(file.content)||current.sha256===current.baseHash||seed.some(f=>f.origin!=='checkout'&&!f.baseHash&&key(f)===key(current)&&digest(f.content)===current.sha256),
       'IMPORT_CONFLICT',`遠端的 ${file.path} 與 SQLite 草稿不同，兩份內容都保留，未自動覆蓋。`,409);
     changes.push(file);

@@ -71,6 +71,15 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   assert.equal(await exists(path.join(home,'repositories',repositoryId,'repo')),false,'The selected directory is the only editing checkout');
   assert.equal((await git.modules(checkout))[0].actual,p1,'Binding restores the recorded product version, not newer main');
   await tab('驗收紀錄');await expect(page.locator('#run-list')).toContainText('RUN-history');
+  await tab('需求流程');await page.locator('#feature-select').selectOption('REQ-102/title');await ready();
+  await page.getByRole('button',{name:'5 驗收',exact:true}).click();await ready();
+  await expect(page.locator('#feature-report-list .feature-report')).toHaveCount(1);await expect(page.locator('#feature-report-list')).toContainText('reports/REQ-102/title/RUN-history/manifest.json');
+  await page.locator('#feature-report-list').getByRole('button',{name:'檢視證據',exact:true}).click();
+  await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id','RUN-history');
+  await page.screenshot({path:path.join(artifacts,'06-imported-requirement-report.png'),fullPage:true});
+  await page.locator('#feature-select').selectOption('REQ-101/readiness');await ready();await expect(page.locator('#feature-report-list .feature-report')).toHaveCount(0);await expect(page.locator('#feature-report-view')).not.toBeVisible();
+  await page.getByRole('button',{name:'1 需求',exact:true}).click();await ready();
+
   await tab('版本與回歸');await expect(page.locator('#catalog-count')).toContainText('3 個功能');
   await page.locator('#catalog-features').getByRole('button',{name:'設計',exact:true}).first().click();await expect(page.locator('#catalog-source')).toContainText('Historical design');
   await page.screenshot({path:path.join(artifacts,'01-bound-catalog.png'),fullPage:true});
@@ -126,6 +135,16 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   await expect(page.locator('#binding-status')).toContainText(existingPath);
 
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(artifacts,'04-regression-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  // CLI regression uses the same fixed-version engine and meaningful process exits.
+  async function workflowCli(args,label) {
+    const output=await execute(process.execPath,[path.join(toolkitRoot,'scripts/bdd.mjs'),'workflow',...args],{cwd:toolkitRoot,env:{...env,WB_HOME:home,WB_ALLOW_LOCAL_GIT:'1',WB_ENABLE_TRUSTED_EXECUTION:'1'},timeoutMs:480000});
+    await writeJson(path.join(artifacts,`cli-${label}.json`),output);return {...output,value:JSON.parse(output.stdout)};
+  }
+  const paused=await workflowCli(['next','--repo',repositoryId,'--feature','REQ-102/title'],'human-gate');assert.equal(paused.exitCode,2);assert.equal(paused.value.result.requiredReview,'gherkin');
+  const replay=await workflowCli(['regress','--repo',repositoryId,'--rerun',firstBatch],'failed-replay');assert.equal(replay.exitCode,1,replay.stdout+replay.stderr);assert.equal(replay.value.result.outcome,'FAILED');assert.equal(replay.value.result.testedSpecCommit,s1);assert.equal(replay.value.result.projects[0].commit,p1);
+  const passed=await workflowCli(['regress','--repo',repositoryId,'--spec',s2,'--project',`product=${p2}`],'passed-regression');assert.equal(passed.exitCode,0,passed.stdout+passed.stderr);assert.equal(passed.value.result.counts.passed,3);assert.ok(passed.value.result.results.every(r=>r.verification!=='VERIFIED'));
+  await page.reload();await ready();await expect(page.locator('.regression-card')).toHaveCount(5);
+  assert.deepEqual(await git.inspect(existingPath),existingBefore);
   assert.deepEqual(errors,[]);assert.ok(writes.filter(x=>x.path.endsWith('/operations')).every(x=>!x.input.operation.startsWith('git.')));
   await writeJson(path.join(artifacts,'regression-ui-receipt.json'),{repositoryId,firstBatch,secondBatch,specVersions:{s1,s2},productVersions:{p1,p2},outcomes:rows.map(r=>r.outcome),noCheckoutMutation:true,noImplicitApproval:true,uiWrites:writes.length});
 });

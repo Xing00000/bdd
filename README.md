@@ -71,3 +71,14 @@ npm run test:workstation:e2e
 ## 指定 Spec Repo 本地位置
 
 綁定對話框與集中設定都有「Spec Repo 本地目錄」。可填 `~/projects/bdd-spec`，或使用已有相同來源的 clone；留空使用工作台預設位置。產品仍位於該 Spec Repo 的 `projects/`，不要把工作台 `bdd` 原始碼目錄填成 Spec 目錄。更換位置保留舊目錄、SQLite 草稿與歷史，不隱含搬檔或上傳。[目錄與備份規則](docs/operations.md#規格庫的本地目錄)
+
+## CLI 與一致的流程進度
+
+```sh
+npm run bdd -- workflow status --repo bdd-spec
+npm run bdd -- workflow next --repo bdd-spec --feature REQ-WB-101/development-flow
+npm run bdd -- workflow run --repo bdd-spec --feature REQ-WB-101/development-flow
+npm run bdd -- workflow regress --repo bdd-spec --spec main --project bdd=main
+```
+
+`next` 只執行無須人工審核的步驟，遇到人類確認便停下，不自動代簽。狀態隨內容儲存到 SQLite，並以 `spec/<REQ>/<feature>/workflow.json` 同步到 Spec Repo；新工作台從來源、審核紀錄及證據還原，而不是相信過期的狀態字串。需求流程的「驗收」直接呈現該 Repo、該功能的歷史及本機報告、案例和截圖。查看 [CLI 授權、退出碼與狀態規則](docs/operations.md#cli-推進與-spec-repo-流程狀態)。

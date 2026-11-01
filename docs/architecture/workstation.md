@@ -94,3 +94,11 @@ schema 7 的 `repository_connections` 保存載入進度／目錄索引／錯誤
 `spec_repositories.local_path` 保存由使用者選定、正規化的 host-side checkout 位置；null 表示沿用原受管理路徑。`locations.mjs` 統一解析位置並驗證目錄、來源、路徑重疊及採用條件。所有 Worker、版本查詢、產品讀寫及輸出都從 registry 解出位置，不由 API 操作傳入任意 cwd。
 
 位置切換是獨立的 `repository.location` 作業，使用原位置的樂觀並行檢查與既有 Repo 作業鎖。紀錄新位置及歷史後再取得內容；不移除舊 checkout 或 SQL 作者修訂。作者儲存不需要驗證實體磁碟可用，唯有讀取未匯入檔案、Git 輸出或執行才檢查實際位置。採用 existing clone 時以 HEAD 的原始內容作為 dirty 文件的 base hash，避免把外部草稿誤認成可覆蓋的初始範本。
+
+## Portable workflow state and a shared automation policy
+
+`packages/workstation/workflow-state.mjs` derives a feature's stage from source digests, versioned human review records and matching sealed evidence. Both the detail API/requirement acceptance page and `bdd workflow status/next/run/regress` use that policy. A command cannot turn missing review into approval. Completed jobs and passing product acceptance remain separate outcomes with different CLI exits.
+
+`spec/<REQ>/<feature>/workflow.json` is the portable, versioned progress projection. SQLite stores the durable in-progress revision and history; explicit synchronization projects source plus state together. The state references the original tested commit and canonical report path/ref, never a machine's absolute path. Another binding can reconstruct approvals and progress from Spec content and fetched evidence without copying the first machine's database. Stale/missing evidence is reported rather than trusting the recorded stage string. Local running jobs, cancellations, worker ownership and installation authorization remain operational metadata.
+
+A report is identified by binding + requirement + feature + run. Local and Git-indexed copies are de-duplicated; conflicting immutable identities cannot be used. The requirement acceptance view is scoped by that identity, clears stale evidence on navigation, and rechecks artifact hashes before serving bytes. Report-only or progress-only commits do not invalidate source approvals; content/product changes do. Historical reports for removed features remain available in the repository-wide history.

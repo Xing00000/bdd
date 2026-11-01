@@ -11,11 +11,13 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { invariant, id, exists, readJson, safePath, identity } from '../contracts/index.mjs';
 import { createGit, remoteUrl, branchName, processEnvironment } from '../git-core/index.mjs';
-import { artifactDirectory, currentVerification } from './reports.mjs';
+import { artifactDirectory } from './reports.mjs';
 import { projectFiles, readProjectFile } from './repository-actions.mjs';
 import { migrateCheckoutDirectory } from './migrate.mjs';
 import { listTransactions } from './transactions.mjs';
 import { openStore } from './store.mjs';
+import { workflowStatus } from './workflow.mjs';
+import { workflowState, recordedWorkflow } from './workflow-state.mjs';
 import { validateRequest, repositoryDetail, repositoryPath, readRepositoryFile } from './operations.mjs';
 
 export async function createWorkstation(configuration) {
@@ -91,14 +93,18 @@ export async function createWorkstation(configuration) {
         if (await exists(publication)) run.publication = await readJson(publication);
         else if(run.result.batchId)run.publication=store.regression(repositoryId,run.result.batchId)?.publication;
       }
-      const evidence = [...reports, ...runs.filter(x => x.state === 'SEALED').map(x => ({ manifest: x.result }))];
       for (const feature of detail.spec?.features ?? []) {
         feature.tooling = store.check(repositoryId, feature.key);
-        feature.verification = currentVerification(feature, detail.modules ?? [], evidence);
-        if (feature.verification.status === 'VERIFIED') feature.review.stage = 'VERIFIED';
-        else if (feature.review.stage === 'IMPLEMENTATION' && runs.some(r => r.result.requirementId === feature.requirementId && r.result.featureId === feature.id && r.result.baseline === feature.review.hashes.tests && r.result.testedSpecCommit === detail.state?.head)) feature.review.stage = 'VERIFICATION';
+        feature.workflow=workflowState(feature,detail.modules??[],runs,reports,detail.spec.config.specRepositoryId);
+        feature.workflow.portableState=await recordedWorkflow(context.root,feature,feature.workflow).catch(()=>({state:'NOT_EXPORTED'}));
+        feature.verification={status:feature.workflow.verification,...(feature.workflow.latestReport?{runId:feature.workflow.latestReport.runId,testedSpecCommit:feature.workflow.latestReport.testedSpecCommit}:{})};
+        feature.review.stage=feature.workflow.stage;
       }
       return { ...detail, localPath:context.root, connection:store.connection(repositoryId), regressions:store.regressions(repositoryId), settingsToken: identity(detail.preferences ?? store.preferences(repositoryId)), preferences: detail.preferences ?? store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
+    },
+    async workflow(repositoryId, selection) {
+      store.repository(id(repositoryId));
+      return workflowStatus({root:await repositoryPath(options.home,repositoryId,store),repositoryId,options,store},selection);
     },
     async versions(repositoryId, specRef) {
       store.repository(id(repositoryId));const root=await repositoryPath(options.home,repositoryId,store),git=createGit(options);

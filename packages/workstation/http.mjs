@@ -52,6 +52,7 @@ export async function dispatch(service, request) {
   }
   else if (parts[0] === 'spec-repositories' && parts.length===3 && parts[2]==='versions' && method==='GET') result=await service.versions(id(parts[1]),url.searchParams.get('ref'));
   else if (parts[0] === 'spec-repositories' && parts.length===3 && parts[2]==='version-file' && method==='GET') result=await service.versionFile(id(parts[1]),url.searchParams.get('ref'),url.searchParams.get('path'));
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'workflow' && parts.length === 3 && method === 'GET') result = await service.workflow(id(parts[1]),url.searchParams.get('feature')||undefined);
   else if (parts[0] === 'operations' && parts.length === 1 && method === 'POST') { result = service.enqueue(input); status = 202; }
   else if (parts[0] === 'operations' && parts.length === 2 && method === 'GET') result = service.operation(id(parts[1]));
   else if (parts[0] === 'operations' && parts[2] === 'cancel' && parts.length === 3 && method === 'POST') result = service.cancel(id(parts[1]));

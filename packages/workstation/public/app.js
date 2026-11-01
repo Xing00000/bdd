@@ -50,8 +50,8 @@ function ask(title,text,submit) { return new Promise(resolve=>{dialogResolve=res
 async function guard() { if(!dirty())return true;if(!await ask('有尚未儲存的編輯','離開會捨棄畫面中的草稿；已存入 SQLite 的內容不受影響。','捨棄草稿並離開'))return false;state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.formDirty=false;return true; }
 async function navigate(patch,{protect=true,replace=false}={}) {
   if(state.busy||state.transient)return;if(protect&&!await guard())return;
-  const old=state.repositoryId;Object.assign(state,patch);state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
-  if(old!==state.repositoryId){$('#report-view').hidden=true;$('#report-view').replaceChildren();}
+  Object.assign(state,patch);state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
+  for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
   const url=new URL(location.href);url.pathname='/';url.search='';
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);}
   history[replace?'replaceState':'pushState']({},'',url);$('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');await refresh();
@@ -217,7 +217,7 @@ async function renderWorkflow(epoch) {
   $('#implementation-projects').replaceChildren();for(const p of (d.modules??[]).filter(p=>f.projectIds.includes(p.id)))$('#implementation-projects').append(button(`編輯 ${p.id}`,()=>navigate({view:'projects',projectId:p.id})));
   if(!state.formDirty){$('#case-ids').value=f.caseIds.join('\n');all('[name=profile]').forEach(n=>n.checked=f.profiles.includes(n.value));$('#feature-projects').replaceChildren(el('legend','關聯產品'));for(const p of d.modules??[]){const l=el('label',undefined,'check'),n=document.createElement('input');n.type='checkbox';n.name='feature-project';n.value=p.id;n.checked=f.projectIds.includes(p.id);l.append(n,document.createTextNode(p.id));$('#feature-projects').append(l);}}
   state.scope=await api(`/spec-repositories/${d.id}/file?path=${encodeURIComponent(`spec/${f.key}/feature.yaml`)}`);if(epoch!==state.epoch)return;
-  if(state.stage==='GHERKIN')await openComposer(f,epoch);else if(editing)await openSource(selected);if(epoch!==state.epoch)return;renderNext();
+  if(state.stage==='GHERKIN')await openComposer(f,epoch);else if(editing)await openSource(selected);if(epoch!==state.epoch)return;if(state.stage==='VERIFICATION')renderFeatureReports();renderNext();
 }
 function renderNext() {
   const f=feature();const stage=state.stage,blockers=[];
@@ -324,7 +324,7 @@ async function advance() {
   if(state.editor&&$('#source-editor').value!==state.editor.content)await saveSource();
   const f=feature(), stage=state.stage;
   if(['IMPLEMENTATION','VERIFICATION'].includes(stage)){
-    const result=await flow('workflow.verify',{requirementId:f.requirementId,featureId:f.id});if(result)await navigate({view:'reports',stage:'VERIFICATION'},{protect:false});return;
+    const result=await flow('workflow.verify',{requirementId:f.requirementId,featureId:f.id});if(result)await navigate({view:'features',stage:'VERIFICATION'},{protect:false});return;
   }
   const name={GHERKIN:'gherkin',SD:'sd',TESTS:'tests'}[stage];
   const result=await flow('workflow.review',{requirementId:f.requirementId,featureId:f.id,stage:name,expectedDigest:f.review.hashes[name]});
@@ -352,21 +352,58 @@ async function openProduct(relative) {
 async function saveProduct() { const e=state.product;if(!e)return;const content=$('#project-editor').value;const result=await executeJob('repository.save',{kind:'project',projectId:e.projectId,path:e.path,content,expectedHash:e.sha256},{refreshAfter:false});state.product={...e,content,sha256:result.sha256};await refresh(); }
 function artifact(runId,file,key){return `${API}/spec-repositories/${state.repositoryId}/runs/${runId}/artifact?path=${encodeURIComponent(file)}${key?'&reportKey='+encodeURIComponent(key):''}`;}
 function renderReports() {
-  $('#run-list').replaceChildren();if(Number.isInteger(state.detail.connection?.nextHistoryOffset))$('#run-list').append(button('載入更早的測試紀錄',()=>executeJob('repository.history.more',{})));const d=state.detail;
-  if(!d.runs?.length&&!d.reports?.length)$('#run-list').append(el('p','尚無驗收紀錄。完成內容確認後，按「開始驗收」即可。','empty-state'));
-  for(const r of d.runs??[]){const m=r.result,c=el('article',undefined,'card');c.dataset.runId=r.id;c.append(el('h3',`${m.requirementId} / ${m.featureId}`),badge(m.testOutcome??r.state),document.createTextNode(' '),badge(m.verification??'NOT_VERIFIED'),el('p',r.publication?.status==='PUBLISHED'?'已同步至遠端':'報告已儲存於本機，遠端同步時一併分享。','muted'));
-    if(r.state==='SEALED')c.append(button('檢視證據',()=>showReport(r.id)));else c.append(el('p','這次執行未完成，原紀錄已保留。回到功能再次驗收可建立新結果。','muted'));$('#run-list').append(c);}
-  for(const r of d.reports??[]){if(d.runs?.some(x=>x.id===r.runId))continue;const c=el('article',undefined,'card');c.append(el('h3',r.key),badge(r.invalidReason??r.manifest.verification));if(!r.invalidReason)c.append(button('檢視證據',()=>showReport(r.runId,r.key)));$('#run-list').append(c);}
+  const list=$('#run-list');list.replaceChildren();const d=state.detail;
+  if(Number.isInteger(d.connection?.nextHistoryOffset))list.append(button('載入更早的測試紀錄',()=>executeJob('repository.history.more',{})));
+  let count=0;
+  for(const f of d.spec?.features??[])for(const report of f.workflow?.reports??[]){list.append(reportCard(report,f.key));count++;}
+  const known=new Set((d.spec?.features??[]).map(f=>f.key)),archived=new Map();
+  for(const r of d.runs??[]){const m=r.result,k=`${m.requirementId}/${m.featureId}`;if(!known.has(k))archived.set(`${k}/${r.id}`,{key:`${k}/${r.id}`,runId:r.id,manifest:m,state:r.state,origin:'LOCAL',publication:r.publication});}
+  for(const r of d.reports??[]){const k=`${r.requirementId}/${r.featureId}`;if(!known.has(k))archived.set(r.key,{...r,state:'SEALED',origin:'SPEC_REPO',reportKey:r.key});}
+  for(const r of archived.values()){list.append(reportCard({...r,path:`reports/${r.key}/manifest.json`,testOutcome:r.manifest.testOutcome??'NOT_RUN',verification:r.manifest.verification??'NOT_VERIFIED',testedSpecCommit:r.manifest.testedSpecCommit,finishedAt:r.manifest.finishedAt,applicability:'HISTORICAL'},null));count++;}
+  if(!count)list.append(el('p','尚無驗收紀錄；完成內容確認後即可開始驗收。','empty-state'));
 }
-async function showReport(runId,key) {
-  const repositoryId=state.repositoryId,token=++state.reportRequest,panel=$('#report-view');panel.hidden=false;panel.setAttribute('aria-busy','true');delete panel.dataset.runId;panel.replaceChildren(el('p','正在讀取這次驗收的證據…'));
-  try{const r=await fetch(artifact(runId,'manifest.json',key)),m=await r.json();if(!r.ok)throw new Error(m.message);if(token!==state.reportRequest||repositoryId!==state.repositoryId)return;
+
+function reportCard(report, featureKey, inline=false) {
+  const c=el('article',undefined,'card feature-report');c.dataset.runId=report.runId;c.dataset.reportKey=report.key;
+  c.append(el('h3',report.runId),badge(report.testOutcome),document.createTextNode(' '),badge(report.verification),
+    el('p',report.applicability==='CURRENT'?'對應目前內容':report.applicability==='CONFLICT'?'報告內容衝突，無法採用':'歷史版本，不代表目前內容已通過','muted'),
+    el('p',report.origin==='SPEC_REPO'?'已同步至遠端 · 來源：此規格庫的報告':report.publication?.status==='PUBLISHED'?'已同步至遠端 · 本機執行證據':'來源：本機執行，遠端同步時一併分享','muted'),
+    el('p',report.path,'mono report-path'),el('p',`受測版本：${report.testedSpecCommit??'尚未記錄'}`,'mono report-path'));
+  if(report.finishedAt)c.append(el('time',report.finishedAt));
+  if(report.invalidReason)c.append(el('p','證據無法核對：'+report.invalidReason,'error'));
+  else if(report.state==='SEALED')c.append(button('檢視證據',()=>showReport(report.runId,report.reportKey,inline?'feature-report-view':'report-view',inline?featureKey:null)));
+  else c.append(el('p','這次執行尚未完成，不能視為通過。','muted'));
+  return c;
+}
+function renderFeatureReports() {
+  const f=feature(),d=state.detail,panel=$('#feature-report-list');panel.replaceChildren();
+  $('#feature-report-scope').textContent=`${d.title} / ${f.title} · reports/${f.key}/`;
+  $('#workflow-state-info').textContent=`流程狀態：${f.workflow?.stage??f.review.stage} · 與此需求版本對應；歷史通過不會自動批准目前內容。`;
+  const reports=f.workflow?.reports??[];
+  if(!reports.length)panel.append(el('p','此規格庫的這個需求尚無可用報告。執行驗收後會顯示結果；已有遠端報告可重新載入。','empty-state'));
+  for(const r of reports)panel.append(reportCard(r,f.key,true));
+  panel.append(button('重新載入 Repo 報告',()=>executeJob('repository.acquire',{})));
+  if(Number.isInteger(d.connection?.nextHistoryOffset))panel.append(button('載入更早的測試紀錄',()=>executeJob('repository.history.more',{})));
+}
+async function showReport(runId,key,panelId='report-view',expectedFeature=null) {
+  const repositoryId=state.repositoryId,token=++state.reportRequest,panel=$('#'+panelId);
+  panel.hidden=false;panel.setAttribute('aria-busy','true');delete panel.dataset.runId;panel.replaceChildren(el('p','正在核對並讀取這次驗收的證據…'));
+  try {
+    const r=await fetch(artifact(runId,'manifest.json',key)),m=await r.json();if(!r.ok)throw new Error(m.message);
+    if(token!==state.reportRequest||repositoryId!==state.repositoryId||expectedFeature&&expectedFeature!==state.featureKey)return;
+    if(expectedFeature&&`${m.requirementId}/${m.featureId}`!==expectedFeature)throw new Error('報告不屬於目前需求，未顯示其他功能的證據。');
     panel.replaceChildren(el('h2',`${m.requirementId} / ${m.featureId}`),badge(m.testOutcome),document.createTextNode(' '),badge(m.verification),el('p',runId,'mono muted'));
-    if(m.failure)panel.append(el('p',m.failure.message,'error'));const table=el('table',undefined,'report-table');const head=el('tr');['案例','瀏覽器','結果','斷言'].forEach(x=>head.append(el('th',x)));table.append(head);for(const c of m.cases??[]){const row=el('tr');[c.caseId,c.profile,c.status,String(c.assertions)].forEach(x=>row.append(el('td',x)));table.append(row);}panel.append(table);
+    panel.append(el('p',`受測版本：${m.testedSpecCommit}`,'mono report-path'));
+    if(m.failure)panel.append(el('p',m.failure.message,'error'));
+    const table=el('table',undefined,'report-table'),head=el('tr');['案例','瀏覽器','結果','斷言'].forEach(x=>head.append(el('th',x)));table.append(head);
+    for(const c of m.cases??[]){const row=el('tr');[c.caseId,c.profile,c.status,String(c.assertions)].forEach(x=>row.append(el('td',x)));table.append(row);}panel.append(table);
     const gallery=el('div',undefined,'gallery');for(const a of m.artifacts.filter(x=>x.path.startsWith('screenshots/'))){const fig=el('figure'),img=document.createElement('img');img.src=artifact(runId,a.path,key);img.alt=a.path;img.loading='lazy';fig.append(img,el('figcaption',a.path));gallery.append(fig);}panel.append(gallery);
+    const links=el('div',undefined,'toolbar');for(const a of m.artifacts.filter(x=>/\.(html|json|zip)$/.test(x.path))){const link=el('a',a.path);link.href=artifact(runId,a.path,key);link.download=a.path.split('/').at(-1);links.append(link);}panel.append(links);
     const details=el('details');details.append(el('summary','技術診斷與版本來源'),el('pre',JSON.stringify(m,null,2)));panel.append(details);panel.dataset.runId=runId;
-  }finally{if(token===state.reportRequest&&repositoryId===state.repositoryId)panel.setAttribute('aria-busy','false');}
+  }catch(error){if(token===state.reportRequest&&repositoryId===state.repositoryId)panel.replaceChildren(el('p','報告無法讀取：'+error.message,'error'));throw error;}
+  finally{if(token===state.reportRequest&&repositoryId===state.repositoryId)panel.setAttribute('aria-busy','false');}
 }
+
 function on(selector,event,fn) { $(selector).addEventListener(event,e=>{if(event==='submit')e.preventDefault();safe(()=>fn(e));}); }
 for(const s of ['#bind-home','#bind-empty','#bind-sidebar'])on(s,'click',bindRepository);
 all('[data-home]').forEach(n=>n.onclick=e=>{e.preventDefault();safe(()=>navigate({repositoryId:null,featureKey:null,projectId:null}));});all('[data-view]').forEach(n=>n.onclick=()=>safe(()=>navigate({view:n.dataset.view})));

@@ -115,3 +115,25 @@ Schema 6 新增生成恢復資料表，舊資料先備份至 `before-requirement
 歷史索引讀取已取得的 evidence 分支和過去 report commits，包括已從分支頂端刪除的報告；首批上限有明確提示，較早資料可使用歷史載入。原格式不符、缺少附件或重用同 run-id 的內容會顯示問題，不偽裝完整證據。
 
 升級前正常停止服務並備份 WB_HOME。Schema 7 增加 `repository_connections` 和 `regressions`，保留原內容並先建立 `before-catalog-regression-v7.sqlite`。SQLite 設定／草稿仍是需備份的正式資料；catalog 快照與報告索引為衍生內容。底層測試 fixture 可用 `autoAcquire:false` 單獨測試 clone helper；正式 CLI/UI 不關閉自動載入。
+
+## CLI 推進與 Spec Repo 流程狀態
+
+UI 與 CLI 共用 `workflowState`／作業執行引擎及同一個 `WB_HOME`，不另存一套 Agent 進度。CLI 支援規格庫名稱、網址或綁定 ID；省略時只會選唯一的綁定或目前所在的綁定目錄，歧義會回報可用選項。
+
+```sh
+npm run bdd -- workflow status --repo bdd-spec
+npm run bdd -- workflow next --repo bdd-spec --feature REQ-WB-101/development-flow
+npm run bdd -- workflow run --repo bdd-spec --feature REQ-WB-101/development-flow
+npm run bdd -- workflow regress --repo bdd-spec --spec main --project bdd=main
+# 也可直接呼叫 node scripts/bdd.mjs workflow ...；npm link 後使用 bdd workflow ...
+```
+
+`status` 讀取目前狀態與對應報告。`next` 在必要人工審核時回傳 `AWAITING_REVIEW`，不代簽；審核完成後自動執行驗收，已完成則不重複執行。`run` 明確重跑單功能，`regress` 跑所選規格的整庫。需要重新產生內容或修改產品的工作仍由使用者／外部 Agent 完成；這不是自動撰寫設計或程式的 LLM 代理。
+
+輸出預設為 JSON，錯誤輸出到同一 JSON 結構，執行診斷走 stderr。程序退出碼：0 為成功（`status` 讀取成功也為 0），1 為錯誤、測試失敗或單功能尚未完整驗證，2 為等待人類審核，3 為需要安裝授權。不能只看內部作業 `SUCCEEDED` 就認為產品測試通過。安裝回傳精確計畫摘要及回歸批次，經確認後用 `--install-consent <digest>` 重試；回歸同時帶 `--batch <id>` 和原版本選擇。無 `--yes` 或跳過審核參數。`--rerun <batch-id>` 使用歷史固定版本，不可再覆寫產品或 Spec 版本。這些指令不隱含遠端同步。
+
+每個功能的版本化進度位於 `spec/<REQ>/<feature>/workflow.json`。它包含來源摘要、目前階段、人工確認狀態及對應 `reports/<REQ>/<feature>/<run>/manifest.json` 的證據引用；人類審核原始紀錄仍在 `spec/<REQ>/review.json`。普通儲存先以同一筆 SQLite 交易保存內容與狀態；遠端同步一起輸出到 Spec Repo，其他工作台可從 Repo 重新載入。狀態不同步會明確標示為本機修訂，不宣稱遠端已更新。機器 PID、執行中作業與安裝快取仍是本機操作資料，不寫入可共享的需求狀態。
+
+狀態不是可任意指定的枚舉：來源改變、產品版本不同、缺少證據或同版本出現較新的失敗，都會重新計算；僅修改 `workflow.json` 的 `VERIFIED` 字樣不會通過。直接從原始碼編輯器寫入此系統衍生檔也會被拒絕。狀態檔不納入自身的來源確認摘要，避免每次推進又讓自己失效。狀態／報告同步可能新增 commit，但受測 commit 仍保持原值，不冒充新的進度 commit 也已受測。
+
+需求流程的「驗收」頁只顯示目前綁定及該需求／功能的報告，合併本機與 Repo 索引、避免重複。可直接看案例結果、截圖及下載報告，並標示受測版本、歷史／目前內容及來源；不需要離開需求去猜全庫報告。版本不符的歷史仍保留但不授予目前驗收。證據衝突或檔案損毀會顯示原因，而不是改成通過。

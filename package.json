@@ -32,7 +32,8 @@
     "prespec:list": "npm run spec:generate",
     "pretest:tooling": "npm run spec:generate",
     "check:repository": "node scripts/check-repository.mjs",
-    "check:unused": "tsc --noEmit -p tsconfig.unused.json"
+    "check:unused": "tsc --noEmit -p tsconfig.unused.json",
+    "bdd": "node scripts/bdd.mjs"
   },
   "dependencies": {
     "@cucumber/cucumber-expressions": "19.0.0",
@@ -60,5 +61,8 @@
   },
   "allowScripts": {
     "node-pty@1.1.0": true
+  },
+  "bin": {
+    "bdd": "scripts/bdd.mjs"
   }
 }

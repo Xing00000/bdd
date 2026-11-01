@@ -2,6 +2,7 @@ import { repositoryPath, changeLocation } from './locations.mjs';
 export { repositoryPath } from './locations.mjs';
 import { acquireRepository, moreReportHistory } from './catalog.mjs';
 import { runRegression } from './regression.mjs';
+import { workflowStatus, persistWorkflowState } from './workflow.mjs';
 import { localAuthoring, editDraft } from './authoring.mjs';
 import { prepareProjection, captureExecutionFiles, captureSynchronized } from './projection.mjs';
 import { flowNames, advanceWorkflow, synchronizeRepository } from './flows.mjs';
@@ -20,7 +21,7 @@ import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { validateContract } from '../contracts/schemas.mjs';
 
 export const operationNames = Object.freeze([
-  ...flowNames, 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
+  ...flowNames, 'workflow.next', 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
   'repository.clone', 'repository.initialize', 'repository.validate',
   'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
@@ -48,9 +49,17 @@ export async function executeOperation(options, store, request) {
   const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id, store);
   const git = createGit({ allowLocal, hosts }), input = request.input;
   if(request.operation==='repository.location') return changeLocation({root,options,store,request,git});
-  if(request.operation==='repository.acquire') return acquireRepository({root,options,store,request,git});
+  if(request.operation==='repository.acquire') {const result=await acquireRepository({root,options,store,request,git});await persistWorkflowState({root,options,store,request,git});return result;}
   if(request.operation==='repository.history.more') return moreReportHistory({root,options,store,request,git});
-  if(request.operation==='regression.start') return runRegression({root,options,store,request,git});
+  if(request.operation==='regression.start') {const result=await runRegression({root,options,store,request,git});await persistWorkflowState({root,options,store,request,git});return result;}
+  if(request.operation==='workflow.next') {
+    const selection=`${id(input.requirementId)}/${id(input.featureId)}`;
+    const status=await workflowStatus({root,options,store,request,git},selection);
+    invariant(status.configured,'SETUP_REQUIRED','請先儲存一次性設定。');
+    const workflow=status.workflows[0];
+    if(workflow.status!=='READY_TO_RUN')return {...workflow,advanced:false};
+    return executeOperation(options,store,{...request,operation:'workflow.verify'});
+  }
   if (flowNames.includes(request.operation)) {
     const context = { root, options, store, request, git };
     if (localAuthoring(request)) {
@@ -69,6 +78,7 @@ export async function executeOperation(options, store, request) {
       });
       invariant(enableExecution,'EXECUTION_DISABLED','內容已儲存；主機尚未啟用測試執行。',403);
     }
+    if(request.operation==='repository.sync')await persistWorkflowState(context);
     const snapshot = await prepareProjection(context);
     if (request.operation === 'repository.prepare') return { prepared: true, revision: snapshot.revision };
     const projected = { ...context, request: { ...request, expected: await git.inspect(root) } };
@@ -80,6 +90,7 @@ export async function executeOperation(options, store, request) {
     let output, failure;
     try { output = await advanceWorkflow(projected); } catch (error) { failure = error; }
     try { await captureExecutionFiles(context,snapshot); } catch(error) { failure ??= error; }
+    if(!failure)await persistWorkflowState(context);
     if(failure) { failure.details = { ...failure.details, saved: true, storage: 'sqlite' }; throw failure; }
     return output;
   }
@@ -114,7 +125,7 @@ export async function executeOperation(options, store, request) {
       await backupLegacySelection(home, snapshot);
       return applyPlan({ root, home, repositoryId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
     }
-    case 'reports.reindex': return reindexReports({ root, home, repositoryId: workspace.id, git, store, refs: input.refs });
+    case 'reports.reindex': {const result=await reindexReports({ root, home, repositoryId: workspace.id, git, store, refs: input.refs });await persistWorkflowState({root,options,store,request,git});return result;}
     case 'repository.initialize':
       return initialize(root, { specRepositoryId: input.specRepositoryId ?? workspace.id,
         toolkitRoot: path.join(toolkitRoot, 'packages'), templateRoot: path.join(toolkitRoot, 'templates/spec-repo/v1') });
