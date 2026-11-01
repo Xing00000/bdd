@@ -32,7 +32,9 @@ npm start
 
 ## 完整流程
 
-綁定 Spec Repo → 儲存基本設定 → 上方描述／匯入文件 → 產生草稿 → 下方編輯 Gherkin → 儲存／確認 Gherkin → 儲存／確認設計 → 編寫測試 → 一次授權必要安裝 → 檢查並確認測試 → 編輯產品並儲存 → 開始驗收 → 查看結果 → 遠端同步。
+綁定 Spec Repo → 儲存基本設定並一次準備該 Spec Repo 的測試套件 → 上方描述／匯入文件 → 產生草稿 → 下方編輯 Gherkin → 儲存／確認需求 → 確認系統設計 → 測試計劃頁自動以 Playwright-BDD 產生骨架 → 點選「LLM 生成測試計劃」補齊細節（也可人工編輯）→ 檢查並確認測試 → 編輯產品並儲存 → 開始驗收 → 查看結果 → 遠端同步。
+
+「產生測試計劃骨架」與「LLM 生成測試計劃」是獨立操作，前者不啟動 Agent，兩者都不執行套件安裝。骨架的未完成 step 明確拋錯，不能當成完整計劃確認；LLM 補齊後仍須通過型別檢查、bddgen 與案例發現，再由人類確認。套件缺少或版本變動時，返回設定頁儲存並準備工具；相同 Spec Repo 的不同需求共用同一次安裝。瀏覽器執行環境在設定準備工具時一併檢查；新增瀏覽器 profile 或執行檔遺失時，須重新準備必要項目。
 
 失敗的產品測試保留結果；修正並儲存產品後可重跑，不需要先同步。沒有遠端或 checkout 也可以做到需求與設計儲存／確認；執行測試則仍需要真正的產品來源與環境。
 
@@ -67,7 +69,7 @@ SQLite 不再是只有 metadata 的可重建索引。務必備份 `metadata.sqli
 
 `node scripts/workstation.mjs help` 列出 CLI；HTTP 與 CLI 共用程式。`repository.setup`／`repository.save`／`workflow.create`／`workflow.draft` 是 SQL authoring；`repository.prepare` 是衍生檔案輸出，不能當成儲存 API。
 
-工具升級、legacy 匯入與 Git 低階腳本保留給明確的維護工作，不能將其直接修改 checkout 的結果視為新的 SQL 作者修訂。主要 UI 使用 SQL 流程；既有作者資料請透過儲存介面更新。舊 SQLite documents 的唯讀匯入、報告 Git 索引仍保留，無法憑舊 PASSED 紀錄產生新驗收資格。
+工具升級的 `repository.upgrade.preview/apply` 使用 SQLite 作者修訂：先驗證目前 manifest 列出的所有檔案摘要、拒絕未知或另有修改的工具檔，再以計畫 digest 確認完整升級內容，單筆 SQL 交易保存新版工具及 manifest；不需要修改 checkout。legacy 匯入與 Git 低階腳本保留給明確的維護工作，不能將其直接修改 checkout 的結果視為新的 SQL 作者修訂。主要 UI 使用 SQL 流程；既有作者資料請透過儲存介面更新。舊 SQLite documents 的唯讀匯入、報告 Git 索引仍保留，無法憑舊 PASSED 紀錄產生新驗收資格。
 
 ```sh
 npm run check:repository
