@@ -75,6 +75,7 @@ test('Playwright global timeout affects only test argv and adds bounded cleanup 
   const os = await import('node:os');
   const root = await mkdtemp(path.join(os.tmpdir(), 'bdd-timeout-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await writeJson(path.join(root,'spec/REQ-1/feature/feature.yaml'),{schemaVersion:1,id:'feature',requirementId:'REQ-1',title:'Timeout dispatch',projectIds:[],caseIds:['CASE-001'],profiles:['chromium']});
   const bin = path.join(root, 'node_modules', '.bin'); await mkdir(bin, { recursive: true });
   for (const name of ['playwright', 'bddgen']) {
     const file = path.join(bin, name);

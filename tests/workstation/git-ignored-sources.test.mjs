@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
+import { fixture, git, toolkitRoot } from './helpers.mjs';
+import { initialize, createFeature, reviewState } from '../../packages/spec-toolkit/index.mjs';
+import { sourceFiles, inDraftView } from '../../packages/workstation/authoring.mjs';
+
+test('Git owns source selection: nested ignores, negation, local excludes and tracked ignored files',async t=>{
+  const f=await fixture(t);await git.init(f.repo);
+  await initialize(f.repo,{specRepositoryId:'SPEC-ignore',toolkitRoot:path.join(toolkitRoot,'packages')});
+  await createFeature(f.repo,{requirementId:'REQ-001',featureId:'login',title:'Login'});
+  const prefix='tests/REQ-001/login',ignore=path.join(f.repo,'.gitignore');
+  await writeFile(ignore,(await readFile(ignore,'utf8'))+'\n*.secret\n.workbench-tools/cache/\n');
+  await writeFile(path.join(f.repo,prefix,'.gitignore'),'scratch/**\n!scratch/keep.ts\n');
+  await mkdir(path.join(f.repo,prefix,'scratch'));
+  await writeFile(path.join(f.repo,prefix,'scratch/keep.ts'),'export const kept = true;\n');
+  await writeFile(path.join(f.repo,prefix,'tracked.secret'),'tracked source\n');
+  await git.command(f.repo,['add','--force','--',`${prefix}/tracked.secret`]);
+  await git.command(f.repo,['add','--all']);
+  const expected=await reviewState(f.repo,'REQ-001','login');
+  await writeFile(path.join(f.repo,prefix,'scratch/ignored.bin'),Buffer.from([0,255]));
+  await writeFile(path.join(f.repo,prefix,'untracked.secret'),'ignored\n');
+  await mkdir(path.join(f.repo,'.workbench-tools/cache'));
+  await writeFile(path.join(f.repo,'.workbench-tools/cache/artifact.bin'),Buffer.from([0,255]));
+  await symlink(path.join(f.repo,'package.json'),path.join(f.repo,'.workbench-tools/cache/ignored-link'));
+  await writeFile(path.join(f.repo,'.git/info/exclude'),`${prefix}/local.ts\n`);
+  await writeFile(path.join(f.repo,prefix,'local.ts'),'ignored local artifact\n');
+  const files=await sourceFiles(f.repo),paths=files.map(file=>file.path);
+  for(const file of [`${prefix}/scratch/ignored.bin`,`${prefix}/untracked.secret`,`${prefix}/local.ts`,'.workbench-tools/cache/artifact.bin'])assert.ok(!paths.includes(file),file);
+  assert.ok(paths.includes(`${prefix}/scratch/keep.ts`));assert.ok(paths.includes(`${prefix}/tracked.secret`));
+  assert.deepEqual((await reviewState(f.repo,'REQ-001','login')).hashes,expected.hashes);
+  await inDraftView({files},async root=>assert.deepEqual((await reviewState(root,'REQ-001','login')).hashes,expected.hashes));
+  await writeFile(path.join(f.repo,prefix,'tracked.secret'),'changed tracked source\n');
+  assert.notEqual((await reviewState(f.repo,'REQ-001','login')).hashes.tests,expected.hashes.tests);
+  await symlink(path.join(f.repo,'package.json'),path.join(f.repo,prefix,'included-link'));
+  await assert.rejects(sourceFiles(f.repo),{code:'SYMLINK_FORBIDDEN'});
+});

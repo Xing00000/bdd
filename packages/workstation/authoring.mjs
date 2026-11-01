@@ -2,15 +2,17 @@ import { draftModules, workflowState, recordedWorkflow, refreshWorkflowFiles, li
 import { seedAgentSettings, validateAgentSettings } from './agent-settings.mjs';
 import { saveFeedback, readFeedback } from './feedback.mjs';
 import { canonicalLocation } from './locations.mjs';
-/** Authoring does not invoke Git, create branches, download repositories or execute repository code. */
+/** Authoring never mutates the checkout, downloads repositories or executes repository code. */
 import path from 'node:path';
 import { saveComposer, requirementDiagnostics } from './requirements.mjs';
 import os from 'node:os';
 import { mkdtemp, mkdir, readFile, readdir, rm, lstat } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, exists, walk, atomicWrite, writeJson, readJson } from '../contracts/index.mjs';
-import { remoteUrl } from '../git-core/index.mjs';
-import { initialize, configuration, createFeature, scan, saveFile, buildGuidedFeature, parseGuidedFeature, reviewState, confirm } from '../spec-toolkit/index.mjs';
+import { remoteUrl, gitSourcePaths, gitSourceFiles, trackSourceView } from '../git-core/index.mjs';
+import { initialize, configuration, createFeature, scan, saveFile, buildGuidedFeature, parseGuidedFeature, reviewState, confirm, restartReview, assertFileEditable } from '../spec-toolkit/index.mjs';
 import { configureFeature, configureExecution, sourcePath } from './repository-actions.mjs';
+import { planUpgrade } from './upgrades.mjs';
+import { publicPlan } from './transactions.mjs';
 
 const topFiles = ['workbench.yaml','package.json','package-lock.json','bdd.config.ts','playwright.config.ts','.gitignore','.gitattributes','README.md'];
 const sourceFolders = ['spec','tests','.workbench-tools'];
@@ -20,17 +22,18 @@ export async function inDraftView(snapshot, fn) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'bdd-authoring-'));
   try {
     for (const file of snapshot.files.filter(x => x.target === 'spec')) await atomicWrite(await safePath(root,file.path),file.content);
+    await trackSourceView(root);
     return await fn(root);
   } finally { await rm(root,{recursive:true,force:true}); }
 }
 export async function sourceFiles(root) {
   const paths = [];
   for (const file of topFiles) if (await exists(await safePath(root,file))) paths.push(file);
-  for (const folder of sourceFolders) if (await exists(await safePath(root,folder)))
-    for (const file of await walk(await safePath(root,folder))) paths.push(`${folder}/${file}`);
-  invariant(paths.length <= 10000,'AUTHORING_SIZE_LIMIT','規格檔案數量超過上限，尚未修改原始檔案。');
+  paths.push(...await gitSourceFiles(root,sourceFolders));
+  const accepted=await gitSourcePaths(root,paths);
+  invariant(accepted.length <= 10000,'AUTHORING_SIZE_LIMIT','規格檔案數量超過上限，尚未修改原始檔案。');
   const files = []; let total = 0;
-  for (const relative of paths) {
+  for (const relative of accepted) {
     const file = await safePath(root,relative,{missing:false}), size = (await lstat(file)).size;
     invariant(size <= 4*1024*1024 && (total += size) <= 64*1024*1024,'AUTHORING_SIZE_LIMIT','規格文字超過匯入上限，原始檔案已保留。');
     const bytes = await readFile(file);
@@ -167,7 +170,12 @@ export async function editDraft(context) {
       result={ready:true,settings,connection:'NOT_CHECKED'};
     } else {
       invariant(settings.configured,'SETUP_REQUIRED','請先儲存基本設定；不需要先連線遠端。');
-      if(request.operation==='workflow.feedback') {
+      if(request.operation==='repository.upgrade.apply') {
+        const plan=await planUpgrade(root,options.toolkitRoot);
+        invariant(input.planDigest===plan.digest,'PLAN_CHANGED','工具升級內容已更新，請重新檢視計畫。',409);
+        for(const file of plan.files)await atomicWrite(await safePath(root,file.path),Buffer.from(file.content,'base64'));
+        result={...publicPlan(plan),status:'APPLIED',committed:false};
+      } else if(request.operation==='workflow.feedback') {
         result=await saveFeedback(root,input,context);
       } else if(request.operation==='workflow.requirement.save') {
         result=await saveComposer(root,input);
@@ -187,6 +195,7 @@ export async function editDraft(context) {
         result=await createFeature(root,{...input,requirementId,featureId,guided:Boolean(input.guided||input.goal||input.acceptance)});
       } else if(request.operation==='workflow.draft') {
         const key=`${id(input.requirementId)}/${id(input.featureId)}`,file=`spec/${key}/${input.featureId}.feature`;
+        await assertFileEditable(root,file);
         const old=await readFile(await safePath(root,file,{missing:false}),'utf8');
         invariant(digest(old)===input.expectedHash,'CONTENT_CHANGED','需求已變更；畫面草稿未被覆蓋，請重新讀取。',409);
         invariant(parseGuidedFeature(old),'ADVANCED_GHERKIN','手動編輯過的 Gherkin 不會被簡易表單覆蓋。',409);
@@ -194,6 +203,8 @@ export async function editDraft(context) {
         if(input.expectedMetadataHash)invariant(digest(JSON.stringify(meta))===input.expectedMetadataHash,'CONTENT_CHANGED','驗收範圍已變更。',409);
         await atomicWrite(await safePath(root,file),draft.featureText);await writeJson(await safePath(root,metaFile),{...meta,title:draft.title,caseIds:draft.caseIds});
         result={key,sha256:digest(draft.featureText)};
+      } else if(request.operation==='workflow.restart') {
+        result=await restartReview(root,input);
       } else {
         invariant(request.operation==='workflow.review'&&['gherkin','sd'].includes(input.stage),'INVALID_STAGE','此操作需要執行驗收環境。');
         if(input.stage==='gherkin'){const text=await readFile(await safePath(root,`spec/${id(input.requirementId)}/${id(input.featureId)}/${input.featureId}.feature`),'utf8');const diagnostics=requirementDiagnostics(text);invariant(!diagnostics.length,'GHERKIN_INVALID',diagnostics.map(d=>`第 ${d.line} 行：${d.message}`).join(' '));}

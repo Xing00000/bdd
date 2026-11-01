@@ -2,9 +2,10 @@ import path from 'node:path';
 import { readFile, mkdir, lstat } from 'node:fs/promises';
 import { invariant, id, safePath, relativePath, exists, readJson, writeJson, atomicWrite, digest, identity } from '../contracts/index.mjs';
 import { validateContract } from '../contracts/schemas.mjs';
-import { configuration, scan, baseline, reviewState } from '../spec-toolkit/index.mjs';
-import { runBddCommand } from '../spec-toolkit/engine.mjs';
+import { configuration, scan, baseline, reviewState, assertFileEditable } from '../spec-toolkit/index.mjs';
+import { runBddCommand, validateTestImplementation } from '../spec-toolkit/engine.mjs';
 import { execute, processEnvironment } from '../git-core/index.mjs';
+import { dependencyDefinition, npmInstallCommand, recordDependencies } from '../spec-toolkit/dependencies.mjs';
 
 export async function projectRoot(root, projectId, git) {
   id(projectId);
@@ -54,6 +55,7 @@ export async function configureFeature(root, input) {
   const file = await safePath(root, `spec/${req}/${feature}/feature.yaml`, { missing: false });
   const previous = await readFile(file);
   invariant(digest(previous) === input.expectedHash, 'CONTENT_CHANGED', 'Feature configuration changed', 409);
+  await assertFileEditable(root,`spec/${req}/${feature}/feature.yaml`);
   const value = { ...JSON.parse(previous), projectIds: input.projectIds, caseIds: input.caseIds, profiles: input.profiles };
   validateContract('feature', value);
   invariant(value.projectIds.every(p => config.projects.some(x => x.id === p)), 'UNKNOWN_PROJECT', 'Only Projects under this Spec Repo can be selected');
@@ -76,19 +78,23 @@ export async function installDependencies(root, enabled) {
   await configuration(root);
   const directory = await safePath(root, '.runtime/dependencies'); await mkdir(directory, { recursive: true });
   const locked = await exists(path.join(root, 'package-lock.json'));
-  const result = await execute('npm', [locked ? 'ci' : 'install', '--ignore-scripts', '--no-audit', '--no-fund'], {
+  const requestedKey=identity(await dependencyDefinition(root)),command=npmInstallCommand(locked);
+  const result = await execute(command[0], command.slice(1), {
     cwd: root, env: { ...processEnvironment(), HOME: path.join(directory, 'home'), npm_config_cache: path.join(directory, 'cache') }, timeoutMs: 300000
   });
   await writeJson(path.join(directory, 'receipt.json'), result);
   invariant(result.exitCode === 0 && !result.timedOut && !result.overflow, 'DEPENDENCY_INSTALL_FAILED', (result.stderr || result.stdout || 'Dependency install failed').slice(-4000));
+  await recordDependencies(root,command,requestedKey);
   return { installed: true, lockfileCreated: !locked, lockfileHash: digest(await readFile(path.join(root, 'package-lock.json'))), committed: false, command: locked ? 'npm ci --ignore-scripts' : 'npm install --ignore-scripts' };
 }
 export async function checkTests(root, input, store, repositoryId, enabled) {
   invariant(enabled, 'EXECUTION_DISABLED', 'Test configuration is executable code; enable the trusted worker first', 403);
   const data = await scan(root), key = `${id(input.requirementId)}/${id(input.featureId)}`;
   const feature = data.features.find(x => x.key === key); invariant(feature, 'FEATURE_NOT_FOUND', key, 404);
+  invariant(!feature.authoringOnly, 'TEST_RUNNER_NOT_CONFIGURED', '此規格尚未接線工作台測試執行器。', 409);
   const review = await reviewState(root, input.requirementId, input.featureId);
   invariant(review.confirmed.gherkin && review.confirmed.sd, 'UPSTREAM_NOT_CONFIRMED', 'Confirm Gherkin and design before checking tests');
+  await validateTestImplementation(root,input.requirementId,input.featureId);
   const before = review.hashes.tests;
   const output = await safePath(root, `.runtime/checks/${input.requirementId}/${input.featureId}`); await mkdir(output, { recursive: true });
   const generated = await runBddCommand(root, 'generate', input.requirementId, input.featureId, { output });

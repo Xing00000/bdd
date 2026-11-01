@@ -12,7 +12,7 @@ import { reindexReports, artifactDirectory, currentVerification } from '../../pa
 import { openStore } from '../../packages/workstation/store.mjs';
 import { createWorkstation } from '../../packages/workstation/service.mjs';
 import { createStandaloneServer } from '../../packages/workstation/http.mjs';
-import { validate } from '../../packages/spec-toolkit/index.mjs';
+import { validate, TOOLKIT_VERSION } from '../../packages/spec-toolkit/index.mjs';
 
 async function base(t) {
   const f = await fixture(t); await mkdir(f.home); await specRepository(f.repo); return f;
@@ -73,12 +73,12 @@ test('upgrade preview is deterministic and preserves authored configuration/test
   const f = await base(t);
   const unchanged = await planUpgrade(f.repo, toolkitRoot); assert.equal(unchanged.files.length, 0);
   const oldManifest = await readJson(path.join(f.repo, '.workbench-tools/manifest.json')); oldManifest.version = '1.0.0'; await writeJson(path.join(f.repo, '.workbench-tools/manifest.json'), oldManifest); await commitAll(f.repo);
-  const plan = await planUpgrade(f.repo, toolkitRoot); assert.equal(plan.files.length, 1); assert.equal(plan.metadata.toVersion, '1.3.0');
+  const plan = await planUpgrade(f.repo, toolkitRoot); assert.equal(plan.files.length, 1); assert.equal(plan.metadata.toVersion, TOOLKIT_VERSION);
   assert.deepEqual(publicPlan(plan), publicPlan(await planUpgrade(f.repo, toolkitRoot))); assert.equal(publicPlan(plan).files[0].content, undefined);
   const authored = await readFile(path.join(f.repo, 'bdd.config.ts'));
   const result = await applyPlan({ root: f.repo, home: f.home, repositoryId: 'WS-one', transactionId: 'TX-upgrade', plan, expectedDigest: plan.digest, sourceHead: await git.resolve(f.repo) });
   assert.equal(result.committed, false); assert.equal(result.status, 'APPLIED'); assert.deepEqual(await readFile(path.join(f.repo, 'bdd.config.ts')), authored);
-  assert.equal((await readJson(path.join(f.repo, '.workbench-tools/manifest.json'))).version, '1.3.0');
+  assert.equal((await readJson(path.join(f.repo, '.workbench-tools/manifest.json'))).version, TOOLKIT_VERSION);
 });
 test('upgrade refuses modified or untracked toolkit files', async t => {
   const f = await base(t); await writeFile(path.join(f.repo, '.workbench-tools/unmanaged.mjs'), 'custom');

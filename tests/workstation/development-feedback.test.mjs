@@ -34,6 +34,12 @@ test('feedback refuses another feature report and cannot be forged through the s
  r=await job(f.service,'repository.save',{kind:'source',path:'spec/REQ-001/login/feedback.json',expectedHash:null,content:'{"items":[]}'});assert.equal(r.error.code,'FILE_NOT_EDITABLE');
  assert.equal((await f.service.workflow('SPEC-one')).workflows[0].stage,'VERIFIED');
 });
+test('a completed development stage cannot launch another agent before acceptance feedback reopens it',async t=>{
+ const f=await setup(t),service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,enableExecution:true,autoAcquire:false});t.after(()=>service.close());
+ const result=await job(service,'workflow.develop',{requirementId:'REQ-001',featureId:'login'});
+ assert.equal(result.status,'FAILED');assert.equal(result.error.code,'STAGE_READ_ONLY');
+ assert.equal((await service.workflow('SPEC-one','REQ-001/login')).workflows[0].stage,'VERIFIED');
+});
 test('only a newer genuine passing run clears feedback; an old success or a newer failed run does not',()=>{
  const feature={key:'REQ-001/login',requirementId:'REQ-001',id:'login',review:{confirmed:{gherkin:true,sd:true,tests:true},hashes:{gherkin:'g',sd:'s',tests:'t'}},feedback:{items:[{message:'bug',createdAt:'2026-01-02T00:00:00Z'}]}};
  const manifest={runId:'RUN-a',requirementId:'REQ-001',featureId:'login',baseline:'t',projects:[],testOutcome:'PASSED',verification:'VERIFIED',scope:'ALL_CASES',coverageComplete:true,evidenceComplete:true,startedAt:'2026-01-01T00:00:00Z',finishedAt:'2026-01-01T00:00:01Z'};

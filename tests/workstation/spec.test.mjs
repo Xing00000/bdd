@@ -10,7 +10,9 @@ test('spec initialization creates a portable hashed toolkit and parallel feature
   const f = await fixture(t); await specRepository(f.repo);
   const data = await validate(f.repo, git); assert.equal(data.valid, true); assert.equal(data.features[0].key, 'REQ-001/login');
   for (const name of ['spec/REQ-001/login/login.feature', 'tests/REQ-001/login/login.steps.ts', 'tests/REQ-001/login/login.hooks.ts', 'reports/REQ-001/login/.gitkeep']) assert.ok(await readFile(path.join(f.repo, name)));
-  assert.match(await readFile(path.join(f.repo, 'tests/REQ-001/login/login.steps.ts'), 'utf8'), /throw new Error\('UNIMPLEMENTED_ACCEPTANCE_STEP/);
+  assert.equal(await readFile(path.join(f.repo, 'tests/REQ-001/login/login.steps.ts'), 'utf8'), '');
+  assert.equal(await readFile(path.join(f.repo, 'tests/REQ-001/login/login.hooks.ts'), 'utf8'), '');
+  assert.equal(data.features[0].testPlan.ready,false,'No test implementation exists before design confirmation');
   const config = await readFile(path.join(f.repo, 'bdd.config.ts'), 'utf8'); assert.match(config, /tests\/\$\{key\}/); assert.ok(!config.includes('reports/'));
 });
 test('initialization and feature creation refuse overwrites', async t => {

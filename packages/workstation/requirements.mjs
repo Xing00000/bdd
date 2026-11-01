@@ -1,7 +1,7 @@
 /** Two-field requirement authoring: preserve source and edited Gherkin independently. */
 import { readFile } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, exists, readJson, writeJson, atomicWrite } from '../contracts/index.mjs';
-import { createFeature, scan } from '../spec-toolkit/index.mjs';
+import { createFeature, scan, assertFileEditable } from '../spec-toolkit/index.mjs';
 
 export const MAX_REQUIREMENT_BYTES = 256 * 1024;
 export function requirementText(value, label, { empty = true } = {}) {
@@ -126,6 +126,7 @@ export async function saveComposer(root, input) {
     invariant(requirementId && featureId, 'INVALID_REQUIREMENT_ID', '需求識別不完整。');
     const current = await readComposer(root, requirementId, featureId);
     invariant(input.expectedToken === current.token, 'CONTENT_CHANGED', '這份需求已由其他操作更新，兩個編輯區的草稿都已保留。', 409);
+    await assertFileEditable(root, composerPaths(requirementId, featureId).gherkin);
   } else {
     invariant(input.expectedToken === null, 'CONTENT_CHANGED', '請以新的需求表單儲存。', 409);
     const features = (await scan(root)).features; let n = 1;

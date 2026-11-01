@@ -57,15 +57,23 @@ test('both fields save atomically to SQLite with exact lower bytes, no Git check
   await f.restart();const value=await f.service.requirement('SPEC-editor','REQ-001','feature');assert.equal(value.description,description);assert.equal(value.gherkin,manual);
   const db=new DatabaseSync(path.join(f.home,'metadata.sqlite'),{readOnly:true});const changes=JSON.parse(db.prepare('SELECT changes_json FROM authoring_history ORDER BY revision DESC LIMIT 1').get().changes_json);db.close();assert.ok(changes.some(x=>x.path.endsWith('.feature')));assert.ok(changes.some(x=>x.path.endsWith('requirement-source.json')));
 });
-test('editing the source description never rewrites or invalidates the confirmed lower specification',async t=>{
+test('confirmed source description is read-only and explicit return preserves the exact Gherkin bytes',async t=>{
   const f=await setup(t);let saved=await save(f);const feature=(await f.service.detail('SPEC-editor')).spec.features[0];
   await f.job('workflow.review',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
+  const blocked=await f.job('workflow.requirement.save',{requirementId:'REQ-001',featureId:'feature',description:'Changed upstream only',gherkin:manual,expectedToken:saved.token},true);
+  assert.equal(blocked.error.code,'STAGE_READ_ONLY');assert.equal((await f.service.requirement('SPEC-editor','REQ-001','feature')).description,description);
+  const approved=(await f.service.detail('SPEC-editor')).spec.features[0];assert.equal(approved.review.confirmed.gherkin,true);
+  await f.job('workflow.restart',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:approved.review.hashes.tests});
   saved=await save(f,{requirementId:'REQ-001',featureId:'feature',description:'Changed upstream only',expectedToken:saved.token});
-  assert.equal(saved.gherkin,manual);assert.equal((await f.service.detail('SPEC-editor')).spec.features[0].review.confirmed.gherkin,true);
+  assert.equal(saved.description,'Changed upstream only');assert.equal(saved.gherkin,manual);assert.equal((await f.service.detail('SPEC-editor')).spec.features[0].review.confirmed.gherkin,false);
 });
-test('editing the authoritative Gherkin invalidates previous human approval',async t=>{
+test('editing authoritative Gherkin requires explicit return and never preserves the old approval',async t=>{
   const f=await setup(t),saved=await save(f),feature=(await f.service.detail('SPEC-editor')).spec.features[0];
   await f.job('workflow.review',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
+  const blocked=await f.job('workflow.requirement.save',{requirementId:'REQ-001',featureId:'feature',description,gherkin:manual.replace('dashboard','profile'),expectedToken:saved.token},true);
+  assert.equal(blocked.error.code,'STAGE_READ_ONLY');assert.equal((await f.service.requirement('SPEC-editor','REQ-001','feature')).gherkin,manual);
+  const approved=(await f.service.detail('SPEC-editor')).spec.features[0];
+  await f.job('workflow.restart',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:approved.review.hashes.tests});
   await save(f,{requirementId:'REQ-001',featureId:'feature',gherkin:manual.replace('dashboard','profile'),expectedToken:saved.token});
   assert.equal((await f.service.detail('SPEC-editor')).spec.features[0].review.confirmed.gherkin,false);
 });

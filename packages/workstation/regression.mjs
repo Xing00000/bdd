@@ -45,6 +45,7 @@ export async function prepareRegression(context) {
   const snapshot = await snapshotRepository({ ...context, repositoryId }, input.specRef);
   const data = await scan(snapshot.root), modules = await git.modules(snapshot.root);
   invariant(data.features.length > 0, 'NO_TESTS', '這個規格版本沒有可執行功能，不能回報全部通過。');
+  invariant(!data.features.some(f => f.authoringOnly), 'TEST_RUNNER_NOT_CONFIGURED', '所選版本包含尚未接線工作台執行器的規格，不能執行整庫回歸。', 409);
   invariant(data.features.length <= 1000, 'REGRESSION_LIMIT', '單批最多 1000 個功能。');
   invariant(Object.keys(input.projects ?? {}).every(key => modules.some(m => m.id === key)), 'UNKNOWN_PROJECT', '產品必須屬於所選的規格版本。');
   invariant(await exists(path.join(snapshot.root, 'package-lock.json')), 'LOCKFILE_REQUIRED', '此歷史版本沒有依賴鎖；請選擇可重現的規格版本，不會偷偷使用最新依賴。');

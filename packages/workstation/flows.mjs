@@ -1,16 +1,18 @@
 import { publishRegression } from './regression-evidence.mjs';
 /** User-facing transactions. Git plumbing stays behind save/sync, not in the UI. */
 import path from 'node:path';
-import { mkdir, readFile } from 'node:fs/promises';
-import { WorkstationError, invariant, id, safePath, exists, readJson, writeJson, digest, identity } from '../contracts/index.mjs';
+import { mkdir, readFile, mkdtemp, rename, rm } from 'node:fs/promises';
+import { WorkstationError, invariant, id, safePath, exists, readJson, writeJson, digest, identity, atomicWrite } from '../contracts/index.mjs';
 import { branchName, remoteUrl, execute, processEnvironment } from '../git-core/index.mjs';
-import { configuration, scan, reviewState, confirm } from '../spec-toolkit/index.mjs';
+import { configuration, scan, reviewState, confirm, defaultProfiles } from '../spec-toolkit/index.mjs';
 import { installDependencies, checkTests } from './repository-actions.mjs';
 import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { reindexReports } from './reports.mjs';
 import { requirementDiagnostics } from './requirements.mjs';
+import { currentProgress } from '../git-core/progress.mjs';
+import { dependencyDefinition, dependencyInputs, installedDependencies, materializeDependencies, nodeRuntime, dependencyReceiptPath, specToolBinaries } from '../spec-toolkit/dependencies.mjs';
 
-export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.draft', 'workflow.requirement.save', 'workflow.feedback', 'workflow.review', 'workflow.verify', 'repository.prepare'];
+export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.draft', 'workflow.requirement.save', 'workflow.feedback', 'workflow.restart', 'workflow.review', 'workflow.verify', 'repository.prepare'];
 
 export async function attached(root, git, repositoryId) {
   const state = await git.inspect(root);
@@ -57,40 +59,82 @@ export async function targetFor(root, git, branch) {
 export async function installationPlan(root, profiles, browserRoot) {
   const packageBytes = await readFile(await safePath(root, 'package.json', { missing: false }));
   const lock = await exists(path.join(root, 'package-lock.json')) ? digest(await readFile(path.join(root, 'package-lock.json'))) : null;
-  const runtime = process.versions.node.split('.')[0];
-  const definition = { packageHash: digest(packageBytes), lock, profiles: [...profiles].sort(), browserRoot, runtime };
+  const runtime = nodeRuntime();
+  const definition = { packageHash: digest(packageBytes), lock, profiles: [...profiles].sort(), browserRoot, runtime,dependencyKey:identity(await dependencyDefinition(root)) };
   const receiptPath = await safePath(root, '.runtime/flow-installation.json');
   const receipt = await exists(receiptPath) ? await readJson(receiptPath) : null;
-  const binaries = ['node_modules/.bin/bddgen', 'node_modules/.bin/playwright'];
+  const binaries = specToolBinaries.map(name=>`node_modules/.bin/${name}`);
   const ready = receipt?.digest === identity(definition) && (await Promise.all(binaries.map(x => exists(path.join(root, x))))).every(Boolean)
     && Array.isArray(receipt.browserFiles) && receipt.browserFiles.length >= profiles.length && (await Promise.all(receipt.browserFiles.map(x => exists(x)))).every(Boolean);
   const pkg = JSON.parse(packageBytes);
-  return { digest: identity(definition), ready, definition, packages: { ...pkg.dependencies, ...pkg.devDependencies }, profiles };
+  return { digest: identity(definition), ready, definition, packages: { ...pkg.dependencies, ...pkg.devDependencies }, profiles,repositoryId:receipt?.repositoryId };
 }
-export async function ensureInstallation({ root, options, request, profiles = ['chromium'], git }) {
+export const repositoryToolsPath = (home,repositoryId) => safePath(home,`repositories/${id(repositoryId)}/test-tools`);
+
+export async function ensureInstallation({ root, options, request, profiles = defaultProfiles, git }) {
   invariant(options.enableExecution, 'EXECUTION_DISABLED', '此主機尚未啟用受信任執行，請管理者啟用後再繼續。', 403);
   const browserRoot = options.browserRoot ?? process.env.PLAYWRIGHT_BROWSERS_PATH ?? path.join(options.home, 'browsers');
   const plan = await installationPlan(root, profiles, browserRoot);
-  if (plan.ready) return { installed: false };
-  if (request.input.installConsent !== plan.digest) throw new WorkstationError('INSTALL_REQUIRED', '此步驟需要安裝測試套件與瀏覽器。只需一次確認，完成後會自動接續原流程。', 409,
+  if (plan.ready&&plan.repositoryId===request.repositoryId) {
+    const files=await installedBrowserFiles(root,profiles,browserRoot);
+    if((await Promise.all(files.map(file=>exists(file)))).every(Boolean)) {
+      currentProgress()?.record('\r\n[dependencies] Reusing installed Spec Repo tools\r\n');return { installed: false };
+    }
+  }
+  const tools=await repositoryToolsPath(options.home,request.repositoryId),parent=path.dirname(tools);
+  const requestedKey=identity(await dependencyDefinition(root));
+  let cached=await exists(tools)?await installedDependencies(tools):null;
+  const locked=await exists(path.join(root,'package-lock.json'));
+  const reusable=Boolean(cached&&(cached.key===requestedKey||!locked&&cached.requestedKey===requestedKey));
+  let browserFiles=reusable?await installedBrowserFiles(tools,profiles,browserRoot):[];
+  const browsersReady=(profiles.length===0||browserFiles.length>0)&&(await Promise.all(browserFiles.map(file=>exists(file)))).every(Boolean);
+  if ((!reusable||!browsersReady)&&request.input.installConsent !== plan.digest) throw new WorkstationError('INSTALL_REQUIRED', '此步驟需要安裝測試套件與瀏覽器。只需一次確認，完成後會自動接續原流程。', 409,
     { install: { digest: plan.digest, packages: plan.packages, browsers: profiles, lifecycleScripts: false, systemChanges: false } });
-  await installDependencies(root, true);
+  if(!reusable) {
+    currentProgress()?.record('\r\n[dependencies] Installing Spec Repo tools\r\n');
+    if(await exists(tools))invariant(await exists(await safePath(tools,dependencyReceiptPath)),'DEPENDENCIES_UNMANAGED','Spec Repo 工具目錄不是受管理的安裝，未覆寫既有內容。',409);
+    await mkdir(parent,{recursive:true});const staging=await mkdtemp(path.join(parent,'.test-tools-'));
+    try {
+      for(const file of await dependencyInputs(root))await writeDependencyInput(staging,file.path,file.content);
+      await writeDependencyInput(staging,'workbench.yaml',await readFile(await safePath(root,'workbench.yaml',{missing:false})));
+      await installDependencies(staging,true);
+      // Installed environments are build artifacts. Each consumer receives its own copy.
+      await rm(tools,{recursive:true,force:true});await rename(staging,tools);
+    } finally {
+      if(await exists(staging))for(const relative of ['node_modules','.runtime/dependencies/cache'])await rm(await safePath(staging,relative),{recursive:true,force:true});
+    }
+    cached=await installedDependencies(tools);invariant(cached,'DEPENDENCIES_CHANGED','Spec Repo 安裝結果與依賴設定不符。',409);
+  }
+  invariant(identity(await dependencyDefinition(root))===requestedKey,'DEPENDENCIES_CHANGED','安裝期間依賴設定已改變，未覆寫來源。',409);
+  if(reusable)currentProgress()?.record('\r\n[dependencies] Reusing Spec Repo installation; preparing isolated tools\r\n');
+  if(!locked)await writeDependencyInput(root,'package-lock.json',await readFile(await safePath(tools,'package-lock.json',{missing:false})));
+  await rm(await safePath(root,'.runtime/flow-installation.json'),{force:true});
+  await materializeDependencies(tools,root);
   const directory = await safePath(root, '.runtime/flow-install'); await mkdir(directory, { recursive: true });
   const env = { ...processEnvironment(), HOME: directory, PLAYWRIGHT_BROWSERS_PATH: browserRoot };
-  const output = await execute(path.join(root, 'node_modules/.bin/playwright'), ['install', ...profiles], { cwd: root, env, timeoutMs: 300000 });
-  await writeJson(path.join(directory, 'browsers.json'), output);
-  invariant(output.exitCode === 0 && !output.timedOut && !output.overflow, 'INSTALL_FAILED', '瀏覽器安裝失敗，原流程尚未推進。請檢查網路與主機相依套件後重試。');
+  if(profiles.length&&!browsersReady) {
+    const output = await execute(path.join(root, 'node_modules/.bin/playwright'), ['install', ...profiles], { cwd: root, env, timeoutMs: 300000 });
+    await writeJson(path.join(directory, 'browsers.json'), output);
+    invariant(output.exitCode === 0 && !output.timedOut && !output.overflow, 'INSTALL_FAILED', '瀏覽器安裝失敗，原流程尚未推進。請檢查網路與主機相依套件後重試。');
+  }
   // Only after consent/package installation may the versioned Playwright module load.
-  const query = await execute(process.execPath, ['--input-type=module', '-e',
-    `import {createRequire} from 'node:module'; const p=createRequire(process.cwd()+'/package.json')('playwright'); console.log(JSON.stringify(${JSON.stringify(profiles)}.map(x=>p[x].executablePath())));`], { cwd: root, env, timeoutMs: 15000 });
-  invariant(query.exitCode === 0, 'BROWSER_PROBE_FAILED', '無法確認瀏覽器安裝位置。');
-  const browserFiles = JSON.parse(query.stdout.trim());
+  browserFiles=await installedBrowserFiles(root,profiles,browserRoot);
   invariant((await Promise.all(browserFiles.map(x => exists(x)))).every(Boolean), 'BROWSER_MISSING', '必要瀏覽器尚未完整安裝。');
   const after = await installationPlan(root, profiles, browserRoot);
   invariant(after.definition.packageHash === plan.definition.packageHash, 'DEPENDENCIES_CHANGED', '套件定義在安裝期間改變，請重新確認。', 409);
-  await writeJson(path.join(root, '.runtime/flow-installation.json'), { digest: after.digest, browserFiles, installedAt: new Date().toISOString() });
-  await savePaths(root, ['package-lock.json'], git, request.repositoryId, 'Save resolved test dependencies');
-  return { installed: true };
+  await writeJson(path.join(root, '.runtime/flow-installation.json'), { repositoryId:request.repositoryId,digest: after.digest, browserFiles, installedAt: new Date().toISOString() });
+  if(git&&!locked)await savePaths(root, ['package-lock.json'], git, request.repositoryId, 'Save resolved test dependencies');
+  return { installed: !reusable||!browsersReady };
+}
+
+async function writeDependencyInput(root,relative,content) {
+  await atomicWrite(await safePath(root,relative),content);
+}
+async function installedBrowserFiles(root,profiles,browserRoot) {
+  if(!profiles.length)return [];
+  const query=await execute(process.execPath,['--input-type=module','-e',
+    `import {createRequire} from 'node:module';import path from 'node:path';const require=createRequire(process.cwd()+'/package.json');const core=path.dirname(require.resolve('playwright-core/package.json'));const {registry:{registry}}=require(path.join(core,'lib/coreBundle.js'));console.log(JSON.stringify(registry.resolveBrowsers(${JSON.stringify(profiles)},{}).map(x=>x.executablePath())));`],{cwd:root,env:processEnvironment({PLAYWRIGHT_BROWSERS_PATH:browserRoot}),timeoutMs:15000});
+  invariant(query.exitCode===0&&!query.timedOut&&!query.overflow,'BROWSER_PROBE_FAILED','無法確認瀏覽器安裝位置。');return JSON.parse(query.stdout.trim());
 }
 
 export async function advanceWorkflow(context) {

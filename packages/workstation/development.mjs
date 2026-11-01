@@ -14,6 +14,7 @@ import { prepareProjection } from './projection.mjs';
 import { ensureInstallation, savePaths } from './flows.mjs';
 import { sourcePath } from './repository-actions.mjs';
 import { readFeedback } from './feedback.mjs';
+import { workflowStatus } from './workflow.mjs';
 
 export { validateAgentSettings } from './agent-settings.mjs';
 import { validateAgentSettings, renderAgentPrompt } from './agent-settings.mjs';
@@ -115,6 +116,8 @@ export async function runDevelopment(context,verify) {
   invariant(options.enableExecution,'EXECUTION_DISABLED','此主機已停用執行。',403);
   let snapshot=await ensureDraft({...context,repositoryId:request.repositoryId});
   await inDraftView(snapshot,async view=>invariant(Object.values((await reviewState(view,input.requirementId,input.featureId)).confirmed).every(Boolean),'REVIEWS_REQUIRED','請先確認需求、設計與測試。',409));
+  const workflow=(await workflowStatus({...context,repositoryId:request.repositoryId},key)).workflows[0];
+  invariant(workflow.status!=='COMPLETE','STAGE_READ_ONLY','本階段已完成；請先從驗收回報問題，再進入開發。',409);
   const agent=validateAgentSettings(snapshot.settings.agent),command=await agentExecutable(agent.command),pty=await terminalRuntime(context);
   await prepareProjection(context);
   const feature=(await scan(root)).features.find(f=>f.key===key);

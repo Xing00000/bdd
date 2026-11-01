@@ -2,8 +2,11 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, copyFile, rename, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { caseSelection } from './tags.mjs';
+import { materializeDependencies, reuseForExecution } from './dependencies.mjs';
 import { invariant, id, version, exists, safePath, walk, writeJson, readJson, atomicWrite, digest, identity, escapeHtml, errorResult } from '../contracts/index.mjs';
-import { execute, processEnvironment, trackChild, startProgressPty } from '../git-core/index.mjs';
+import { execute, processEnvironment, trackChild, startProgressPty, gitSourceFiles } from '../git-core/index.mjs';
 import { currentProgress } from '../git-core/progress.mjs';
 import { validate, reviewState, configuration, featureKey } from './index.mjs';
 
@@ -33,6 +36,7 @@ export async function prepareRun({ root, home, repositoryId, input, git }) {
   const verified = await validate(root, git, { pinned: true });
   const key = featureKey(input.requirementId, input.featureId), feature = verified.features.find(x => x.key === key);
   invariant(feature, 'FEATURE_NOT_FOUND', key, 404);
+  invariant(!feature.authoringOnly, 'TEST_RUNNER_NOT_CONFIGURED', '此規格尚未接線工作台測試執行器。', 409);
   const review = await reviewState(root, input.requirementId, input.featureId);
   invariant(Object.values(review.confirmed).every(Boolean), 'REVIEWS_REQUIRED', 'Confirm current Gherkin, SD and tests before a formal run', 409);
   invariant(await exists(await safePath(root, 'package-lock.json')), 'LOCKFILE_REQUIRED', 'Install dependencies, review and commit package-lock.json');
@@ -55,6 +59,7 @@ export async function prepareRun({ root, home, repositoryId, input, git }) {
   await validate(repository, git, { pinned: true });
   const pinnedReview = await reviewState(repository, input.requirementId, input.featureId);
   invariant(Object.values(pinnedReview.confirmed).every(Boolean) && identity(pinnedReview.hashes) === identity(review.hashes), 'REVIEW_BASELINE_MISMATCH', 'Committed review differs from working tree');
+  if(await reuseForExecution(root,verified.config.execution.install))await materializeDependencies(root,repository);
   const plan = { schemaVersion: 1, specRepositoryId: verified.config.specRepositoryId, runId, repositoryId, requirementId: input.requirementId, featureId: input.featureId,
     testedSpecCommit: state.head, projects: verified.modules.map(x => ({ id: x.id, path: x.path, commit: x.commit })),
     caseIds: selection ?? feature.caseIds, allCaseIds: feature.caseIds, profiles: feature.profiles, requiredProjectIds: feature.projectIds,
@@ -105,6 +110,8 @@ export function assessEvidence(plan, discovery, receipt, processResult, inputsUn
 }
 export async function runBddCommand(root, mode, requirementId, featureId, options = {}) {
   featureKey(requirementId, featureId);
+  const metadata = await readJson(await safePath(root, `spec/${requirementId}/${featureId}/feature.yaml`, { missing: false }));
+  invariant(!metadata.authoringOnly, 'TEST_RUNNER_NOT_CONFIGURED', '此規格尚未接線工作台測試執行器。', 409);
   invariant(['generate', 'list', 'test'].includes(mode), 'INVALID_BDD_COMMAND', mode);
   const output = options.output ?? path.resolve(root, '.runtime', `preview-${randomUUID()}`);
   await mkdir(output, { recursive: true });
@@ -116,10 +123,49 @@ export async function runBddCommand(root, mode, requirementId, featureId, option
   const args = mode === 'generate' ? ['--config', 'bdd.config.ts'] : ['test', '--config', 'playwright.config.ts', ...(mode === 'list' ? ['--list'] : [])];
   if (mode === 'test' && options.globalTimeoutMs !== undefined) args.push('--global-timeout', String(options.globalTimeoutMs));
   if (mode === 'test' && options.caseIds) {
-    const escaped = options.caseIds.map(value => id(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    args.push('--grep', `(?:@case:(?:${escaped.join('|')})(?![A-Za-z0-9_-])|\\[case:(?:${escaped.join('|')})\\])`);
+    args.push('--grep', caseSelection(options.caseIds));
   }
   return execute(executable, args, { cwd: root, env, timeoutMs: options.timeoutMs ?? 180000 });
+}
+
+/** Discovery alone accepts empty handlers; a test plan must contain actual implementations. */
+export async function validateTestImplementation(root, requirementId, featureId) {
+  const key = featureKey(requirementId, featureId), directory = await safePath(root, `tests/${key}`, {missing:false});
+  const files = (await gitSourceFiles(root,[`tests/${key}`])).filter(file => file.endsWith('.ts')).map(file=>file.slice(`tests/${key}/`.length));
+  const required = [`${featureId}.steps.ts`, `${featureId}.hooks.ts`];
+  invariant(required.every(file => files.includes(file)), 'TEST_PLAN_REQUIRED', '測試計劃必須包含 steps.ts 與 hooks.ts。');
+  const ts = createRequire(path.join(root, 'package.json'))('typescript');
+  const handlers = new Set(['Given','When','Then','Before','After','BeforeStep','AfterStep']);
+  for (const relative of files) {
+    const file = await safePath(directory, relative), text = await readFile(file, 'utf8');
+    if(required.includes(relative))invariant(text.trim(), 'TEST_PLAN_REQUIRED', `${relative} 尚無測試實作。`);
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    invariant(!source.parseDiagnostics.length, 'TEST_PLAN_INVALID', `${relative} 語法錯誤。`);
+    const aliases = new Set(handlers);
+    for(const statement of source.statements)if(ts.isImportDeclaration(statement)) {
+      const bindings=statement.importClause?.namedBindings;
+      if(bindings&&ts.isNamedImports(bindings))for(const item of bindings.elements)if(handlers.has(item.propertyName?.text??item.name.text))aliases.add(item.name.text);
+    }
+    const visit = node => {
+      if(ts.isCallExpression(node)) {
+        const expression=node.expression;
+        invariant(!(ts.isPropertyAccessExpression(expression)&&['skip','fixme','only'].includes(expression.name.text)), 'TEST_PLAN_INCOMPLETE', `${relative} 不可跳過或限定測試。`);
+        if(ts.isIdentifier(expression)&&aliases.has(expression.text)) {
+          const callback=node.arguments.find(arg=>ts.isArrowFunction(arg)||ts.isFunctionExpression(arg));
+          if(callback) {
+            const body=callback.body;
+            invariant(body&&(!ts.isBlock(body)||body.statements.some(statement=>!ts.isEmptyStatement(statement)&&!ts.isThrowStatement(statement))), 'TEST_PLAN_INCOMPLETE', `${relative} 包含空白或尚未實作的 handler。`);
+          }
+        }
+      }
+      ts.forEachChild(node,visit);
+    };
+    visit(source);
+  }
+  const shared=(await gitSourceFiles(root,['tests/_shared',`tests/${requirementId}/_shared`])).filter(file=>file.endsWith('.ts'));
+  const result=await execute(path.join(root,'node_modules/.bin/tsc'), ['--noEmit','--strict','--allowJs','--target','ES2023','--module','ESNext','--moduleResolution','Bundler','--esModuleInterop',...shared,...files.map(file=>`tests/${key}/${file}`)], {cwd:root,env:processEnvironment()});
+  invariant(result.exitCode===0&&!result.timedOut&&!result.overflow,'TEST_PLAN_TYPECHECK_FAILED',(result.stderr+result.stdout).slice(-12000));
+  return {files:files.length,typecheck:'PASSED'};
 }
 async function startManagedService(repo, config, plan, environment) {
   const service = config.execution.service;
@@ -235,7 +281,11 @@ export async function executeRun({ home, runId, repositoryId, git, enabled = fal
     return output;
   };
   try {
-    if (config.execution.install) await invoke(config.execution.install);
+    const dependencies=await reuseForExecution(repo,config.execution.install);
+    if(dependencies) {
+      currentProgress()?.record('\r\n[dependencies] Reusing installed Spec Repo tools\r\n');
+      await writeJson(path.join(scratch,'logs',`${++step}-dependencies.json`),{kind:'DEPENDENCIES_REUSED',key:dependencies.key});
+    } else if (config.execution.install) await invoke(config.execution.install);
     for (const command of config.execution.prepare ?? []) await invoke(command);
     managed = await startManagedService(repo, config, plan, environment);
     for (const mode of ['generate', 'list', 'test']) {

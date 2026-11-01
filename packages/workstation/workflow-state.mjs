@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { id, identity, digest, exists, safePath, writeJson } from '../contracts/index.mjs';
 import { createGit } from '../git-core/index.mjs';
 import { checkRepositoryIdentity } from './locations.mjs';
-import { scan, reviewState } from '../spec-toolkit/index.mjs';
+import { scan, reviewState, reviewStage, reviewKinds } from '../spec-toolkit/index.mjs';
 
 export const workflowPath = (requirementId, featureId) => `spec/${id(requirementId)}/${id(featureId)}/workflow.json`;
 const time = value => Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0;
@@ -47,11 +47,11 @@ export function featureReports(feature, modules = [], runs = [], reports = [], s
 
 export function workflowState(feature, modules = [], runs = [], reports = [], specRepositoryId) {
   const history = featureReports(feature, modules, runs, reports, specRepositoryId);
-  const pending = ['gherkin', 'sd', 'tests'].find(stage => !feature.review.confirmed[stage]);
+  const pending = reviewKinds.find(stage => !feature.review.confirmed[stage]);
   const latest = history.find(r => r.current && r.manifest.scope === 'ALL_CASES');
   const feedback=(feature.feedback?.items??[]).filter(item=>!latest?.qualified || !latest.manifest.startedAt || time(latest.manifest.startedAt)<=time(item.createdAt));
   const verified = !pending && !feedback.length && Boolean(latest?.qualified);
-  const stage = pending ? { gherkin: 'GHERKIN', sd: 'SD', tests: 'TESTS' }[pending]
+  const stage = pending ? reviewStage(feature.review.confirmed)
     : verified ? 'VERIFIED' : 'IMPLEMENTATION';
   return {
     schemaVersion: 1, specRepositoryId, requirementId: feature.requirementId, featureId: feature.id,

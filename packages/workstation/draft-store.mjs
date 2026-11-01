@@ -42,7 +42,7 @@ export function draftMethods(db) {
       return JSON.parse(row.result_json);
     },
     /** One SQLite transaction includes content, settings, history and the durable save receipt. */
-    saveDraft(repositoryId, { expectedRevision, settings, files, deleteFiles = [], operationId, request, result = {}, proposalKey }) {
+    saveDraft(repositoryId, { expectedRevision, settings, files, deleteFiles = [], operationId, request, result = {}, proposalKey, acceptIncomingBases = false }) {
       db.exec('BEGIN IMMEDIATE');
       try {
         const previous = this.draftReceipt(repositoryId, operationId, request);
@@ -58,7 +58,7 @@ export function draftMethods(db) {
           invariant(typeof file.content === 'string' && !file.content.includes('\0') && Buffer.byteLength(file.content) <= 4 * 1024 * 1024, 'INVALID_CONTENT', '文字檔案超過上限或包含二進位內容。');
           const old = current?.files.find(x => x.target === file.target && x.path === file.path);
           db.prepare(`INSERT INTO authoring_files VALUES(?,?,?,?,?,?) ON CONFLICT(repository_id,target,path)
-            DO UPDATE SET content=excluded.content,sha256=excluded.sha256,base_hash=COALESCE(authoring_files.base_hash,excluded.base_hash)`).run(repositoryId,file.target,file.path,file.content,digest(file.content),old?.baseHash ?? file.baseHash ?? null);
+            DO UPDATE SET content=excluded.content,sha256=excluded.sha256,base_hash=${acceptIncomingBases?'excluded.base_hash':'COALESCE(authoring_files.base_hash,excluded.base_hash)'}`).run(repositoryId,file.target,file.path,file.content,digest(file.content),acceptIncomingBases?file.baseHash??null:old?.baseHash??file.baseHash??null);
         }
         for (const file of deleteFiles) {
           invariant(file.target.startsWith('project:') && !seen.has(`${file.target}\0${file.path}`), 'INVALID_DELETE', 'Only unambiguous product deletions are allowed');
@@ -74,6 +74,37 @@ export function draftMethods(db) {
         db.exec('COMMIT'); return receipt;
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
+    /** Repair legacy COALESCE baselines using successful, immutable checkout imports only. */
+    repairImportBaselines(repositoryId) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const rows=db.prepare(`SELECT revision,changes_json FROM authoring_history
+          WHERE repository_id=? AND operation_id LIKE 'import-%' AND json_extract(result_json,'$.imported')=1 ORDER BY revision`).all(repositoryId);
+        const bases=new Map();
+        for(const row of rows)for(const file of JSON.parse(row.changes_json))if(file.origin==='checkout'&&Object.hasOwn(file,'baseHash'))bases.set(`${file.target}\0${file.path}`,file);
+        const checkpoint=this.projection(repositoryId),importRow=rows.find(row=>row.revision===checkpoint?.revision);
+        const accepted=new Map(importRow?JSON.parse(importRow.changes_json).filter(file=>file.origin==='checkout'&&Object.hasOwn(file,'baseHash')).map(file=>[`${file.target}\0${file.path}`,file.baseHash]):[]);
+        const corrected=new Map();
+        for(const file of bases.values()) {
+          const previous=db.prepare('SELECT base_hash FROM authoring_files WHERE repository_id=? AND target=? AND path=?').get(repositoryId,file.target,file.path);
+          if(previous&&previous.base_hash!==file.baseHash) {
+            corrected.set(`${file.target}\0${file.path}`,previous.base_hash);
+            db.prepare('UPDATE authoring_files SET base_hash=? WHERE repository_id=? AND target=? AND path=?').run(file.baseHash,repositoryId,file.target,file.path);
+          }
+        }
+        if(checkpoint&&importRow) {
+          let changed=false;
+          checkpoint.files=(checkpoint.files??[]).map(file=>{
+            const key=`${file.target}\0${file.path}`;
+            const latest=bases.get(key)?.baseHash;
+            if(bases.has(key)&&file.sha256!==latest&&(file.sha256===corrected.get(key)||accepted.has(key)&&file.sha256===accepted.get(key))) {changed=true;return {...file,sha256:latest};}
+            return file;
+          });
+          if(changed)this.setProjection(repositoryId,checkpoint);
+        }
+        db.exec('COMMIT');return {corrected:corrected.size};
+      } catch(error) {db.exec('ROLLBACK');throw error;}
+    },
     projection(repositoryId) {
       const row = db.prepare('SELECT receipt_json FROM repository_projection WHERE repository_id=?').get(repositoryId);
       return row ? JSON.parse(row.receipt_json) : null;
@@ -84,6 +115,6 @@ export function draftMethods(db) {
   };
 }
 
-export const isLocalSave = request => ['repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback'].includes(request.operation)
-  || request.operation === 'workflow.review' && ['gherkin','sd'].includes(request.input?.stage);
-export const projectionJobPredicate = `NOT (json_extract(request_json,'$.operation') IN ('repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback') OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage') IN ('gherkin','sd')))`;
+export const isLocalSave = request => ['repository.setup','repository.save','repository.upgrade.apply','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback','workflow.restart'].includes(request.operation)
+  || request.operation === 'workflow.review' && request.input?.stage === 'gherkin';
+export const projectionJobPredicate = `NOT (json_extract(request_json,'$.operation') IN ('repository.setup','repository.save','repository.upgrade.apply','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback','workflow.restart') OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage')='gherkin'))`;

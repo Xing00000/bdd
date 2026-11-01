@@ -6,7 +6,7 @@ import { fixture, git, repository, toolkitRoot, commitAll, approve } from './hel
 import { createWorkstation } from '../../packages/workstation/service.mjs';
 import { digest, readJson, writeJson, exists, identity } from '../../packages/contracts/index.mjs';
 import { prepareRun } from '../../packages/spec-toolkit/engine.mjs';
-import { ensureInstallation } from '../../packages/workstation/flows.mjs';
+import { ensureInstallation, installationPlan } from '../../packages/workstation/flows.mjs';
 
 async function setup(t,{product=true,prepare=true}={}) {
   const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
@@ -105,10 +105,16 @@ test('dependency plan is one consent for required packages and browsers and reje
 });
 test('recorded installation is reused, but missing browsers request a single new repair consent',async t=>{
   const f=await setup(t),browserRoot=path.join(f.home,'browsers');await mkdir(browserRoot);const executable=path.join(browserRoot,'chromium');await writeFile(executable,'fixture only');
-  await mkdir(path.join(f.root,'node_modules/.bin'),{recursive:true});for(const name of ['bddgen','playwright'])await writeFile(path.join(f.root,'node_modules/.bin',name),'fixture only');
-  const definition={packageHash:digest(await readFile(path.join(f.root,'package.json'))),lock:null,profiles:['chromium'],browserRoot,runtime:process.versions.node.split('.')[0]};
-  await writeJson(path.join(f.root,'.runtime/flow-installation.json'),{digest:identity(definition),browserFiles:[executable]});
+  const shell=path.join(browserRoot,'headless-shell'),ffmpeg=path.join(browserRoot,'ffmpeg');await writeFile(shell,'fixture only');await writeFile(ffmpeg,'fixture only');
+  // Registry protocol fixture; all reported runtime files must actually exist.
+  await writeJson(path.join(f.root,'node_modules/playwright-core/package.json'),{name:'playwright-core',main:'lib/coreBundle.js'});
+  await mkdir(path.join(f.root,'node_modules/playwright-core/lib'),{recursive:true});
+  await writeFile(path.join(f.root,'node_modules/playwright-core/lib/coreBundle.js'),`exports.registry={registry:{resolveBrowsers:()=>${JSON.stringify([executable,shell,ffmpeg])}.map(file=>({executablePath:()=>file}))}};\n`);
+  await mkdir(path.join(f.root,'node_modules/.bin'),{recursive:true});for(const name of ['bddgen','playwright','tsc'])await writeFile(path.join(f.root,'node_modules/.bin',name),'fixture only');
+  const plan=await installationPlan(f.root,['chromium'],browserRoot);
+  await writeJson(path.join(f.root,'.runtime/flow-installation.json'),{repositoryId:'SPEC-flow',digest:plan.digest,browserFiles:[executable]});
   const context={root:f.root,options:{home:f.home,enableExecution:true,browserRoot},request:{repositoryId:'SPEC-flow',input:{}},git};assert.deepEqual(await ensureInstallation(context),{installed:false});
+  await rm(shell);await assert.rejects(ensureInstallation(context),{code:'INSTALL_REQUIRED'});await writeFile(shell,'fixture only');
   await rm(executable);await assert.rejects(ensureInstallation(context),{code:'INSTALL_REQUIRED'});
 });
 test('review progresses only on human content confirmation; execution remains opt-in',async t=>{

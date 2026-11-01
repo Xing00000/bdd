@@ -21,9 +21,12 @@ import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { validateContract } from '../contracts/schemas.mjs';
 
 import { runDevelopment } from './development.mjs';
+import { generateTestPlan } from './test-plan.mjs';
+import { generateTestSkeleton } from './test-plan-codegen.mjs';
+import { prepareRepositoryTools } from './repository-tools.mjs';
 
 export const operationNames = Object.freeze([
-  ...flowNames, 'workflow.develop', 'workflow.next', 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
+  ...flowNames, 'repository.tools.prepare', 'workflow.tests.generate', 'workflow.tests.complete', 'workflow.develop', 'workflow.next', 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
   'repository.clone', 'repository.initialize', 'repository.validate',
   'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
@@ -50,6 +53,19 @@ export async function executeOperation(options, store, request) {
   const { home, toolkitRoot, allowLocal = false, hosts = ['github.com'], enableExecution = false } = options;
   const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id, store);
   const git = createGit({ allowLocal, hosts }), input = request.input;
+  if(request.operation==='repository.upgrade.preview') {
+    const {ensureDraft,inDraftView}=await import('./authoring.mjs');
+    const snapshot=await ensureDraft({root,options,store,repositoryId:request.repositoryId});
+    return inDraftView(snapshot,async view=>publicPlan(await planUpgrade(view,toolkitRoot)));
+  }
+  if(request.operation==='repository.upgrade.apply')return editDraft({root,options,store,request,git});
+  if(request.operation==='repository.tools.prepare')return prepareRepositoryTools({root,options,store,request,git});
+  if(request.operation==='workflow.tests.generate')return generateTestSkeleton({root,options,store,request,git});
+  if(request.operation==='workflow.tests.complete')return generateTestPlan({root,options,store,request,git});
+  if(request.operation==='workflow.review'&&input.stage==='sd') {
+    await editDraft({root,options,store,request,git});
+    return generateTestSkeleton({root,options,store,request,git});
+  }
   if(request.operation==='repository.location') return changeLocation({root,options,store,request,git});
   if(request.operation==='repository.acquire') {const result=await acquireRepository({root,options,store,request,git});await persistWorkflowState({root,options,store,request,git});return result;}
   if(request.operation==='repository.history.more') return moreReportHistory({root,options,store,request,git});
@@ -109,12 +125,6 @@ export async function executeOperation(options, store, request) {
   }
   if (!['repository.validate', 'run.execute', 'run.publish', 'reports.reindex', 'repository.upgrade.preview', 'legacy.preview'].includes(request.operation)) await git.expect(target, request.expected);
   switch (request.operation) {
-    case 'repository.upgrade.preview': return publicPlan(await planUpgrade(root, toolkitRoot));
-    case 'repository.upgrade.apply': {
-      const state = await git.expect(root, request.expected, { clean: true });
-      const plan = await planUpgrade(root, toolkitRoot);
-      return applyPlan({ root, home, repositoryId: workspace.id, transactionId: request.operationId, plan, expectedDigest: input.planDigest, sourceHead: state.head });
-    }
     case 'repository.transaction.resume': {
       const state = await git.inspect(root);
       return resumePlan({ root, home, repositoryId: workspace.id, transactionId: input.transactionId, sourceHead: state.head });

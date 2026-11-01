@@ -15,6 +15,7 @@ async function fileHash(root, relative) {
 }
 export async function prepareProjection(context) {
   const {root,store,options,request,git}=context,repositoryId=request.repositoryId;
+  store.repairImportBaselines(repositoryId);
   let snapshot=await ensureDraft({...context,repositoryId});
   const record=store.repository(repositoryId),prior=store.projection(repositoryId);
   invariant(snapshot.settings.configured,'SETUP_REQUIRED','請先儲存基本設定。');
@@ -109,11 +110,12 @@ export async function captureExecutionFiles(context,snapshot) {
 
 /** A newly bound, existing Spec repo is imported without replacing authored local drafts. */
 export async function importBoundRepository(context,snapshot) {
+  const initialSnapshot = snapshot;
   // Binding and local saves intentionally run concurrently. A different SQL
   // revision is not itself a content conflict: re-read and repeat the merge
   // checks against the new snapshot before retrying the compare-and-swap.
   for(let attempt=0;attempt<4;attempt++) {
-    try { return await importBoundSnapshot(context,snapshot); }
+    try { return await importBoundSnapshot({...context, initialSnapshot},snapshot); }
     catch(error) {
       if(error.code!=='DRAFT_REVISION_CHANGED'||attempt===3)throw error;
       snapshot=context.store.draft(context.request.repositoryId);
@@ -159,11 +161,19 @@ async function importBoundSnapshot(context,snapshot) {
     // Derived progress is recomputed from accepted sources/reviews/evidence; its
     // cached timestamp or last-run pointer must not veto an otherwise safe import.
     if(/^spec\/[^/]+\/[^/]+\/workflow\.json$/.test(file.path)){changes.push(file);continue;}
+    // A local draft can coexist with an unchanged incoming base: preserve it.
+    if (current && current.baseHash && current.sha256 !== current.baseHash && digest(file.content) === current.baseHash && context.initialSnapshot.files.find(f=>key(f)===key(current))?.sha256 === current.sha256) { changes.push({...file, content:current.content}); continue; }
     invariant(!current||current.sha256===digest(file.content)||current.sha256===current.baseHash||seed.some(f=>f.origin!=='checkout'&&!f.baseHash&&key(f)===key(current)&&digest(f.content)===current.sha256),
       'IMPORT_CONFLICT',`遠端的 ${file.path} 與 SQLite 草稿不同，兩份內容都保留，未自動覆蓋。`,409);
     changes.push(file);
   }
-  store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,settings,files:changes,operationId:`import-${request.operationId}`,request:{head:await git.resolve(root),sourceRevision:snapshot.revision},result:{imported:true}});
+  store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,settings,files:changes,acceptIncomingBases:true,operationId:`import-${request.operationId}`,request:{head:(await git.inspect(root)).head,sourceRevision:snapshot.revision},result:{imported:true}});
+  const projection=store.projection(repositoryId);
+  if(projection) {
+    const accepted=new Map(changes.map(file=>[key(file),file.baseHash]));
+    store.setProjection(repositoryId,{...projection,revision:store.draft(repositoryId).revision,
+      files:[...(projection.files??[]).filter(file=>!accepted.has(key(file))),...changes.map(file=>({target:file.target,path:file.path,sha256:file.baseHash}))]});
+  }
   return store.draft(repositoryId);
 }
 export async function captureSynchronized(context,snapshot) {

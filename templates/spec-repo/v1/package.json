@@ -11,6 +11,7 @@
     "bdd:test": "node .workbench-tools/spec-toolkit/cli.mjs test"
   },
   "devDependencies": {
+    "@types/node": "24.10.1",
     "@playwright/test": "1.64.1",
     "playwright-bdd": "9.2.1",
     "typescript": "5.9.3"

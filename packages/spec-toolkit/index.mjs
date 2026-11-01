@@ -2,6 +2,7 @@ import { readdir, readFile, mkdir, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { id, invariant, version, exists, safePath, walk, readJson, writeJson, atomicWrite, digest, identity } from '../contracts/index.mjs';
+import { gitSourcePaths, gitSourceFiles } from '../git-core/index.mjs';
 
 import { validateContract } from '../contracts/schemas.mjs';
 
@@ -9,6 +10,12 @@ export const layout = Object.freeze({ specRoot: 'spec', testsRoot: 'tests', repo
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url));
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 export function featureKey(requirementId, featureId) { return `${id(requirementId, 'requirementId')}/${id(featureId, 'featureId')}`; }
+export const reviewKinds = Object.freeze(['gherkin','sd','tests']);
+export const defaultProfiles = Object.freeze(['chromium']);
+export function reviewStage(confirmed) {
+  const pending=reviewKinds.find(kind=>!confirmed[kind]);
+  return pending?{gherkin:'GHERKIN',sd:'SD',tests:'TESTS'}[pending]:'IMPLEMENTATION';
+}
 async function directories(root, relative) {
   const directory = await safePath(root, relative);
   if (!await exists(directory)) return [];
@@ -28,8 +35,8 @@ export async function configuration(root) {
   invariant(config.reports?.storage === 'git' && config.reports.publishMode === 'explicit', 'INVALID_REPORT_POLICY', 'v1 reports use Git and explicit publication');
   return config;
 }
-export const TOOLKIT_VERSION = '1.3.0';
-export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/cli.mjs']);
+export const TOOLKIT_VERSION = '1.5.0';
+export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/tags.mjs', 'spec-toolkit/dependencies.mjs', 'spec-toolkit/cli.mjs']);
 export async function toolkitSnapshot(toolkitRoot) {
   const files = await Promise.all(TOOLKIT_FILES.map(async relative => ({ path: relative, content: await readFile(path.join(toolkitRoot, relative)) })));
   return { files, manifest: { schemaVersion: 1, version: TOOLKIT_VERSION, files: files.map(x => ({ path: x.path, sha256: digest(x.content) })) } };
@@ -97,11 +104,11 @@ export async function createFeature(root, input) {
   const draft = input.guided ? buildGuidedFeature(input) : null;
   const caseId = 'CASE-001';
   const files = {
-    [`spec/${key}/feature.yaml`]: json({ schemaVersion: 1, id: input.featureId, requirementId: input.requirementId, title: input.title, projectIds, caseIds: draft?.caseIds ?? [caseId], profiles: ['chromium'] }),
+    [`spec/${key}/feature.yaml`]: json({ schemaVersion: 1, id: input.featureId, requirementId: input.requirementId, title: input.title, projectIds, caseIds: draft?.caseIds ?? [caseId], profiles: [...defaultProfiles] }),
     [`spec/${key}/${input.featureId}.feature`]: draft?.featureText ?? `Feature: ${input.title}\n\n  @case:${caseId}\n  Scenario: Define acceptance behaviour\n    Given the acceptance steps have not been implemented\n`,
     [`spec/${key}/${input.featureId}.sd.md`]: `# ${input.title}\n\nStatus: DRAFT\n\n## Scope\n\n## Architecture\n\n## Data and migrations\n\n## Test and deployment contract\n`,
-    [`tests/${key}/${input.featureId}.steps.ts`]: `import { Given } from '../../_shared/bdd';\n\nGiven('the acceptance steps have not been implemented', async () => {\n  throw new Error('UNIMPLEMENTED_ACCEPTANCE_STEP: replace this scaffold with real operations and assertions');\n});\n`,
-    [`tests/${key}/${input.featureId}.hooks.ts`]: `import { AfterStep } from '../../_shared/bdd';\n\nAfterStep(async ({ page, $testInfo, $step }) => {\n  await $testInfo.attach('step-' + $step.title, {\n    contentType: 'image/png', body: await page.screenshot(),\n  });\n});\n`,
+    [`tests/${key}/${input.featureId}.steps.ts`]: '',
+    [`tests/${key}/${input.featureId}.hooks.ts`]: '',
     [`tests/${key}/fixtures/.gitkeep`]: '', [`tests/${key}/support/.gitkeep`]: '',
     [`reports/${key}/.gitkeep`]: ''
   };
@@ -128,13 +135,15 @@ export async function scan(root) {
       invariant(Array.isArray(feature.projectIds) && new Set(feature.projectIds).size === feature.projectIds.length
         && feature.projectIds.every(p => config.projects.some(x => x.id === p)), 'UNKNOWN_PROJECT', key);
       for (const field of ['caseIds', 'profiles']) {
-        invariant(Array.isArray(feature[field]) && feature[field].length > 0 && new Set(feature[field]).size === feature[field].length, 'INVALID_FEATURE_MATRIX', `${key}.${field}`);
+        invariant(Array.isArray(feature[field]) && (feature[field].length > 0 || feature.authoringOnly && field === 'profiles') && new Set(feature[field]).size === feature[field].length, 'INVALID_FEATURE_MATRIX', `${key}.${field}`);
         feature[field].forEach(value => id(value, field));
       }
       invariant(feature.profiles.every(p => ['chromium', 'firefox', 'webkit'].includes(p)), 'UNSUPPORTED_PROFILE', key);
-      for (const file of [`spec/${key}/${featureId}.feature`, `spec/${key}/${featureId}.sd.md`, `tests/${key}/${featureId}.steps.ts`, `tests/${key}/${featureId}.hooks.ts`])
+      const testPaths = feature.authoringOnly ? [] : [`tests/${key}/${featureId}.steps.ts`, `tests/${key}/${featureId}.hooks.ts`];
+      for (const file of [`spec/${key}/${featureId}.feature`, `spec/${key}/${featureId}.sd.md`, ...testPaths])
         await readFile(await safePath(root, file, { missing: false }));
-      features.push({ ...feature, key });
+      const testPlan = { paths: testPaths, ready: !feature.authoringOnly && (await Promise.all(testPaths.map(async file => Boolean((await readFile(await safePath(root, file), 'utf8')).trim())))).every(Boolean) };
+      features.push({ ...feature, key, testPlan });
     }
   }
   for (const area of ['tests', 'reports']) for (const req of await directories(root, area))
@@ -154,16 +163,16 @@ export async function validate(root, git, { pinned = false } = {}) {
 }
 export async function baseline(root, requirementId, featureId) {
   const key = featureKey(requirementId, featureId), files = [];
-  const add = async relative => { if (await exists(await safePath(root, relative))) files.push([relative, digest(await readFile(await safePath(root, relative)))]); };
+  const folders=['tests/_shared', `tests/${requirementId}/_shared`, `tests/${key}`, '.workbench-tools'],sources=await gitSourceFiles(root,folders);
+  const candidates=[`spec/${key}/${featureId}.feature`,`spec/${requirementId}/requirement.yaml`,`spec/${key}/${featureId}.sd.md`,`spec/${key}/feature.yaml`,...sources,'workbench.yaml','bdd.config.ts','playwright.config.ts','package.json','package-lock.json'];
+  const accepted=new Set(await gitSourcePaths(root,candidates));
+  const add = async relative => { if (accepted.has(relative)&&await exists(await safePath(root, relative))) files.push([relative, digest(await readFile(await safePath(root, relative)))]); };
   await add(`spec/${key}/${featureId}.feature`);
   await add(`spec/${requirementId}/requirement.yaml`);
   const gherkin = identity(files);
   await add(`spec/${key}/${featureId}.sd.md`); await add(`spec/${key}/feature.yaml`);
   const sd = identity(files);
-  for (const folder of ['tests/_shared', `tests/${requirementId}/_shared`, `tests/${key}`, '.workbench-tools']) {
-    const directory = await safePath(root, folder);
-    if (await exists(directory)) for (const file of await walk(directory)) await add(`${folder}/${file}`);
-  }
+  for(const file of sources)await add(file);
   for (const file of ['workbench.yaml', 'bdd.config.ts', 'playwright.config.ts', 'package.json', 'package-lock.json']) await add(file);
   return { gherkin, sd, tests: identity(files), files };
 }
@@ -173,20 +182,33 @@ export async function reviewState(root, requirementId, featureId) {
   validateContract('review', review);
   const records = Object.hasOwn(review.features, id(featureId)) ? review.features[featureId] : {};
   const confirmed = {};
-  for (const stage of ['gherkin', 'sd', 'tests']) confirmed[stage] = records[stage]?.digest === hashes[stage];
-  const stage = !confirmed.gherkin ? 'GHERKIN' : !confirmed.sd ? 'SD' : !confirmed.tests ? 'TESTS' : 'IMPLEMENTATION';
-  return { stage, confirmed, hashes, records };
+  let upstream = true;
+  for (const stage of reviewKinds) {
+    confirmed[stage] = upstream && records[stage]?.digest === hashes[stage];
+    upstream = confirmed[stage];
+  }
+  const stage = reviewStage(confirmed);
+  return { stage, confirmed, hashes, records, editable: {gherkin:!records.gherkin,sd:!records.sd,tests:confirmed.sd&&!records.tests} };
 }
 export async function confirm(root, input) {
-  invariant(['gherkin', 'sd', 'tests'].includes(input.stage), 'INVALID_STAGE', 'Confirm gherkin, sd or tests');
+  if (input.stage === 'tests') {
+    const feature = await readJson(await safePath(root, `spec/${input.requirementId}/${input.featureId}/feature.yaml`, { missing: false }));
+    invariant(!feature.authoringOnly, 'TEST_RUNNER_NOT_CONFIGURED', '此規格尚未接線工作台測試執行器。', 409);
+  }
+  invariant(reviewKinds.includes(input.stage), 'INVALID_STAGE', 'Confirm gherkin, sd or tests');
   invariant(typeof input.confirmedBy === 'string' && input.confirmedBy.trim() && input.confirmedBy.length <= 120, 'CONFIRMER_REQUIRED', 'Supply the human reviewer identity');
   const state = await reviewState(root, input.requirementId, input.featureId);
   invariant(input.expectedDigest === state.hashes[input.stage], 'CONTENT_CHANGED', 'Source changed since review', 409);
   if (input.stage !== 'gherkin') invariant(state.confirmed.gherkin, 'UPSTREAM_NOT_CONFIRMED', 'Confirm Gherkin first', 409);
   if (input.stage === 'tests') invariant(state.confirmed.sd, 'UPSTREAM_NOT_CONFIRMED', 'Confirm SD first', 409);
+  if(state.records[input.stage]) {
+    invariant(state.confirmed[input.stage],'STAGE_READ_ONLY','請先退回此階段，才能重新確認已變更的來源。',409);
+    return {...state,committed:false};
+  }
   const file = await safePath(root, `spec/${input.requirementId}/review.json`), review = await readJson(file);
   review.features ??= {}; if (!Object.hasOwn(review.features, input.featureId)) review.features[input.featureId] = {};
   review.features[input.featureId][input.stage] = { digest: state.hashes[input.stage], confirmedBy: input.confirmedBy, confirmedAt: new Date().toISOString() };
+  for (const stage of reviewKinds.slice(reviewKinds.indexOf(input.stage) + 1)) delete review.features[input.featureId][stage];
   await writeJson(file, review);
   return { ...(await reviewState(root, input.requirementId, input.featureId)), committed: false };
 }
@@ -196,5 +218,36 @@ export async function saveFile(root, input) {
   const file = await safePath(root, input.path);
   const current = await exists(file) ? digest(await readFile(file)) : null;
   invariant(Object.hasOwn(input, 'expectedHash') && current === input.expectedHash, 'CONTENT_CHANGED', 'File changed since it was opened', 409);
+  await assertFileEditable(root, input.path);
   await atomicWrite(file, input.content); return { path: input.path, sha256: digest(input.content), committed: false };
+}
+
+/** Source ownership follows the same review digests used to derive workflow progress. */
+export async function assertFileEditable(root, relative) {
+  for (const feature of (await scan(root)).features) {
+    const state = await reviewState(root, feature.requirementId, feature.id);
+    const stage = relative === `spec/${feature.key}/${feature.id}.feature` || relative === `spec/${feature.key}/requirement-source.json` || relative === `spec/${feature.requirementId}/requirement.yaml` ? 'gherkin'
+      : relative === `spec/${feature.key}/${feature.id}.sd.md` || relative === `spec/${feature.key}/feature.yaml` ? 'sd'
+      : relative.startsWith(`tests/${feature.key}/`) || state.hashes.files.some(([file]) => file === relative) ? 'tests' : null;
+    if (!stage) continue;
+    invariant(!state.records[stage], 'STAGE_READ_ONLY', '此階段已確認，請先退回該階段再修改。', 409);
+    if (stage === 'tests' && relative.startsWith(`tests/${feature.key}/`)) invariant(state.confirmed.sd, 'UPSTREAM_NOT_CONFIRMED', '確認系統設計後才能編輯測試計劃。', 409);
+  }
+}
+
+export async function restartReview(root, input) {
+  const stages = reviewKinds, index = stages.indexOf(input.stage);
+  invariant(index >= 0, 'INVALID_STAGE', '退回需求、系統設計或測試計劃。');
+  const state = await reviewState(root, input.requirementId, input.featureId);
+  invariant(input.expectedDigest === state.hashes.tests, 'CONTENT_CHANGED', '內容已更新，請重新讀取後再退回。', 409);
+  invariant(stages.slice(0, index).every(stage => state.confirmed[stage]), 'UPSTREAM_NOT_CONFIRMED', '只能退回目前或已通過的階段。', 409);
+  const file = await safePath(root, `spec/${id(input.requirementId)}/review.json`), review = await readJson(file);
+  for (const stage of stages.slice(index)) if (review.features[input.featureId]) delete review.features[input.featureId][stage];
+  await writeJson(file, review);
+  // Clear the current plan, preserving previous bytes in SQLite authoring history.
+  if (index <= stages.indexOf('sd')) {
+    const directory = await safePath(root, `tests/${featureKey(input.requirementId, input.featureId)}`);
+    for (const relative of await walk(directory)) await atomicWrite(await safePath(directory, relative), '');
+  }
+  return { ...(await reviewState(root, input.requirementId, input.featureId)), nextStage: { gherkin: 'GHERKIN', sd: 'SD', tests: 'TESTS' }[input.stage] };
 }

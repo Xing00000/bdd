@@ -2,10 +2,13 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from 'node:fs/promi
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { createGit } from '../../packages/git-core/index.mjs';
 import { initialize, createFeature, reviewState, confirm } from '../../packages/spec-toolkit/index.mjs';
 import { writeJson, digest } from '../../packages/contracts/index.mjs';
 export const toolkitRoot = fileURLToPath(new URL('../..', import.meta.url));
+const require=createRequire(import.meta.url);
+export const testBrowserRoot=require(path.join(path.dirname(require.resolve('playwright-core/package.json')),'lib/coreBundle.js')).registry.registryDirectory;
 export const git = createGit({ allowLocal: true });
 export async function fixture(t) {
   const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'bdd-workstation-test-')));

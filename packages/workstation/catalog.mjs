@@ -124,7 +124,7 @@ export async function acquireRepository(context) {
     status.catalog = { commit: incoming, features: catalog.features, projects: catalogModules.map(({ id, path, url, commit }) => ({ id, path, url, commit })) };
     status.versions = refs;
     const warnings = [...acquisitionWarnings];
-    if (incoming) {
+    if (incoming || await exists(path.join(root, 'workbench.yaml'))) {
       try { draft = await importBoundRepository({ ...context, root: sourceChanges.length?root:catalogRoot, checkoutBases:sourceChanges.length?checkoutBases:{} }, draft); }
       catch (error) { if (!['IMPORT_CONFLICT', 'BINDING_CONFLICT', 'DRAFT_REVISION_CHANGED'].includes(error.code)) throw error; warnings.push(errorResult(error)); }
     }
