@@ -30,7 +30,7 @@ export async function createWorkstation(configuration) {
     if (closing || children.has(operationId) || store.get(operationId)?.status !== 'QUEUED') return;
     const child = spawn(process.execPath, [fileURLToPath(new URL('./worker.mjs', import.meta.url)), JSON.stringify(options), operationId], {
       env: { ...processEnvironment({}, { git: true }), ...((options.browserRoot ?? process.env.PLAYWRIGHT_BROWSERS_PATH) ? { PLAYWRIGHT_BROWSERS_PATH: options.browserRoot ?? process.env.PLAYWRIGHT_BROWSERS_PATH } : {}) },
-      detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe']
+      detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe', 'ipc']
     });
     children.set(operationId, child); let stderr = '';
     child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-32768); });
@@ -47,6 +47,18 @@ export async function createWorkstation(configuration) {
   for (const operationId of store.recover()) launch(operationId);
   const service = {
     options,
+    async terminal(operationId, offset=0) {
+      const operation=this.operation(operationId);
+      invariant(operation.request.operation==='workflow.develop','NOT_TERMINAL','這不是開發工作。',404);
+      const { readTerminal }=await import('./development.mjs');
+      return {...await readTerminal(options.home,operationId,offset),status:operation.status,result:operation.result,error:operation.error};
+    },
+    terminalInput(operationId, input) {
+      const operation=this.operation(operationId),child=children.get(operationId);
+      invariant(operation.request.operation==='workflow.develop'&&operation.status==='RUNNING'&&child?.connected,'TERMINAL_UNAVAILABLE','終端已結束或不屬於這個服務。',409);
+      invariant(typeof input.data==='string'&&Buffer.byteLength(input.data)<=4096 || input.data===undefined&&Number.isInteger(input.cols)&&input.cols>=20&&input.cols<=300&&Number.isInteger(input.rows)&&input.rows>=5&&input.rows<=150,'INVALID_TERMINAL_INPUT','終端輸入無效。');
+      child.send({type:'development.input',...(typeof input.data==='string'?{data:input.data}:{cols:input.cols,rows:input.rows})});return {sent:true};
+    },
     async requirement(repositoryId, requirementId, featureId) {
       store.repository(id(repositoryId));
       const root=await repositoryPath(options.home,repositoryId,store);

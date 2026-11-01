@@ -192,7 +192,7 @@ export async function confirm(root, input) {
 }
 export async function saveFile(root, input) {
   invariant(typeof input.content === 'string' && Buffer.byteLength(input.content) <= 2 * 1024 * 1024, 'INVALID_CONTENT', 'File content must be at most 2 MiB');
-  invariant((/^(spec|tests)\//.test(input.path) || ['workbench.yaml', 'bdd.config.ts', 'playwright.config.ts', 'package.json', 'package-lock.json'].includes(input.path)) && !/(^|\/)(review|workflow)\.json$/.test(input.path), 'FILE_NOT_EDITABLE', 'Edit spec/tests sources; use explicit review operations for confirmations', 403);
+  invariant((/^(spec|tests)\//.test(input.path) || ['workbench.yaml', 'bdd.config.ts', 'playwright.config.ts', 'package.json', 'package-lock.json'].includes(input.path)) && !/(^|\/)(review|workflow|feedback)\.json$/.test(input.path), 'FILE_NOT_EDITABLE', 'Edit spec/tests sources; use explicit review operations for confirmations', 403);
   const file = await safePath(root, input.path);
   const current = await exists(file) ? digest(await readFile(file)) : null;
   invariant(Object.hasOwn(input, 'expectedHash') && current === input.expectedHash, 'CONTENT_CHANGED', 'File changed since it was opened', 409);

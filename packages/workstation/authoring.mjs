@@ -1,4 +1,6 @@
 import { draftModules, workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules } from './workflow-state.mjs';
+import { validateAgentSettings } from './development.mjs';
+import { saveFeedback, readFeedback } from './feedback.mjs';
 import { canonicalLocation } from './locations.mjs';
 /** Authoring does not invoke Git, create branches, download repositories or execute repository code. */
 import path from 'node:path';
@@ -78,7 +80,7 @@ export async function draftDetail(context) {
   const workflowModules=await liveWorkflowModules(context,snapshot);
   await inDraftView(snapshot,async root=>{
     try { spec=await scan(root); for(const f of spec.features) {
-      f.review=await reviewState(root,f.requirementId,f.id);
+      f.review=await reviewState(root,f.requirementId,f.id); f.feedback=await readFeedback(root,f.key);
       f.workflow=workflowState(f,workflowModules,context.store.runs(repositoryId),context.store.reports(repositoryId),spec.config.specRepositoryId);
       f.workflow.portableState=await recordedWorkflow(root,f,f.workflow);
     } }
@@ -144,12 +146,15 @@ export async function editDraft(context) {
       invariant(new Set((input.projects??[]).map(p=>p.id)).size===(input.projects??[]).length,'DUPLICATE_PROJECT','產品代號不能重複。');
       let config;try{config=await configuration(root);}catch{config=JSON.parse(await readFile(path.join(options.toolkitRoot,'templates/spec-repo/v1/workbench.yaml'),'utf8'));config.specRepositoryId=repositoryId;}
       config.projects=projects.map(p=>({id:p.id,path:`projects/${p.id}`}));await writeJson(path.join(root,'workbench.yaml'),config);
+      if(input.agent!==undefined)settings.agent=validateAgentSettings(input.agent);
       if(input.execution)await configureExecution(root,{...input.execution,expectedHash:digest(await readFile(path.join(root,'workbench.yaml')))});
       Object.assign(settings,{schemaVersion:1,reviewer:input.reviewer.trim(),configured:true,projects,...(input.execution?{execution:input.execution}:{}),updatedAt:new Date().toISOString()});
       result={ready:true,settings,connection:'NOT_CHECKED'};
     } else {
       invariant(settings.configured,'SETUP_REQUIRED','請先儲存基本設定；不需要先連線遠端。');
-      if(request.operation==='workflow.requirement.save') {
+      if(request.operation==='workflow.feedback') {
+        result=await saveFeedback(root,input,context);
+      } else if(request.operation==='workflow.requirement.save') {
         result=await saveComposer(root,input);
       } else if(request.operation==='repository.save') {
         if(input.kind==='scope'){await configureFeature(root,input);}

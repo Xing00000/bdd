@@ -42,7 +42,7 @@ export function draftMethods(db) {
       return JSON.parse(row.result_json);
     },
     /** One SQLite transaction includes content, settings, history and the durable save receipt. */
-    saveDraft(repositoryId, { expectedRevision, settings, files, operationId, request, result = {}, proposalKey }) {
+    saveDraft(repositoryId, { expectedRevision, settings, files, deleteFiles = [], operationId, request, result = {}, proposalKey }) {
       db.exec('BEGIN IMMEDIATE');
       try {
         const previous = this.draftReceipt(repositoryId, operationId, request);
@@ -60,12 +60,16 @@ export function draftMethods(db) {
           db.prepare(`INSERT INTO authoring_files VALUES(?,?,?,?,?,?) ON CONFLICT(repository_id,target,path)
             DO UPDATE SET content=excluded.content,sha256=excluded.sha256,base_hash=COALESCE(authoring_files.base_hash,excluded.base_hash)`).run(repositoryId,file.target,file.path,file.content,digest(file.content),old?.baseHash ?? file.baseHash ?? null);
         }
+        for (const file of deleteFiles) {
+          invariant(file.target.startsWith('project:') && !seen.has(`${file.target}\0${file.path}`), 'INVALID_DELETE', 'Only unambiguous product deletions are allowed');
+          db.prepare('DELETE FROM authoring_files WHERE repository_id=? AND target=? AND path=?').run(repositoryId,file.target,file.path);
+        }
         const receipt = { ...result, saved: true, storage: 'sqlite', revision, synchronized: false };
         db.prepare(`INSERT INTO authoring_state VALUES(?,?,?,?) ON CONFLICT(repository_id)
           DO UPDATE SET revision=excluded.revision,settings_json=excluded.settings_json,updated_at=excluded.updated_at`).run(repositoryId,revision,JSON.stringify(value),at);
         db.prepare(`INSERT INTO repository_preferences(repository_id,settings_json) VALUES(?,?) ON CONFLICT(repository_id)
           DO UPDATE SET settings_json=excluded.settings_json`).run(repositoryId,JSON.stringify(value));
-        db.prepare('INSERT INTO authoring_history VALUES(?,?,?,?,?,?,?,?)').run(repositoryId,revision,operationId,identity(request),JSON.stringify(files),JSON.stringify(value),JSON.stringify(receipt),at);
+        db.prepare('INSERT INTO authoring_history VALUES(?,?,?,?,?,?,?,?)').run(repositoryId,revision,operationId,identity(request),JSON.stringify([...files,...deleteFiles.map(f=>({...f,deleted:true}))]),JSON.stringify(value),JSON.stringify(receipt),at);
         if(proposalKey && result.key) db.prepare('UPDATE requirement_proposals SET editor_key=? WHERE repository_id=? AND editor_key=?').run(result.key,repositoryId,proposalKey);
         db.exec('COMMIT'); return receipt;
       } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -80,6 +84,6 @@ export function draftMethods(db) {
   };
 }
 
-export const isLocalSave = request => ['repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save'].includes(request.operation)
+export const isLocalSave = request => ['repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback'].includes(request.operation)
   || request.operation === 'workflow.review' && ['gherkin','sd'].includes(request.input?.stage);
-export const projectionJobPredicate = `NOT (json_extract(request_json,'$.operation') IN ('repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save') OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage') IN ('gherkin','sd')))`;
+export const projectionJobPredicate = `NOT (json_extract(request_json,'$.operation') IN ('repository.setup','repository.save','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback') OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage') IN ('gherkin','sd')))`;

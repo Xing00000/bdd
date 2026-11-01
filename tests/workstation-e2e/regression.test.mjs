@@ -66,7 +66,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   await dialog.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true}).fill(selectedLocalPath);
   await page.screenshot({path:path.join(artifacts,'00-custom-directory.png'),fullPage:true});
   await dialog.getByRole('button',{name:'開始使用',exact:true}).click();await expect(dialog).not.toBeVisible();await ready();
-  await expect(page.locator('#binding-status')).toContainText('本地內容已就緒');await expect(page.locator('#feature-select option')).toHaveCount(3);
+  await expect(page.locator('#binding-status')).toContainText('已連接');await expect(page.locator('#feature-select option')).toHaveCount(3);
   const repositoryId=new URL(page.url()).searchParams.get('repo'),checkout=selectedLocalPath;
   await expect(page.locator('#binding-status')).toContainText(selectedLocalPath);
   assert.equal(await exists(path.join(home,'repositories',repositoryId,'repo')),false,'The selected directory is the only editing checkout');
@@ -102,7 +102,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   let savedDuringRun;
   await startAndWait(()=>page.getByRole('button',{name:'執行全部回歸測試',exact:true}).click(),'PASSED',{during:async()=>{
     await tab('需求流程');const lower=page.getByRole('textbox',{name:'Gherkin',exact:true});savedDuringRun=(await lower.inputValue())+'# saved while a frozen regression runs\n';await lower.fill(savedDuringRun);
-    await page.locator('#save-requirement').click();await expect(page.locator('#requirement-state')).toHaveText('已儲存至 SQLite');await ready();
+    await page.locator('#save-requirement').click();await expect(page.locator('#requirement-state')).toHaveText('已儲存');await ready();
     await tab('版本與回歸');
   }});
   latest=page.locator('.regression-card').first();await expect(latest).toContainText('通過 3 / 全部 3');await expect(latest).toContainText(p2);await expect(latest).toContainText(s2);

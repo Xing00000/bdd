@@ -82,7 +82,7 @@ test('shared workflow derives progress from matching evidence, never from an edi
 });
 test('newer failure for identical inputs supersedes an earlier passing result',()=>{
   const result=workflowState(feature,[],[],[report(),report('RUN-later',{finishedAt:'2026-01-02T00:00:00Z',testOutcome:'FAILED',verification:'NOT_VERIFIED'})],'spec-one');
-  assert.equal(result.stage,'VERIFICATION');assert.equal(result.latestReport.runId,'RUN-later');assert.notEqual(result.verification,'VERIFIED');
+  assert.equal(result.stage,'IMPLEMENTATION');assert.equal(result.latestReport.runId,'RUN-later');assert.notEqual(result.verification,'VERIFIED');
 });
 test('report matching is feature-specific, de-duplicates local and repository evidence, and quarantines collisions',()=>{
   const shared=report(),local={id:shared.runId,state:'SEALED',result:shared.manifest};

@@ -1,6 +1,7 @@
 /** Portable progress is a versioned projection of source reviews and sealed evidence.
  * The stage string is never an authority by itself; recompute from matching inputs.
  */
+import { readFeedback } from './feedback.mjs';
 import { readFile } from 'node:fs/promises';
 import { id, identity, digest, exists, safePath, writeJson } from '../contracts/index.mjs';
 import { createGit } from '../git-core/index.mjs';
@@ -48,14 +49,16 @@ export function workflowState(feature, modules = [], runs = [], reports = [], sp
   const history = featureReports(feature, modules, runs, reports, specRepositoryId);
   const pending = ['gherkin', 'sd', 'tests'].find(stage => !feature.review.confirmed[stage]);
   const latest = history.find(r => r.current && r.manifest.scope === 'ALL_CASES');
-  const verified = !pending && Boolean(latest?.qualified);
+  const feedback=(feature.feedback?.items??[]).filter(item=>!latest?.qualified || !latest.manifest.startedAt || time(latest.manifest.startedAt)<=time(item.createdAt));
+  const verified = !pending && !feedback.length && Boolean(latest?.qualified);
   const stage = pending ? { gherkin: 'GHERKIN', sd: 'SD', tests: 'TESTS' }[pending]
-    : verified ? 'VERIFIED' : latest ? 'VERIFICATION' : 'IMPLEMENTATION';
+    : verified ? 'VERIFIED' : 'IMPLEMENTATION';
   return {
     schemaVersion: 1, specRepositoryId, requirementId: feature.requirementId, featureId: feature.id,
     key: feature.key ?? `${feature.requirementId}/${feature.id}`, stage,
     status: pending ? 'AWAITING_REVIEW' : verified ? 'COMPLETE' : 'READY_TO_RUN',
-    requiredReview: pending ?? null,
+    requiredReview: pending ?? null, feedback,
+    needsChanges: feedback.length>0,
     nextAction: pending ? 'HUMAN_REVIEW' : verified ? 'NONE' : 'RUN_VERIFICATION',
     sourceDigests: { gherkin: feature.review.hashes.gherkin, sd: feature.review.hashes.sd, tests: feature.review.hashes.tests },
     reviewPath: `spec/${feature.requirementId}/review.json`, confirmed: feature.review.confirmed,
@@ -105,6 +108,7 @@ export async function refreshWorkflowFiles(root, { modules = [], runs = [], repo
   const changed = [];
   for (const feature of data.features) {
     feature.review = await reviewState(root, feature.requirementId, feature.id);
+    feature.feedback = await readFeedback(root,feature.key);
     const workflow = workflowState(feature, modules, runs, reports, data.config.specRepositoryId);
     const { reports: ignored, latestHistoricalReport, ...portable } = workflow;
     // Persist a portable evidence reference, not machine-local IDs, paths or jobs.

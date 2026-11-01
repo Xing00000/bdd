@@ -20,6 +20,17 @@ test('all-UI: two textareas → upload/generate/edit/restore → SQLite save →
   const base=await mkdtemp(path.join(os.tmpdir(),'workbench-ui-')),home=path.join(base,'station');
   const artifacts=path.resolve(process.env.WB_E2E_ARTIFACTS??path.join(base,'evidence'));await mkdir(artifacts,{recursive:true});
   const driver=path.join(base,'driver');await mkdir(driver);
+  // A deterministic CLI fixture, not a simulated PTY or an external paid LLM call.
+  const agentFile=path.join(driver,'agent-fixture.mjs');
+  await writeFile(agentFile,`import fs from 'node:fs';
+if(!process.stdin.isTTY||!process.stdout.isTTY)throw Error('real PTY required');
+console.log('PTY_READY real-terminal=true');
+process.stdin.setEncoding('utf8');process.stdin.on('data',x=>console.log('INPUT:'+x.trim()));
+const prompt=process.argv.at(-1);
+if(prompt.includes('feedback-pty-fixture')){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');console.log('Agent saved agent-fixed.txt');}
+setTimeout(()=>process.exit(0),2500);
+`);
+
   const browsers=process.env.PLAYWRIGHT_BROWSERS_PATH??path.join(base,'browsers');
   const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:browsers};delete env.WB_ENABLE_TRUSTED_EXECUTION;const git=createGit({allowLocal:true});
   const remotes={alpha:path.join(base,'alpha.git'),beta:path.join(base,'beta.git'),mirror:path.join(base,'mirror.git'),product:path.join(base,'product.git')};
@@ -54,6 +65,7 @@ const server=http.createServer((request,response)=>{
     if(context)await context.tracing.stop({path:path.join(artifacts,'ui-trace.zip')}).catch(()=>{});
     await browser?.close();server.kill('SIGTERM');await Promise.race([new Promise(r=>server.once('exit',r)),new Promise(r=>setTimeout(r,2500))]);if(server.exitCode===null)server.kill('SIGKILL');
     await writeFile(path.join(artifacts,'server.log'),serverLog);await writeJson(path.join(artifacts,'ui-write-requests.json'),events);await writeJson(path.join(artifacts,'browser-errors.json'),browserErrors);
+    if(await exists(path.join(home,'development')))await cp(path.join(home,'development'),path.join(artifacts,'development'),{recursive:true});
     if(await exists(path.join(home,'executions')))await cp(path.join(home,'executions'),path.join(artifacts,'executions'),{recursive:true,filter:source=>!path.relative(path.join(home,'executions'),source).split(path.sep).some(p=>['repo','home','tmp'].includes(p))});
     if(process.env.WB_E2E_ARTIFACTS)await rm(base,{recursive:true,force:true});
   });
@@ -85,7 +97,7 @@ const server=http.createServer((request,response)=>{
   async function editSource(content){await ready();await page.getByRole('textbox',{name:'規格測試原始碼',exact:true}).fill(content);await job(page.getByRole('button',{name:'儲存',exact:true}),'repository.save');}
   // Every workstation write below is an actual UI event. Git is used only to
   // assert persisted/remote facts, never to complete a missing UI workflow step.
-  await page.goto(site);await expect(page.getByRole('heading',{name:'把需求推進到可驗收的結果',exact:true})).toBeVisible();
+  await page.goto(site);await expect(page.getByRole('heading',{name:'工作台',exact:true})).toBeVisible();
   const alpha=await bind('Alpha 規格庫',remotes.alpha,true),beta=await bind('Beta 規格庫',remotes.beta);assert.notEqual(alpha,beta);
   for(const remote of [remotes.alpha,remotes.beta])assert.equal((await git.command(undefined,['--git-dir',remote,'show-ref'],{allowFailure:true})).exitCode,1,'Setup must not upload');
   await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();
@@ -113,7 +125,7 @@ const server=http.createServer((request,response)=>{
   await page.getByText('先前的生成草稿',{exact:true}).click();
   await page.getByRole('button',{name:'還原產生前內容',exact:true}).first().click();await d.getByRole('button',{name:'還原草稿',exact:true}).click();await expect(lower).toHaveValue(manual);
   await job(page.locator('#save-requirement'),'workflow.requirement.save');
-  await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
+  await expect(page.locator('#phase-title')).toHaveText('需求');
   await page.screenshot({path:path.join(artifacts,'00-two-input-requirement.png'),fullPage:true});
   const savedRoot=path.join(home,'repositories',alpha,'repo');
   assert.equal(await exists(savedRoot),true,'Binding automatically created the checkout');
@@ -124,19 +136,27 @@ const server=http.createServer((request,response)=>{
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
   // Revisit settings without publishing any content; the automatically acquired checkout is unchanged.
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
+  await page.getByLabel('CLI Agent 執行檔',{exact:true}).fill(process.execPath);await page.getByLabel('CLI Agent 參數',{exact:true}).fill(`${agentFile}\n{prompt}`);
   await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.setup');
   assert.equal(await exists(savedRoot),true);
-  await tab('需求流程');await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
+  await tab('需求流程');await expect(page.locator('#phase-title')).toHaveText('需求');
 
-  await job(page.getByRole('button',{name:'確認需求並繼續',exact:true}),'workflow.review');await expect(page.getByRole('dialog')).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
+  await job(page.getByRole('button',{name:'確認需求並繼續',exact:true}),'workflow.review');await expect(page.getByRole('dialog')).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('設計');
   await editSource('# Sign-in design\n\nThe versioned product must display Signed in after clicking its sign-in button. Use the pinned source health identity and a screenshot for each real BDD step.\n');
-  await job(page.getByRole('button',{name:'確認設計並繼續',exact:true}),'workflow.review');await expect(page.locator('#phase-title')).toHaveText('確認真正的操作與斷言');
+  await job(page.getByRole('button',{name:'確認設計並繼續',exact:true}),'workflow.review');await expect(page.locator('#phase-title')).toHaveText('測試');
   await editSource(`import { Given, When, Then } from '../../_shared/bdd';\nimport { expect } from '@playwright/test';\nGiven('the product is open', async ({ page }) => { await page.goto('/'); });\nWhen('I sign in', async ({ page }) => { await page.getByRole('button', { name: 'Sign in' }).click(); });\nThen('the product confirms I signed in', async ({ page }) => { await expect(page.getByRole('status')).toHaveText('Signed in'); });\n`);
   await expect(page.getByRole('button',{name:'確認測試並繼續',exact:true})).toBeEnabled();
-  await page.getByRole('button',{name:'確認測試並繼續',exact:true}).click();d=page.getByRole('dialog');await expect(d).toContainText('安裝必要套件並繼續');await expect(d).toContainText('@playwright/test');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(page.locator('#phase-title')).toHaveText('確認真正的操作與斷言');assert.equal(await exists(path.join(savedRoot,'node_modules')),false,'Cancel must not install');
-  await page.getByRole('button',{name:'確認測試並繼續',exact:true}).click();await expect(d).toBeVisible();await job(d.getByRole('button',{name:'安裝並繼續',exact:true}),'workflow.review');await expect(d).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('讓產品符合已確認的測試');
+  await page.getByRole('button',{name:'確認測試並繼續',exact:true}).click();d=page.getByRole('dialog');await expect(d).toContainText('安裝必要套件並繼續');await expect(d).toContainText('@playwright/test');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(page.locator('#phase-title')).toHaveText('測試');assert.equal(await exists(path.join(savedRoot,'node_modules')),false,'Cancel must not install');
+  await page.getByRole('button',{name:'確認測試並繼續',exact:true}).click();await expect(d).toBeVisible();await job(d.getByRole('button',{name:'安裝並繼續',exact:true}),'workflow.review');await expect(d).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('開發');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'01-simple-workflow.png'),fullPage:true});
-  await job(page.getByRole('button',{name:'開始驗收',exact:true}),'workflow.verify');await expect(page.locator('#verification-panel')).toBeVisible();let run=page.locator('#feature-report-list [data-run-id]').first();const failedRunId=await run.getAttribute('data-run-id');await expect(run).toContainText('FAILED');await expect(run).toContainText('NOT_VERIFIED');
+  const beforeDevelopment=await page.locator('#notice').getAttribute('data-job-id');
+  await expect(page.locator('#implementation-panel')).toBeVisible();await expect(page.locator('#source-panel')).not.toBeVisible();await expect(page.locator('#scope-details')).not.toBeVisible();
+  await page.getByRole('button',{name:'確認開發',exact:true}).click();await expect(page.locator('#development-terminal')).toBeVisible({timeout:30000});
+  await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('terminal-probe');await page.keyboard.press('Enter');
+  await page.screenshot({path:path.join(artifacts,'10-real-agent-terminal.png'),fullPage:true});
+  await page.waitForFunction(before=>{const n=document.querySelector('#notice');return n.dataset.operation==='workflow.develop'&&n.dataset.jobId!==before;},beforeDevelopment,{timeout:360000});await ready();
+  await expect(page.locator('#implementation-panel')).toBeVisible();assert.equal(await page.getByRole('button',{name:'再次驗收',exact:true}).count(),0);
+  await click('5 驗收');await expect(page.locator('#verification-panel')).toBeVisible();let run=page.locator('#feature-report-list [data-run-id]').first();const failedRunId=await run.getAttribute('data-run-id');const failedDevelopmentCount=await page.locator('#feature-report-list [data-run-id]').count();assert.equal(failedDevelopmentCount,3,'A failed full suite is retried within development, never marked accepted');await expect(run).toContainText('FAILED');await expect(run).toContainText('NOT_VERIFIED');
   await run.getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id',failedRunId);await expect(page.locator('#feature-report-view')).toHaveAttribute('aria-busy','false');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'02-failure.png'),fullPage:true});
   await click('開啟產品 product');await page.getByLabel('產品檔案',{exact:true}).selectOption('message.txt');await expect(page.getByRole('textbox',{name:'產品原始碼',exact:true})).toHaveValue('Not implemented\n');
@@ -146,8 +166,8 @@ const server=http.createServer((request,response)=>{
   await page.reload();await ready();await expect(page.getByRole('textbox',{name:'產品原始碼',exact:true})).toHaveValue('Signed in\n');
   assert.equal((await git.command(undefined,['--git-dir',remotes.product,'rev-parse','main'])).stdout.trim(),initialProduct.commit,'Local save and verification must not sync products');
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1);
-  await tab('需求流程');await job(page.getByRole('button',{name:'再次驗收',exact:true}),'workflow.verify');run=page.locator('#feature-report-list [data-run-id]').first();const passedRunId=await run.getAttribute('data-run-id');assert.notEqual(passedRunId,failedRunId);await expect(run).toContainText('VERIFIED');await expect(run).toContainText('PASSED');
-  await expect(page.getByRole('dialog')).not.toBeVisible();await run.getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id',passedRunId);await expect(page.locator('#feature-report-view')).toHaveAttribute('aria-busy','false');await page.locator('#feature-report-view .gallery').scrollIntoViewIfNeeded();await page.waitForFunction(()=>{const a=[...document.querySelectorAll('#feature-report-view .gallery img')];return a.length>=3&&a.every(x=>x.complete&&x.naturalWidth>0);});
+  await tab('需求流程');await click('4 開發');await job(page.getByRole('button',{name:'確認開發',exact:true}),'workflow.develop');await expect(page.locator('#verification-panel')).toBeVisible();run=page.locator('#feature-report-list [data-run-id]').first();const passedRunId=await run.getAttribute('data-run-id');assert.notEqual(passedRunId,failedRunId);await expect(run).toContainText('VERIFIED');await expect(run).toContainText('PASSED');
+  await expect(page.getByRole('dialog')).not.toBeVisible();await run.getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id',passedRunId);await expect(page.locator('#feature-report-view')).toHaveAttribute('aria-busy','false');for(const image of await page.locator('#feature-report-view .gherkin-results img').all())await image.scrollIntoViewIfNeeded();await page.waitForFunction(()=>{const a=[...document.querySelectorAll('#feature-report-view .gherkin-results img')];return a.length>=3&&a.every(x=>x.complete&&x.naturalWidth>0);});
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'03-simple-verified.png'),fullPage:true});
   const productHead=await git.resolve(path.join(savedRoot,'projects/product'));assert.notEqual(productHead,initialProduct.commit);
   const tested=await git.resolve(savedRoot);await job(page.getByRole('button',{name:'遠端同步',exact:true}),'repository.sync');await expect(run).toContainText('已同步至遠端');await expect(page.getByRole('dialog')).not.toBeVisible();
@@ -175,9 +195,27 @@ const server=http.createServer((request,response)=>{
   await page.reload();await ready();await expect(page.getByRole('textbox',{name:'產品原始碼',exact:true})).toHaveValue('CLI deliberately failing product\n');
   await page.getByRole('textbox',{name:'產品原始碼',exact:true}).fill('Signed in\n');await job(page.getByRole('button',{name:'儲存產品',exact:true}),'repository.save');
   const cliRun=await workflowCli(['run','--repo',alpha,'--feature','REQ-001/feature'],'run');assert.equal(cliRun.exitCode,0,cliRun.stdout+cliRun.stderr);assert.equal(cliRun.value.result.verification,'VERIFIED');
-  await tab('需求流程');await page.reload();await ready();await expect(page.locator('#feature-report-list [data-run-id]')).toHaveCount(4);
+  await tab('需求流程');await page.reload();await ready();await expect(page.locator('#feature-report-list [data-run-id]')).toHaveCount(failedDevelopmentCount+3);
   await expect(page.locator('#feature-report-list')).toContainText(cliRun.value.result.runId);await expect(page.locator('#feature-status')).toHaveText('VERIFIED');
   await page.screenshot({path:path.join(artifacts,'09-cli-and-requirement-reports.png'),fullPage:true});
+  // Report a real acceptance issue, return to development and let the configured CLI edit the product.
+  await page.getByRole('button',{name:'問題回報',exact:true}).click();await page.getByRole('dialog').getByLabel('問題描述',{exact:true}).fill('feedback-pty-fixture: add a regression marker without weakening the approved BDD');
+  await job(page.getByRole('dialog').getByRole('button',{name:'送回開發',exact:true}),'workflow.feedback');await expect(page.locator('#implementation-panel')).toBeVisible();
+  await page.reload();await ready();await expect(page.locator('#implementation-panel')).toBeVisible();
+  await job(page.getByRole('button',{name:'確認開發',exact:true}),'workflow.develop');await expect(page.locator('#verification-panel')).toBeVisible();
+  assert.equal(await readFile(path.join(savedRoot,'projects/product/agent-fixed.txt'),'utf8'),'fixed from acceptance feedback\n');
+  await expect(page.locator('#feature-status')).toHaveText('VERIFIED');await expect(page.locator('#feature-report-view .bdd-step')).toHaveCount(3);
+  await expect(page.locator('#feature-report-view')).toContainText('Given the product is open');await expect(page.locator('#feature-report-view')).toContainText('Then the product confirms I signed in');
+  assert.equal(await page.getByRole('button',{name:'再次驗收',exact:true}).count(),0);
+  assert.ok(await page.evaluate(()=>{const save=document.querySelector('#save-requirement'),next=document.querySelector('#advance');return !document.querySelector('.next-action')&&!!save&&!!next;}));
+  await page.screenshot({path:path.join(artifacts,'11-acceptance-gherkin-steps.png'),fullPage:true});
+  const devJobs=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop');
+  const firstTerminal=await (await fetch(site+`/repository-api/v1/operations/${devJobs[0].body.operationId}/terminal`)).json();
+  assert.match(firstTerminal.output,/PTY_READY real-terminal=true/);assert.match(firstTerminal.output,/INPUT:terminal-probe/);assert.match(firstTerminal.output,/BDD.*FAILED/);
+  const latestDetail=await (await fetch(site+`/repository-api/v1/spec-repositories/${alpha}`)).json();assert.equal(latestDetail.spec.features[0].workflow.feedback.length,0);
+  const latestRun=latestDetail.runs.find(r=>r.state==='SEALED');
+  const native=await fetch(site+`/repository-api/v1/spec-repositories/${alpha}/runs/${latestRun.id}/report/native/index.html`);assert.equal(native.status,200);assert.match(native.headers.get('content-security-policy'),/sandbox allow-scripts/);assert.ok(!native.headers.get('content-security-policy').includes('allow-same-origin'));
+
   await click('開啟規格庫 Beta 規格庫');await tab('產品');await expect(page.getByText('此規格庫尚未設定產品來源。',{exact:true})).toBeVisible();assert.equal(await page.getByRole('button',{name:'開啟產品 product',exact:true}).count(),0);await tab('驗收紀錄');await expect(page.locator('#run-list')).toContainText('尚無驗收紀錄');await expect(page.locator('#report-view')).not.toBeVisible();
   await tab('需求流程');await expect(page.locator('#feature-empty')).toBeVisible();
   await expect(page.locator('#features-view textarea:visible')).toHaveCount(2);
@@ -203,10 +241,10 @@ const server=http.createServer((request,response)=>{
   await expect(page.locator('#requirement-feedback')).toContainText('不阻擋確認');
   await page.screenshot({path:path.join(artifacts,'07-advice-not-a-gate.png'),fullPage:true});
   await job(page.getByRole('button',{name:'確認需求並繼續',exact:true}),'workflow.review');
-  await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
+  await expect(page.locator('#phase-title')).toHaveText('設計');
   await expect(page.locator('#feature-status')).not.toHaveText('VERIFIED');
   await page.screenshot({path:path.join(artifacts,'08-human-review-progressed.png'),fullPage:true});
-  await page.reload();await ready();await expect(page.locator('#phase-title')).toHaveText('確認系統設計');
+  await page.reload();await ready();await expect(page.locator('#phase-title')).toHaveText('設計');
   await click('1 需求');await expect(lower).toHaveValue(placeholderDraft);
   assert.equal(readSaved(beta,'spec/REQ-001/feature/feature.feature'),placeholderDraft);
   assert.equal(await exists(betaRoot),true,'Binding acquired the checkout; human content approval remains a SQLite action');
@@ -220,7 +258,7 @@ const server=http.createServer((request,response)=>{
   await lower.fill('Feature: unfinished\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
   let priorJob=await page.locator('#notice').getAttribute('data-job-id');await page.getByRole('button',{name:'確認需求並繼續',exact:true}).click();
   await page.waitForFunction(previous=>{const n=document.querySelector('#notice');return n.dataset.jobId!==previous&&n.dataset.operation==='workflow.review';},priorJob);
-  await expect(page.locator('#notice')).toHaveAttribute('data-outcome','FAILED');await ready();await expect(lower).toHaveValue('Feature: unfinished\n');await expect(page.locator('#phase-title')).toHaveText('定義產品應該做到的事');
+  await expect(page.locator('#notice')).toHaveAttribute('data-outcome','FAILED');await ready();await expect(lower).toHaveValue('Feature: unfinished\n');await expect(page.locator('#phase-title')).toHaveText('需求');
   await lower.fill(betaGenerated);await job(page.locator('#save-requirement'),'workflow.requirement.save');
   // Break the isolated remote after binding. A real UI sync fails, while later saves succeed.
   const moved=remotes.beta+'.offline';await import('node:fs/promises').then(fs=>fs.rename(remotes.beta,moved));

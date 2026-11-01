@@ -20,8 +20,10 @@ import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 
 import { validateContract } from '../contracts/schemas.mjs';
 
+import { runDevelopment } from './development.mjs';
+
 export const operationNames = Object.freeze([
-  ...flowNames, 'workflow.next', 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
+  ...flowNames, 'workflow.develop', 'workflow.next', 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
   'repository.clone', 'repository.initialize', 'repository.validate',
   'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
@@ -52,6 +54,7 @@ export async function executeOperation(options, store, request) {
   if(request.operation==='repository.acquire') {const result=await acquireRepository({root,options,store,request,git});await persistWorkflowState({root,options,store,request,git});return result;}
   if(request.operation==='repository.history.more') return moreReportHistory({root,options,store,request,git});
   if(request.operation==='regression.start') {const result=await runRegression({root,options,store,request,git});await persistWorkflowState({root,options,store,request,git});return result;}
+  if(request.operation==='workflow.develop') return runDevelopment({root,options,store,request,git}, verificationInput => executeOperation(options,store,{...request,operation:'workflow.verify',input:verificationInput}));
   if(request.operation==='workflow.next') {
     const selection=`${id(input.requirementId)}/${id(input.featureId)}`;
     const status=await workflowStatus({root,options,store,request,git},selection);

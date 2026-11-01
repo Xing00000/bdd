@@ -16,4 +16,4 @@ try {
   store.finish(operationId, 'SUCCEEDED', result);
 } catch (error) {
   store.finish(operationId, 'FAILED', undefined, error); process.exitCode = 1;
-} finally { store.close(); }
+} finally { store.close(); if(process.connected)process.disconnect(); }
