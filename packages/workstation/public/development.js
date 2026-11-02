@@ -1,5 +1,5 @@
 /** Development view attaches to a real durable worker; page navigation never kills it. */
-export function developmentView({api,view,feature,refresh,navigate,ask,note,showOperation,beginAction,actionVersion,canRecover}) {
+export function developmentView({api,view,feature,refresh,navigate,ask,previewAgent,note,showOperation,beginAction,actionVersion,canRecover}) {
   const $=s=>document.querySelector(s);
   let terminal=null,subscription=null,resizeObserver=null,timer=null,current=null,offset=0,loadPromise;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
@@ -63,10 +63,11 @@ export function developmentView({api,view,feature,refresh,navigate,ask,note,show
     const s=view(),f=feature();if(!f)return;
     if(f.workflow?.status==='COMPLETE')throw new Error('本階段已完成，請先從驗收回報問題。');
     if(current&&active(current.status))return;
+    const approved=await previewAgent('development');if(!approved)return;
     const version=beginAction();
     $('#develop').disabled=true;
     try {
-      const result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId:s.repositoryId,operation:'workflow.develop',input:{requirementId:f.requirementId,featureId:f.id,...extra}});
+      const result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId:s.repositoryId,operation:'workflow.develop',input:{requirementId:f.requirementId,featureId:f.id,...extra,...approved}});
       showOperation({...result,request:{repositoryId:s.repositoryId,operation:'workflow.develop'}});
       leave();current={key:`${s.repositoryId}/${f.key}`,id:result.id,status:result.status,autoAdvance:true,actionVersion:version};void poll(current);
     } catch(error){$('#develop').disabled=false;throw error;}

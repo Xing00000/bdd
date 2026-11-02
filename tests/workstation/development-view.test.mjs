@@ -2,16 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { developmentView } from '../../packages/workstation/public/development.js';
 
-function harness(status, api, canRecover=()=>true) {
+function harness(status, api, canRecover=()=>true, previewAgent=async()=>null) {
   const elements = new Map(['#notice','#development-terminal','#development-status','#develop','#stop-development'].map(id => [id, { dataset:{}, textContent:'', hidden:false, disabled:false, replaceChildren(){} }]));
   globalThis.document={querySelector:id=>elements.get(id)};
   globalThis.window={addEventListener(){}};
   let version=0; const messages=[]; let refreshes=0;
   const feature={key:'REQ-1/feature',requirementId:'REQ-1',id:'feature'};
-  const view=developmentView({api,view:()=>({repositoryId:'repo',detail:{operations:[{id:'old',status,request:{operation:'workflow.develop',input:{requirementId:'REQ-1',featureId:'feature'}}}]}}),feature:()=>feature,refresh:async()=>{refreshes++;},navigate:async()=>{},ask:async()=>{throw new Error('unexpected prompt');},note:(...args)=>messages.push(args),showOperation(){},beginAction:()=>++version,actionVersion:()=>version,canRecover});
+  const view=developmentView({api,view:()=>({repositoryId:'repo',detail:{operations:[{id:'old',status,request:{operation:'workflow.develop',input:{requirementId:'REQ-1',featureId:'feature'}}}]}}),feature:()=>feature,refresh:async()=>{refreshes++;},navigate:async()=>{},ask:async()=>{throw new Error('unexpected prompt');},previewAgent,note:(...args)=>messages.push(args),showOperation(){},beginAction:()=>++version,actionVersion:()=>version,canRecover});
   return {view,elements,messages,beginAction:()=>++version,refreshes:()=>refreshes};
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('development waits for an edited preview, cancel never dispatches, and submit sends exact text',async()=>{
+  let resolvePreview;const calls=[];
+  const h=harness('FAILED',async(route,method,body)=>{
+    calls.push({route,method,body});
+    return route==='/operations'?{id:'new',status:'RUNNING'}:{status:'SUCCEEDED',phase:'COMPLETED',output:'',hasMore:false,result:{testOutcome:'FAILED'}};
+  },()=>true,()=>new Promise(resolve=>{resolvePreview=resolve;}));
+  const cancelled=h.view.start();await flush();assert.equal(calls.length,0);resolvePreview(null);await cancelled;assert.equal(calls.length,0);
+  const submitted=h.view.start();await flush();assert.equal(calls.length,0);
+  const approved={prompt:'Exact user text\nNo hidden appendix.',promptDigest:'current'};resolvePreview(approved);await submitted;await flush();
+  assert.equal(calls.filter(call=>call.route==='/operations').length,1);
+  assert.deepEqual(calls[0].body.input,{requirementId:'REQ-1',featureId:'feature',...approved});h.view.leave();
+});
 
 test('finished history drains without replacing a newer review receipt or showing its old error',async()=>{
   let resolveSecond; let calls=0;

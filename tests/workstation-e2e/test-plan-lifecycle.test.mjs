@@ -62,13 +62,13 @@ test('settings prepares packages, design confirmation codegens, and only the sep
   const steps="import {Then} from '../../_shared/bdd';\nimport {expect} from '@playwright/test';\nThen('two plus three is five',async()=>{expect(2+3).toBe(5);});\n";
   const hooks="import {AfterStep} from '../../_shared/bdd';\nAfterStep(async({page,$testInfo,$step})=>{await $testInfo.attach('step-'+$step.title,{contentType:'image/png',body:await page.screenshot()});});\n";
   const agent=path.join(f.base,'complete-plan.mjs');
-  await writeFile(agent,`import {writeFile} from 'node:fs/promises';const root=process.argv[2];await writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});await writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});`);
+  await writeFile(agent,`import {writeFile} from 'node:fs/promises';const root=process.argv[2];await writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});await writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});await writeFile(${JSON.stringify(path.join(f.base,'sent-prompt.txt'))},process.argv.at(-1));`);
   let sequence=0;
   const job=async(operation,input={})=>{
     const operationId=`OP-split-${++sequence}`;service.enqueue({schemaVersion:1,repositoryId:'SPEC-split',operationId,operation,input});
     const result=await service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));return result;
   };
-  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agent,'{spec}'],skills:''}});
+  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agent,'{spec}','{task}'],skills:''}});
   await job('workflow.create',{...ids,title:'Sum'});
   for(const [file,content] of [['spec/REQ-001/sum/sum.feature','Feature: Sum\n  @case:CASE-001\n  Scenario: Addition\n    Then two plus three is five\n'],['spec/REQ-001/sum/sum.sd.md','# Sum\nAssert that two plus three equals five and capture step screenshots.\n']]) {
     const old=await service.readFile('SPEC-split',file);await job('repository.save',{kind:'source',path:file,content,expectedHash:old.sha256});
@@ -91,8 +91,21 @@ test('settings prepares packages, design confirmation codegens, and only the sep
   await expect(page.locator('#complete-test-plan')).toBeVisible();await expect(page.locator('#generate-test-plan')).toBeHidden();
   assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);
   await page.locator('#complete-test-plan').click();
+  await expect(dialog).toContainText('預覽 CLI Prompt');
+  const prompt=dialog.getByRole('textbox',{name:'派工 Prompt',exact:true});
+  await expect(prompt).toHaveValue(/workbench_get_task/);
+  assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();
+  assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);
+  await page.locator('#complete-test-plan').click();
+  const edited='Complete this approved test plan using workbench_get_task. Preserve the existing assertions.';
+  await prompt.fill(edited);
+  await dialog.getByRole('button',{name:'送出',exact:true}).click();
   await expect(page.locator('#source-editor')).toHaveValue(steps,{timeout:60000});
   await expect(page.locator('#hook-editor')).toHaveValue(hooks);
   assert.equal((await feature()).review.confirmed.tests,false);
+  const dispatched=(await service.detail('SPEC-split')).operations.find(op=>op.request.operation==='workflow.tests.complete');
+  assert.equal(dispatched.request.input.prompt,edited);
+  assert.equal(await readFile(path.join(f.base,'sent-prompt.txt'),'utf8'),edited);
   assert.deepEqual(errors,[]);
 });

@@ -48,6 +48,24 @@ function dialog(title,description,fields,submit,action) {
   $('#dialog-form').onsubmit=async event=>{event.preventDefault();$('#dialog-submit').disabled=true;try{await action(new FormData(event.target));closeDialog(true);}catch(error){$('#dialog-error').textContent=error.message;}finally{$('#dialog-submit').disabled=false;}};$('#form-dialog').showModal();
 }
 function ask(title,text,submit) { return new Promise(resolve=>{dialogResolve=resolve;dialog(title,text,[],submit,async()=>{});}); }
+let previewPending=false;
+async function previewAgent(purpose) {
+  if(previewPending)return null;
+  previewPending=true;
+  try {
+  const repositoryId=state.repositoryId,f=feature();if(!f)return null;
+  const preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose,requirementId:f.requirementId,featureId:f.id});
+  if(repositoryId!==state.repositoryId||f.key!==feature()?.key)return null;
+  return await new Promise(resolve=>{
+    dialogResolve=resolve;
+    dialog('預覽 CLI Prompt','可修改以下內容；按「送出」後才會派出 CLI。',[field('派工 Prompt','prompt',preview.prompt,{rows:12})],'送出',async form=>{
+      const prompt=String(form.get('prompt'));if(!prompt.trim()||new TextEncoder().encode(prompt).length>65536)throw new Error('Prompt 不可為空且必須在 64 KiB 內。');
+      if(repositoryId!==state.repositoryId||f.key!==feature()?.key)throw new Error('所選功能已變更，請重新預覽。');
+      dialogResolve=null;resolve({prompt,promptDigest:preview.promptDigest});
+    });
+  });
+  } finally {previewPending=false;}
+}
 async function guard() { if(!dirty())return true;if(!await ask('有尚未儲存的編輯','離開會捨棄畫面中的草稿；已存入 SQLite 的內容不受影響。','捨棄草稿並離開'))return false;state.editor=null;state.hookEditor=null;state.composer=null;state.composerRequest++;state.product=null;state.formDirty=false;return true; }
 async function navigate(patch,{protect=true,replace=false}={}) {
   if(state.busy||state.transient)return;if(protect&&!await guard())return;
@@ -422,7 +440,8 @@ async function generateTestPlan() {
 async function completeTestPlan() {
   if(state.editor&&($('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content))await saveSource();
   const f=feature();if(!f)return;
-  const result=await flow('workflow.tests.complete',{requirementId:f.requirementId,featureId:f.id,expectedDigest:f.review.hashes.tests});
+  const approved=await previewAgent('testPlan');if(!approved)return;
+  const result=await flow('workflow.tests.complete',{requirementId:f.requirementId,featureId:f.id,expectedDigest:f.review.hashes.tests,...approved});
   if(result)await navigate({stage:result.nextStage},{protect:false});
 }
 async function restartStage() {
@@ -683,7 +702,7 @@ $('#refresh-versions').addEventListener('click',()=>safe(()=>executeJob('reposit
 $('#start-regression').addEventListener('click',()=>safe(()=>startRegression()));
 $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));
 
-const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,note,safe,showOperation,beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
+const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
 // Initialize the route only after every view state and handler exists.

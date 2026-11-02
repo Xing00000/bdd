@@ -23,11 +23,14 @@ test('all-UI: two textareas → upload/generate/edit/restore → SQLite save →
   // A deterministic CLI fixture, not a simulated PTY or an external paid LLM call.
   const agentFile=path.join(driver,'agent-fixture.mjs');
   await writeFile(agentFile,`import fs from 'node:fs';
+import {spawnSync} from 'node:child_process';
 if(!process.stdin.isTTY||!process.stdout.isTTY)throw Error('real PTY required');
 console.log('PTY_READY real-terminal=true');
 process.stdin.setEncoding('utf8');process.stdin.on('data',x=>console.log('INPUT:'+x.trim()));
-const prompt=process.argv.at(-1);
-if(prompt.includes('feedback-pty-fixture')){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');console.log('Agent saved agent-fixed.txt');}
+const result=spawnSync(process.execPath,[${JSON.stringify(path.join(toolkitRoot,'scripts/mcp-agent-task.mjs'))},process.argv[2]],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'workbench_get_task',arguments:{}}})+'\\n',encoding:'utf8'});
+if(result.status!==0)throw Error(result.stderr);
+const task=JSON.parse(result.stdout).result.structuredContent;
+if(task.feedback.some(item=>item.message.includes('feedback-pty-fixture'))){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');console.log('Agent saved agent-fixed.txt');}
 setTimeout(()=>process.exit(0),2500);
 `);
 
@@ -77,7 +80,7 @@ const server=http.createServer((request,response)=>{
   page.on('pageerror',e=>browserErrors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().startsWith(site))events.push({url:new URL(r.url()).pathname,body:r.postDataJSON()});});
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   const click=async name=>{await page.getByRole('button',{name,exact:true}).click();await ready();};
-  async function job(locator,name,outcome='SUCCEEDED') { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
+  async function job(locator,name,outcome='SUCCEEDED') { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();if(name==='workflow.develop'){await expect(page.getByRole('dialog')).toContainText('預覽 CLI Prompt');await page.getByRole('dialog').getByRole('button',{name:'送出',exact:true}).click();}await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
   async function repositoryMenu(){if(!await page.locator('#sidebar').isVisible())await page.locator('#menu-toggle').click();const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();return group;}
   async function tab(name){const group=await repositoryMenu();await group.getByRole('button',{name,exact:true}).click();await expect(page.locator(`.repo-nav.active + .repository-group [data-view="${({'需求流程':'features','專案':'projects','驗收紀錄':'reports','設定':'settings'})[name]}"]`)).toHaveAttribute('aria-current','page');await ready();}
   async function bind(title,url,withProduct=false) {
@@ -146,7 +149,7 @@ const server=http.createServer((request,response)=>{
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
   // Revisit settings without publishing any content; the automatically acquired checkout is unchanged.
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
-  await page.getByLabel('CLI Agent 執行檔',{exact:true}).fill(process.execPath);await page.getByLabel('CLI Agent 參數',{exact:true}).fill(`${agentFile}\n{prompt}`);
+  await page.getByLabel('CLI Agent 執行檔',{exact:true}).fill(process.execPath);await page.getByLabel('CLI Agent 參數',{exact:true}).fill(`${agentFile}\n{task}\n{prompt}`);
   await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.tools.prepare');
   assert.equal(await exists(savedRoot),true);
   await tab('需求流程');await expect(page.locator('#phase-title')).toHaveText('需求');
@@ -160,7 +163,16 @@ const server=http.createServer((request,response)=>{
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'01-simple-workflow.png'),fullPage:true});
   const beforeDevelopment=await page.locator('#notice').getAttribute('data-job-id');
   await expect(page.locator('#implementation-panel')).toBeVisible();await expect(page.locator('#source-panel')).not.toBeVisible();await expect(page.locator('#scope-details')).not.toBeVisible();
-  await page.getByRole('button',{name:'確認開發',exact:true}).click();await expect(page.locator('#development-terminal')).toBeVisible({timeout:30000});
+  const beforeDispatch=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').length;
+  await page.getByRole('button',{name:'確認開發',exact:true}).click();await expect(d).toContainText('預覽 CLI Prompt');
+  assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').length,beforeDispatch);
+  await d.getByRole('button',{name:'取消',exact:true}).click();
+  assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').length,beforeDispatch);
+  await page.getByRole('button',{name:'確認開發',exact:true}).click();
+  const editedPrompt='Implement the approved feature using workbench_get_task. Preserve unrelated work.';
+  await d.getByRole('textbox',{name:'派工 Prompt',exact:true}).fill(editedPrompt);
+  await d.getByRole('button',{name:'送出',exact:true}).click();await expect(page.locator('#development-terminal')).toBeVisible({timeout:30000});
+  assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').at(-1).body.input.prompt,editedPrompt);
   await expect(page.locator('#development-terminal')).toContainText('PTY_READY real-terminal=true');
   await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('terminal-probe');await page.keyboard.press('Enter');
   await page.screenshot({path:path.join(artifacts,'10-real-agent-terminal.png'),fullPage:true});
