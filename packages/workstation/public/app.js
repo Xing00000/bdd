@@ -93,7 +93,6 @@ async function refresh() {
     const detail=state.repositoryId?await api(`/spec-repositories/${state.repositoryId}`):null;if(epoch!==state.epoch)return;state.detail=detail;
     renderNavigation();$('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
     if(!detail){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);renderHome();return;}
-    await interactionLog.load(state.repositoryId);if(epoch!==state.epoch)return;
     if(!['features','projects','reports','settings','versions'].includes(state.view))state.view='features';if(!detail.preferences?.configured && state.view!=='versions')state.view='settings';
     $('#repository-title').textContent=detail.title;$('#breadcrumbs').textContent=`工作台 / ${detail.title}`;
     $('#repository-error').hidden=!detail.specError&&!detail.moduleError;$('#repository-error').textContent=[detail.specError,detail.moduleError].filter(Boolean).map(x=>x.message).join('\n');
@@ -105,6 +104,7 @@ async function refresh() {
     if(state.view==='projects')await renderProjects(epoch);
     if(state.view==='reports')renderReports();
     if(state.view==='settings')renderSettings();
+    await interactionLog.load(state.repositoryId);if(epoch!==state.epoch)return;
     renderBinding();
     await selectOperation(detail,epoch);
     restoreRegression(detail);
@@ -116,13 +116,14 @@ let actionVersion=0;
 const beginAction=()=>++actionVersion;
 const cliOperations = new Set(['repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
 let terminalSession = null, terminalTimer;
+function currentHistoryType(){return state.view==='features'?state.stage:({projects:'PROJECTS',reports:'REPORTS',versions:'VERSIONS',settings:'SETTINGS'}[state.view]??'SYSTEM');}
 function showOperation(op) {
   if (!op || op.request?.repositoryId !== state.repositoryId) return;
-  if(!$('#operation-terminal-details').closest?.('#form-dialog'))interactionLog.attach(op);
+  if(!$('#operation-terminal-details').closest?.('#form-dialog')&&!interactionLog.attach(op))return;
   const details=$('#operation-terminal-details');details.hidden=false;details.dataset.operationId=op.id;
   if (terminalSession?.id === op.id) return;
   clearTimeout(terminalTimer);
-  const session = terminalSession = {id:op.id, repositoryId:state.repositoryId, offset:0};
+  const session = terminalSession = {id:op.id, repositoryId:state.repositoryId,type:op.interactionType, offset:0};
   const text=$('#operation-terminal-text');
   details.hidden=false;details.dataset.operationId=op.id;text.textContent='';
   text.hidden=op.request.operation==='workflow.develop';
@@ -143,7 +144,7 @@ function showOperation(op) {
   void poll();
 }
 async function selectOperation(detail,epoch) {
-  const operations=(detail.operations??[]).filter(op=>cliOperations.has(op.request?.operation));
+  const operations=(detail.operations??[]).filter(op=>cliOperations.has(op.request?.operation)&&op.interactionType===currentHistoryType());
   const f=feature();
   const preferred=state.view==='features'&&state.stage==='IMPLEMENTATION'&&f && operations.find(op=>op.request.operation==='workflow.develop'&&`${op.request.input.requirementId}/${op.request.input.featureId}`===f.key);
   const ordered=[preferred,...operations.filter(op=>activeOperation(op.status)),...operations].filter(Boolean);
@@ -152,7 +153,7 @@ async function selectOperation(detail,epoch) {
     if(epoch!==state.epoch)return;
     if(result.hasProgress){showOperation(op);return;}
   }
-  if(terminalSession?.repositoryId===state.repositoryId){$('#operation-terminal-details').hidden=false;return;}
+  if(terminalSession?.repositoryId===state.repositoryId&&terminalSession.type===currentHistoryType()){$('#operation-terminal-details').hidden=false;return;}
   clearTimeout(terminalTimer);terminalSession=null;$('#operation-terminal-details').hidden=true;
 }
 async function executeJob(name,input, {refreshAfter=true}={}) {
@@ -164,7 +165,7 @@ async function executeJob(name,input, {refreshAfter=true}={}) {
   $('#job-step').textContent=name==='workflow.verify'?'自動準備版本 → 執行測試 → 儲存報告':name==='repository.sync'?'同步已儲存產品 → 規格 → 報告；不會覆寫衝突內容':name==='workflow.review'?'檢查必要環境與內容，再推進下一步':'處理中…';
   let result;
   try {
-    result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected});state.jobId=result.id;
+    result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected,interactionType:currentHistoryType()});state.jobId=result.id;
     await interactionLog.accepted(result);
     let selected=false;
     while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){
@@ -710,7 +711,7 @@ $('#start-regression').addEventListener('click',()=>safe(()=>startRegression()))
 $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));
 
 const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));},beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
-const interactionLog=interactionHistory({api,labels});
+const interactionLog=interactionHistory({api,labels,getType:currentHistoryType});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
 // Initialize the route only after every view state and handler exists.
