@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,rm} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
-import {chromium,expect} from '@playwright/test';
 import {createServer} from '../../src/http/server.ts';
 
 const feature='Feature: Launch a configured agent\n  @AC-LLM-001\n  Scenario: Start with the saved prompt\n    Given the requirement is open\n    When I start the agent\n    Then it receives the selected Gherkin\n';
@@ -113,34 +112,21 @@ test('legacy LLM database upgrade adds missing workflow defaults once and preser
  assert.equal((await server.core.store.all('SELECT seed_key FROM application_seed_history')).length,2);
 });
 
-test('LLM settings UI creates an Agent and requirement confirmation opens its interactive CLI tab',async t=>{
- const root=resolve(process.cwd());await mkdir(join(root,'.test-fixtures'),{recursive:true});
- const directory=await mkdtemp(join(root,'.test-fixtures/llm-settings-ui-'));
- const server=await createServer({root,metadataFile:join(directory,'metadata.sqlite'),dataRoot:join(directory,'data'),baseUrl:'http://127.0.0.1:1'});
- const browser=await chromium.launch({headless:true,chromiumSandbox:true});
- t.after(async()=>{await browser.close();await server.app.close();await rm(directory,{recursive:true,force:true});});
- const address=await server.app.listen({host:'127.0.0.1',port:0});
- const project=await server.core.createProject({name:'Agent UI test',workspaceRef:directory});
- const requirement=await server.core.createRequirement(project.id,{requirementKey:'REQ-LLM-UI'});
- await server.core.saveVersion(requirement.documents.gherkin.id,{rawText:feature});
- const page=await browser.newPage(),errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
- await page.goto(`${address}/llm-settings`);await expect(page.getByRole('heading',{name:'LLM 設定'})).toBeVisible();
- await page.getByRole('button',{name:'＋ 新增',exact:true}).nth(0).click();
- await page.getByLabel('顯示名稱').fill('UI Echo CLI');await page.getByLabel('執行檔').fill(process.execPath);await page.getByLabel('預設參數（JSON 字串陣列）').fill(JSON.stringify(['-e','process.stdout.write(process.argv.at(-1))']));
- await page.getByRole('button',{name:'保存 CLI 指令'}).click();await expect(page.getByText('UI Echo CLI')).toBeVisible();
- await page.getByRole('button',{name:'＋ 新增',exact:true}).nth(1).click();
- await page.getByLabel('Skill 名稱').fill('UI BDD skill');await page.getByLabel('Skill 指示').fill('UI_SKILL_MARKER: inspect requirements only.');
- await page.getByRole('button',{name:'保存 Skill'}).click();await expect(page.getByText('UI BDD skill')).toBeVisible();
- await page.getByRole('button',{name:'＋ 新增',exact:true}).nth(2).click();
- await page.getByLabel('Agent 名稱').fill('UI Requirement Agent');await page.getByLabel('CLI 啟動指令').selectOption({label:`UI Echo CLI · ${process.execPath}`});await page.getByLabel('Skill',{exact:true}).selectOption({label:'UI BDD skill'});await page.getByLabel('預設 Prompt').fill('UI_AGENT_PROMPT_MARKER: review the selected Gherkin.');
- await page.getByRole('button',{name:'保存 Agent'}).click();await expect(page.getByText('UI Requirement Agent')).toBeVisible();
- const settings=await (await page.request.get(`${address}/llm-settings`)).json(),agent=settings.agents.find((item:any)=>item.name==='UI Requirement Agent');assert.ok(agent);
- await page.goto(`${address}/workflow-settings`);await expect(page.getByRole('heading',{name:'流程設定'})).toBeVisible();
- await page.getByLabel('需求確認 · UI Requirement Agent').check();await page.getByLabel('需求確認 · 需求確認 Agent').check();await page.getByTestId('save-workflow-settings').click();
- await expect.poll(async()=>{const result=await page.request.get(`${address}/workflow-settings`);return (await result.json()).stages.find((stage:any)=>stage.key==='GHERKIN').agentIds.length;}).toBe(2);
- await page.goto(`${address}/requirements/${requirement.id}?featureId=${requirement.featureId}&workflowStage=GHERKIN`);
- await expect(page.getByTestId(`start-agent-GHERKIN-${agent.id}`)).toBeVisible();await expect(page.getByTestId(`start-agent-GHERKIN-${agent.id}`)).toBeEnabled();await page.getByTestId(`start-agent-GHERKIN-${agent.id}`).click();
- await expect(page).toHaveURL(new RegExp(`/projects/${project.id}/terminal\\?kind=llm&session=`));await expect(page.getByTestId('xterm-host')).toBeVisible();
- await expect(page.locator('.xterm-rows')).toContainText('UI_AGENT_PROMPT_MARKER',{timeout:5000});
- assert.deepEqual(errors,[]);
+test('compatibility settings API creates an Agent, preserves workflow assignments and launches its actual CLI',async t=>{
+ const root=resolve(process.cwd());await mkdir(join(root,'.test-fixtures'),{recursive:true});const directory=await mkdtemp(join(root,'.test-fixtures/llm-settings-api-'));
+ const server=await createServer({root,metadataFile:join(directory,'metadata.sqlite'),dataRoot:join(directory,'data'),baseUrl:'http://127.0.0.1:1'});t.after(async()=>{await server.app.close();await rm(directory,{recursive:true,force:true});});
+ const call=async(method:'GET'|'POST'|'PUT',url:string,payload?:any,status=200)=>{const r=await server.app.inject({method,url,payload});assert.equal(r.statusCode,status,r.body);return r.json();};
+ const project=await server.core.createProject({name:'Agent API test',workspaceRef:directory}),requirement=await server.core.createRequirement(project.id,{requirementKey:'REQ-LLM-API'});
+ const gherkin=await server.core.saveVersion(requirement.documents.gherkin.id,{rawText:feature});
+ const command=await call('POST','/llm-settings/cli-commands',{name:'Echo CLI',executable:process.execPath,args:['-e','process.stdout.write(process.argv.at(-1))']},201);
+ const skill=await call('POST','/llm-settings/skills',{name:'BDD skill',instructions:'SKILL_MARKER: inspect requirements only.'},201);
+ const agent=await call('POST','/llm-settings/agents',{name:'Requirement Agent',cliCommandId:command.id,skillId:skill.id,prompt:'AGENT_PROMPT_MARKER: review the selected Gherkin.'},201);
+ const workflow=await call('GET','/workflow-settings'),assignments=Object.fromEntries(workflow.stages.map((stage:any)=>[stage.key,stage.agentIds]));assignments.GHERKIN=[...assignments.GHERKIN,agent.id];
+ const saved=await call('PUT','/workflow-settings',{assignments});assert.equal(saved.stages.find((stage:any)=>stage.key==='GHERKIN').agentIds.length,2);
+ const listed=await call('GET','/llm-settings'),persisted=listed.agents.find((item:any)=>item.id===agent.id);assert.equal(persisted.cliCommand.id,command.id);assert.equal(persisted.skill.id,skill.id);
+ const session=await call('POST',`/requirements/${requirement.id}/agent-sessions`,{stage:'GHERKIN',agentId:agent.id,projectId:project.id,featureId:requirement.featureId,gherkinVersionId:gherkin.versionId,gherkinSha256:gherkin.rawSha256});
+ let output='',exited=false,unsubscribe=()=>{};
+ await new Promise<void>((resolvePromise,reject)=>{const timeout=setTimeout(()=>reject(Error('Configured CLI did not exit')),5000);unsubscribe=server.runtime.terminal.subscribe(session.id,event=>{output+=event.data??'';if(event.type==='terminal.exited'){exited=true;clearTimeout(timeout);unsubscribe();resolvePromise();}});if(exited)unsubscribe();});
+ assert.match(output,/AGENT_PROMPT_MARKER/);assert.match(output,/SKILL_MARKER/);assert.match(output,/Launch a configured agent/);assert.equal(session.agentId,agent.id);
+
 });

@@ -4,12 +4,12 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { viewportPoint } from '../../ui/src/transport.ts';
+import { viewportPoint } from '../../src/domain/browser-binding.ts';
 
 async function inputFixture() {
-  // Execute the actual component handler source against explicit DOM/WS
-  // fixtures. This is a UI input contract unit test, not real IME/browser proof.
-  const vue = await readFile(resolve('ui/src/BrowserViewer.vue'), 'utf8');
+  // Preserve the retired client's committed input protocol as a compatibility
+  // fixture. This does not assert that the removed UI is still a product entry.
+  const vue = await readFile(resolve('tests/fixtures/retired-viewer-input.source.txt'), 'utf8');
   const script = vue.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1];
   const parsed = ts.createSourceFile('BrowserViewer.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const names = ['flushPointerMove', 'releasePointerCapture', 'cancelPointer', 'releaseRemoteInput', 'pointer', 'keyboard', 'compositionStart', 'compositionEnd', 'clearInput'];

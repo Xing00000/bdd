@@ -8,7 +8,7 @@ import {renderApplicationSeedSql,renderWorkflowAgentUpgradeSql} from '../dist/sr
 const root=fileURLToPath(new URL('..',import.meta.url));
 const output=path.join(root,'deploy');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const sourceFiles=['src/adapters/sqlite/schema.ts','src/adapters/sqlite/migrations.ts','src/adapters/sqlite/features.ts','src/adapters/sqlite/llm-settings.ts','src/adapters/sqlite/workflow-settings.ts','src/adapters/sqlite/seed.ts','src/domain/workflow-agent-stages.ts','src/adapters/sqlite/seed.sql','skills/playwright-bdd/SKILL.md','tools/deploy.mjs','tools/migrate.mjs','tools/dbgate.Dockerfile'];
+const sourceFiles=['src/adapters/sqlite/schema.ts','src/adapters/sqlite/migrations.ts','src/adapters/sqlite/chat.ts','src/adapters/sqlite/features.ts','src/adapters/sqlite/llm-settings.ts','src/adapters/sqlite/workflow-settings.ts','src/adapters/sqlite/seed.ts','src/domain/workflow-agent-stages.ts','src/adapters/sqlite/seed.sql','skills/playwright-bdd/SKILL.md','tools/deploy.mjs','tools/migrate.mjs','tools/dbgate.Dockerfile'];
 const sources=Object.fromEntries(await Promise.all(sourceFiles.map(async file=>[file,hash(await fs.readFile(path.join(root,file)))])));
 const manifest={schemaVersion:1,dialect:'sqlite',targetVersion:0,sources,migrations:[]};
 let version=0;

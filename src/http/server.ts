@@ -1,8 +1,7 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
-import staticFiles from '@fastify/static';
 import path from 'node:path';
-import { mkdir,readFile,stat,realpath } from 'node:fs/promises';
+import { mkdir,readFile,realpath } from 'node:fs/promises';
 import { randomUUID,createHash } from 'node:crypto';
 import { createCore } from '../application/core.js';
 import { createExtensions } from '../application/extensions.js';
@@ -22,11 +21,18 @@ import {createLlmSettingsService} from '../application/llm-settings.ts';
 import {createWorkflowSettingsService} from '../application/workflow-settings.ts';
 import {interactiveWorkflowStages,isWorkflowAgentStage} from '../domain/workflow-agent-stages.ts';
 import {createMcpServer,type McpServer} from '../adapters/mcp/index.js';
+import {createChatService} from '../application/chat.ts';
+import {createCodexChatRuntime} from '../adapters/runtime/codex-chat.ts';
+import {defaultChatSettings} from '../adapters/runtime/chat-settings.ts';
 export interface ServerOptions {root:string;metadataFile:string;dataRoot:string;baseUrl:string;llm?:import('../adapters/generation/types.ts').LlmOptions;resolveRecordingSecret?:RecordingSecretResolver;logger?:boolean;dbgate?:import('../adapters/runtime/dbgate.ts').DbGateOptions;initializeDefaultExample?:boolean}
 export async function createServer(options:ServerOptions) {
   const dbgateFile=options.dbgate?await realpath(options.dbgate.databaseFile):undefined;
   const {root,dataRoot}=options;await mkdir(dataRoot,{recursive:true,mode:0o700});await mkdir(path.dirname(options.metadataFile),{recursive:true});
   const app=Fastify({logger:options.logger??false,bodyLimit:20*1024*1024});await app.register(websocket);
+  let closing=false;
+  // server.close() reaps connections already idle when shutdown begins. Requests
+  // that finish later must also release their keep-alive connections.
+  app.addHook('onResponse',async()=>{if(closing)app.server.closeIdleConnections();});
   const core=await createCore(options.metadataFile,root);if(options.initializeDefaultExample)await core.ensureDefaultExample();const registeredRoots=async()=>(await core.listProjects()).map(p=>String(p.workspaceRef)),runtime=createRuntimeAdapters({workspaceRoot:root,registeredRoots}),workspace=createWorkspaceAdapter(root,dataRoot),git=createGitAdapter({workspaceRoot:root,registeredRoots});
   const peers=new Set<{socket:any;projectId?:string;requirementId?:string;sessionId?:string}>();
   const channel=createFrameChannel(),send=channel.send;
@@ -62,6 +68,15 @@ export async function createServer(options:ServerOptions) {
   const ext=createExtensions({core,generation,git,workspace,emit,getQuestions:(requirementId,featureId)=>mcp?.getQuestions(requirementId,featureId)??[],async executeTargetCi(requirementId,body){const result=await runs.verify(requirementId,body);const report=await runs.wait(result.runId);return {...result,status:report.status,completed:true};}});
   const llmSettings=createLlmSettingsService(core.store);
   const workflowSettings=createWorkflowSettingsService(core.store,llmSettings);
+  const chatRuntime=await createCodexChatRuntime(path.join(dataRoot,'chat'));
+  const chat=await createChatService(core.store,chatRuntime,defaultChatSettings());
+  app.get('/chat-settings',()=>chat.settings());
+  app.put('/chat-settings',request=>chat.saveSettings(request.body));
+  app.get('/chat-rooms',()=>chat.list());
+  app.post('/chat-rooms',async(request,reply)=>reply.code(201).send(await chat.create(request.body)));
+  app.get<{Params:{id:string}}>('/chat-rooms/:id',request=>chat.detail(request.params.id));
+  app.post<{Params:{id:string}}>('/chat-rooms/:id/messages',async(request,reply)=>reply.code(202).send(await chat.send(request.params.id,request.body)));
+  app.post<{Params:{id:string}}>('/chat-rooms/:id/compact',request=>chat.compact(request.params.id));
   mcp=createMcpServer({core,ext,workspace,runtime,generation,llmSettings,workflowSettings,metadataFile:options.metadataFile,emit});
   const params=(request:any)=>request.params as Record<string,string>,body=(request:any)=>request.body??{};
   const query=(request:any)=>request.query as Record<string,string>;
@@ -179,11 +194,7 @@ export async function createServer(options:ServerOptions) {
   }catch(error){socket.close(1008,String((error as Error).message));}});
   app.get('/browser-sessions/:id',{websocket:true},(socket,request)=>{try{checkOrigin(request);const id=params(request).id;browser.attachment(id);const unsubscribe=browser.subscribe(id,event=>send(socket,event));socket.on('message',(data:Buffer)=>{try{void browser.input(id,JSON.parse(String(data))).catch(error=>send(socket,{type:'browser.error',message:error.message,code:error.code}));}catch(error){send(socket,{type:'browser.error',message:String((error as Error).message),code:'INVALID_INPUT'});}});socket.on('close',()=>{unsubscribe();channel.forget(socket);});}catch(error){socket.close(1008,String((error as Error).message));}});
   app.get('/terminals/:id',{websocket:true},(socket,request)=>{try{checkOrigin(request);const id=params(request).id,unsubscribe=runtime.terminal.subscribe(id,event=>send(socket,event));socket.on('message',(data:Buffer)=>{try{const value=JSON.parse(String(data));if(value.type==='input')runtime.terminal.input(id,value.data);else if(value.type==='resize')runtime.terminal.resize(id,value.cols,value.rows);else if(value.type==='close')runtime.terminal.closeTerminal(id);}catch(error){send(socket,{type:'error',message:String((error as Error).message)});}});socket.on('close',unsubscribe);}catch(error){socket.close(1008,String((error as Error).message));}});
-  const publicRoot=path.join(root,'dist/public');let hasUi=false;try{hasUi=(await stat(path.join(publicRoot,'index.html'))).isFile();}catch{}
-  if(hasUi){await app.register(staticFiles,{root:publicRoot,prefix:'/',wildcard:false});
-    app.addHook('onRequest',async(request,reply)=>{const pathname=request.url.split('?')[0];reply.header('Vary','Accept');if(request.method==='GET'&&request.headers.accept?.includes('text/html')&&(/^\/projects(?:\/[^/]+(?:\/(?:requirements|db|browser|recordings|integrations|runs)(?:\/[^/]+)?)?)?\/?$/.test(pathname)||/^\/projects\/[^/]+\/requirements\/[^/]+\/tests\/?$/.test(pathname)||/^\/requirements(?:\/[^/]+(?:\/tests)?)?\/?$/.test(pathname)||/^\/browser-recorder(?:\/[^/]+)?\/?$/.test(pathname)||/^\/(?:llm-settings|workflow-settings)\/?$/.test(pathname)))return reply.sendFile('index.html');});
-    app.setNotFoundHandler((request,reply)=>request.method==='GET'&&request.headers.accept?.includes('text/html')?reply.sendFile('index.html'):reply.code(404).send({code:'NOT_FOUND',message:'Resource not found'}));}
-  app.addHook('preClose',async()=>{runtime.terminal.close();});
-  app.addHook('onClose',async()=>{clearInterval(frameDrain);channel.clear();for(const peer of peers)peer.socket.close();await runs.close();await browser.close();runtime.terminal.close();await runtime.targetDb.close();await core.close();});
+  app.addHook('preClose',async()=>{closing=true;runtime.terminal.close();await chat.close();});
+  app.addHook('onClose',async()=>{clearInterval(frameDrain);channel.clear();for(const peer of peers)peer.socket.close();await chat.close();await runs.close();await browser.close();runtime.terminal.close();await runtime.targetDb.close();await core.close();});
   return {app,core,runtime,browser,extensions:ext,runs,workflowSettings,mcp:mcp!};
 }

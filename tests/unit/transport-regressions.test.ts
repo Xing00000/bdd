@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFrameChannel } from '../../src/http/frame-channel.js';
-import { newerFrame } from '../../ui/src/transport.ts';
+import { newerFrame } from '../../src/domain/browser-binding.ts';
 
 // Socket fixtures exercise transport ordering only; no browser pixels are synthesized as E2E evidence.
 test('frame backpressure keeps the newest frame and never replays an older pending frame',()=>{

@@ -4,6 +4,7 @@ import {featureMigration} from './features.ts';
 import {requirementMigration,projectGitMigration,defaultExampleMigration,globalBrowserRecordingMigration,browserRecordingDeletionMigration} from './requirements.ts';
 import {llmSettingsMigration} from './llm-settings.ts';
 import {workflowSettingsMigration} from './workflow-settings.ts';
+import {chatMigration} from './chat.ts';
 
 export type MetadataMigration = {
   id: string;
@@ -32,7 +33,7 @@ export const metadataMigrations: readonly MetadataMigration[] = [{
 );
 CREATE INDEX terminal_sessions_by_project ON terminal_sessions(project_id,created_at DESC);`}],
  dmlReason:'Terminal session identifiers are recorded when users open a PTY; migration adds no session rows.',
-},browserRecordingDeletionMigration,llmSettingsMigration,workflowSettingsMigration];
+},browserRecordingDeletionMigration,llmSettingsMigration,workflowSettingsMigration,chatMigration];
 
 export function migrationSql(migration: MetadataMigration): string {
   return `PRAGMA foreign_keys=${migration.rebuildTables?'OFF':'ON'};\nBEGIN IMMEDIATE;\n${migration.steps.map(step=>step.sql.trim()).join('\n')}\nCREATE TEMP TABLE migration_fk_check(failures INTEGER CHECK(failures=0));\nINSERT INTO migration_fk_check SELECT count(*) FROM pragma_foreign_key_check;\nDROP TABLE migration_fk_check;\nPRAGMA user_version=${migration.toVersion};\nCOMMIT;\nPRAGMA foreign_keys=ON;\n`;

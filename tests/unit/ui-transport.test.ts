@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sameRunBinding,viewportPoint } from '../../ui/src/transport.ts';
+import { sameRunBinding,viewportPoint } from '../../src/domain/browser-binding.ts';
 test('viewer rejects frames from another run, test, result, session, context, page or binding generation',()=>{
   const current={runId:'run-2',testDefinitionId:'test-2',caseResultId:'result-2',sessionId:'session-2',contextRef:'context-2',pageId:'page-2',bindingSeq:4};
   assert.equal(sameRunBinding({...current},current),true);

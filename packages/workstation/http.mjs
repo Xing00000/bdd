@@ -13,6 +13,7 @@ const assets = new Map([
   ['/repositories/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/repositories/development.js', ['development.js', 'text/javascript; charset=utf-8']],
   ['/repositories/interaction-history.js', ['interaction-history.js', 'text/javascript; charset=utf-8']],
+  ['/repositories/chat.js', ['chat.js', 'text/javascript; charset=utf-8']],
   ['/repositories/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
 const securityHeaders = {
@@ -44,6 +45,19 @@ export async function dispatch(service, request) {
     invariant(Buffer.byteLength(JSON.stringify(input)) <= 2 * 1024 * 1024, 'REQUEST_TOO_LARGE', 'Request exceeds 2 MiB', 413);
   }
   let result, status = 200;
+  if(parts[0]==='chat-rooms'||parts[0]==='chat-settings') {
+    const chat=await service.chat();
+    if(parts[0]==='chat-settings'&&parts.length===1){if(method==='GET')result=await chat.settings();else if(method==='PUT')result=await chat.saveSettings(input);}
+    if(parts[0]==='chat-rooms'){
+      if(parts.length===1&&method==='GET')result=await chat.list();
+      else if(parts.length===1&&method==='POST'){result=await chat.create(input);status=201;}
+      else if(parts.length===2&&method==='GET')result=await chat.detail(parts[1]);
+      else if(parts.length===3&&parts[2]==='messages'&&method==='POST'){result=await chat.send(parts[1],input);status=202;}
+      else if(parts.length===3&&parts[2]==='compact'&&method==='POST')result=await chat.compact(parts[1]);
+    }
+    invariant(result!==undefined,'NOT_FOUND','Unknown chat route',404);
+    return {status,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:result};
+  }
   if (method === 'GET' && parts.join('/') === 'workbench') result = { id: 'local', title: 'BDD 工作台', model: 'workbench/spec-repositories/projects', repositories: service.list().length };
   else if (method === 'GET' && parts.join('/') === 'capabilities') result = { schemaVersion: 1, executionEnabled: service.options.enableExecution, configFormat: 'JSON-compatible YAML', nestedSubmodules: false, authentication: 'private-loopback deployment', toolkitUpgrade: true, reportReindex: true, legacyImport: Boolean(service.options.legacyFile) };
   else if (parts[0] === 'spec-repositories' && parts.length === 1) {
@@ -108,7 +122,7 @@ export async function registerRepositoryRoutes(app, options) {
   };
   for (const route of [...assets.keys(),'/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: `${prefix}/mcp/progress`, handler });
-  app.route({ method: ['GET', 'POST'], url: `${prefix}/*`, handler });
+  app.route({ method: ['GET', 'POST','PUT'], url: `${prefix}/*`, handler });
   app.addHook('onClose', async () => service.close());
   return service;
 }

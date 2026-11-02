@@ -114,6 +114,13 @@ export function openStore(home) {
   const atomic=callback=>{const own=!db.isTransaction;if(own)db.exec('BEGIN IMMEDIATE');try{const result=callback();if(own)db.exec('COMMIT');return result;}catch(error){if(own)db.exec('ROLLBACK');throw error;}};
   return {
     ...draftMethods(db),
+    chatStorage(schemaSql) {
+      atomic(()=>{if(!db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='chat_rooms'").get())db.exec(schemaSql);});
+      const execute=command=>{const statement=db.prepare(command.sql),result=command.mode==='all'?statement.all(...(command.params??[])):statement.run(...(command.params??[]));
+        if(command.expectChanges!==undefined)invariant(Number(result.changes)===command.expectChanges,'STATE_CHANGED','Chat state changed concurrently',409);
+        if(command.expectRows!==undefined)invariant(result.length===command.expectRows,'STATE_CHANGED','Chat state changed concurrently',409);return result;};
+      return {async all(sql,params=[]){return db.prepare(sql).all(...params);},async run(sql,params=[]){return db.prepare(sql).run(...params);},async batch(commands){return atomic(()=>commands.map(execute));}};
+    },
     connection(repositoryId) { const row=db.prepare('SELECT receipt_json FROM repository_connections WHERE repository_id=?').get(repositoryId);return row?JSON.parse(row.receipt_json):null; },
     setConnection(repositoryId, value) { db.prepare('INSERT INTO repository_connections VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET receipt_json=excluded.receipt_json').run(repositoryId,JSON.stringify(value)); },
     regression(repositoryId, batchId) { const row=db.prepare('SELECT result_json FROM regressions WHERE id=? AND repository_id=?').get(batchId,repositoryId);return row?JSON.parse(row.result_json):null; },

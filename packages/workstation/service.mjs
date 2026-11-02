@@ -16,6 +16,7 @@ import { projectFiles, readProjectFile } from './repository-actions.mjs';
 import { migrateCheckoutDirectory } from './migrate.mjs';
 import { listTransactions } from './transactions.mjs';
 import { openStore } from './store.mjs';
+import {openChat} from './chat.mjs';
 import { workflowStatus } from './workflow.mjs';
 import { workflowState, recordedWorkflow } from './workflow-state.mjs';
 import { validateRequest, repositoryDetail, repositoryPath, readRepositoryFile } from './operations.mjs';
@@ -26,6 +27,7 @@ export async function createWorkstation(configuration) {
   const store = openStore(options.home);
   try { await migrateCheckoutDirectory(options.home); } catch (error) { store.close(); throw error; }
   const children = new Map(),terminalDrafts=new Map(); let closing = false;
+  let chatService,chatOpening;
   function recordInteraction(repositoryId,operation,input,action) {
     const operationId=`OP-${randomUUID()}`;
     store.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});store.claim(operationId);
@@ -54,6 +56,12 @@ export async function createWorkstation(configuration) {
   for (const operationId of store.recover()) launch(operationId);
   const service = {
     options,
+    async chat(){
+      invariant(!closing,'WORKSTATION_CLOSING','Workstation is closing',503);
+      if(chatService)return chatService;
+      if(!chatOpening)chatOpening=openChat(store,options.home).then(value=>chatService=value).finally(()=>{chatOpening=undefined;});
+      return chatOpening;
+    },
     async agentPreview(repositoryId,input) {
       store.repository(id(repositoryId));
       const root=await repositoryPath(options.home,repositoryId,store);
@@ -224,7 +232,7 @@ export async function createWorkstation(configuration) {
         const timer = setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch {} }, 1500);
         child.once('close', () => { clearTimeout(timer); resolve(); });
       })));
-      store.close();
+      try { if(chatOpening)await chatOpening; await chatService?.close(); } finally { store.close(); }
     }
   };
   return service;

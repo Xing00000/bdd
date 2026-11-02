@@ -38,7 +38,10 @@ test('real HTTP adapters persist documents, enforce version-bound workflow, exec
   const start=()=>createServer({root,metadataFile,dataRoot:join(temporary,'data'),baseUrl:'http://127.0.0.1:1',logger:false});
   try{
     server=await start();
-    const directUi=await server.app.inject({method:'GET',url:'/projects',headers:{accept:'text/html'}});assert.equal(directUi.statusCode,200);assert.match(directUi.headers['content-type']!,/text\/html/);assert.match(directUi.body,/<script[^>]+src="\/assets\//);
+    // Retiring the Vue entry changes this route to API-only, even for a browser's
+    // Accept header. It must never recover the obsolete SPA from dist/public.
+    const directApi=await server.app.inject({method:'GET',url:'/projects',headers:{accept:'text/html'}});assert.equal(directApi.statusCode,200);assert.match(directApi.headers['content-type']!,/application\/json/);assert.deepEqual(directApi.json(),[]);assert.doesNotMatch(directApi.body,/<html|<script/);
+    const obsolete=await server.app.inject({method:'GET',url:'/index.html',headers:{accept:'text/html'}});assert.equal(obsolete.statusCode,404);assert.match(obsolete.headers['content-type']!,/application\/json/);assert.doesNotMatch(obsolete.body,/<html|<script/);
     const request=async(method:'GET'|'POST',url:string,payload?:unknown,status=200)=>{const response=await server!.app.inject({method,url,payload:payload as any});assert.equal(response.statusCode,status,`${method} ${url}: ${response.body}`);return response.json();};
     const project=await request('POST','/projects',{name:'HTTP persistence test',workspaceRef:temporary},201);
     let current=await request('POST',`/projects/${project.id}/requirements`,{requirementKey:'REQ-HTTP-001'},201);
