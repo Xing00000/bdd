@@ -1,5 +1,5 @@
 /** Development view attaches to a real durable worker; page navigation never kills it. */
-export function developmentView({api,view,feature,refresh,navigate,ask,previewAgent,note,showOperation,beginAction,actionVersion,canRecover}) {
+export function developmentView({api,view,feature,refresh,navigate,ask,previewAgent,note,showOperation,onInteractions,beginAction,actionVersion,canRecover}) {
   const $=s=>document.querySelector(s);
   let terminal=null,subscription=null,resizeObserver=null,timer=null,current=null,offset=0,loadPromise;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
@@ -20,7 +20,7 @@ export function developmentView({api,view,feature,refresh,navigate,ask,previewAg
     await terminalLibrary();if(current!==session)return;
     const container=$('#development-terminal');container.hidden=false;
     terminal=new window.Terminal({cols:100,rows:30,convertEol:false,scrollback:5000,fontSize:13,screenReaderMode:true});terminal.open(container);
-    const send=input=>api(`/operations/${session.id}/input`,'POST',input).catch(error=>{if(current===session&&active(session.status))note(error.message,true);});
+    const send=input=>api(`/operations/${session.id}/input`,'POST',input).then(value=>{if(current===session&&value.interactions?.length)onInteractions?.(value.interactions);}).catch(error=>{if(current===session&&active(session.status))note(error.message,true);});
     subscription=terminal.onData(data=>{if(session.phase==='RUNNING')void send({data});});
     resizeObserver=new ResizeObserver(()=>{if(!terminal||current!==session)return;const cols=Math.min(300,Math.max(20,Math.floor((container.clientWidth-24)/8)));terminal.resize(cols,30);if(session.phase==='RUNNING')void send({cols,rows:30});});resizeObserver.observe(container);
   }
@@ -72,7 +72,7 @@ export function developmentView({api,view,feature,refresh,navigate,ask,previewAg
       leave();current={key:`${s.repositoryId}/${f.key}`,id:result.id,status:result.status,autoAdvance:true,actionVersion:version};void poll(current);
     } catch(error){$('#develop').disabled=false;throw error;}
   }
-  async function stop(){if(current&&active(current.status))await api(`/operations/${current.id}/cancel`,'POST',{});}
+  async function stop(){if(current&&active(current.status)){const result=await api(`/operations/${current.id}/cancel`,'POST',{});if(result.interaction)onInteractions?.([result.interaction]);}}
   window.addEventListener('pagehide',leave);
   return {open,start,stop,leave};
 }

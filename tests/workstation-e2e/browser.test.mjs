@@ -175,6 +175,12 @@ const server=http.createServer((request,response)=>{
   assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').at(-1).body.input.prompt,editedPrompt);
   await expect(page.locator('#development-terminal')).toContainText('PTY_READY real-terminal=true');
   await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('terminal-probe');await page.keyboard.press('Enter');
+  const activeDevelopmentId=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').at(-1).body.operationId;
+  const inputEntries=async()=>{const value=await (await fetch(site+`/repository-api/v1/spec-repositories/${alpha}/interactions`)).json();return value.entries.filter(entry=>entry.operation==='interaction.cli.input'&&entry.parentOperationId===activeDevelopmentId);};
+  await expect.poll(async()=>(await inputEntries()).length).toBe(1);
+  await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('second-probe');await page.keyboard.press('Enter');
+  await expect.poll(async()=>(await inputEntries()).length).toBe(2);
+  assert.deepEqual((await inputEntries()).map(entry=>entry.message).sort(),['second-probe','terminal-probe'].sort());
   await page.screenshot({path:path.join(artifacts,'10-real-agent-terminal.png'),fullPage:true});
   await page.waitForFunction(before=>{const n=document.querySelector('#notice');return n.dataset.operation==='workflow.develop'&&n.dataset.jobId!==before;},beforeDevelopment,{timeout:360000});await ready();
   await expect(page.locator('#implementation-panel')).toBeVisible();assert.equal(await page.getByRole('button',{name:'再次驗收',exact:true}).count(),0);
@@ -231,6 +237,9 @@ const server=http.createServer((request,response)=>{
   const devJobs=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop');
   const firstTerminal=await (await fetch(site+`/repository-api/v1/operations/${devJobs[0].body.operationId}/terminal`)).json();
   assert.match(firstTerminal.output,/PTY_READY real-terminal=true/);assert.match(firstTerminal.output,/INPUT:terminal-probe/);assert.match(firstTerminal.output,/BDD.*FAILED/);
+  const replies=await inputEntries(),firstReply=replies.find(entry=>entry.message==='terminal-probe'),secondReply=replies.find(entry=>entry.message==='second-probe');
+  const replyLog=async id=>(await (await fetch(site+`/repository-api/v1/operations/${id}/terminal`)).json()).output;
+  assert.match(await replyLog(firstReply.id),/INPUT:terminal-probe/);assert.doesNotMatch(await replyLog(firstReply.id),/INPUT:second-probe/);assert.match(await replyLog(secondReply.id),/INPUT:second-probe/);
   const latestDetail=await (await fetch(site+`/repository-api/v1/spec-repositories/${alpha}`)).json();assert.equal(latestDetail.spec.features[0].workflow.feedback.length,0);
   const latestRun=latestDetail.runs.find(r=>r.state==='SEALED');
   const native=await fetch(site+`/repository-api/v1/spec-repositories/${alpha}/runs/${latestRun.id}/report/native/index.html`);assert.equal(native.status,200);assert.match(native.headers.get('content-security-policy'),/sandbox allow-scripts/);assert.ok(!native.headers.get('content-security-policy').includes('allow-same-origin'));

@@ -1,4 +1,5 @@
 import { developmentView } from './development.js';
+import { interactionHistory } from './interaction-history.js';
 const $ = selector => document.querySelector(selector);
 const all = selector => [...document.querySelectorAll(selector)];
 const API = '/repository-api/v1';
@@ -7,6 +8,9 @@ const stages = [
   ['GHERKIN','需求確認','需求'],['SD','系統設計','設計'],['TESTS','測試計劃','測試'],['IMPLEMENTATION','開發實作','開發'],['VERIFICATION','驗收','驗收']
 ];
 const labels = { 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
+Object.assign(labels,{'interaction.requirement.generate':'產生 Gherkin','interaction.document.import':'匯入文件'});
+labels['interaction.cli.input']='CLI 回覆';
+labels['interaction.cancel']='停止作業';
 const state = { repositories:[], repositoryId:null, detail:null, view:'features', stage:'GHERKIN', featureKey:null, projectId:null, editor:null, composer:null, composerRequest:0, transient:false, product:null, busy:false, loading:false, epoch:0, sourceRequest:0, productRequest:0, reportRequest:0, formDirty:false, capabilities:null, scope:null };
 function el(tag,text,cls) { const n=document.createElement(tag); if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n; }
 function button(text, action, cls) { const n=el('button',text,cls);n.type='button';n.onclick=()=>safe(action);return n; }
@@ -33,7 +37,7 @@ const composerDirty=()=>Boolean(state.composer && (composerInput().description!=
 const dirty=()=>state.formDirty||composerDirty()||Boolean(state.editor&&$('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content||state.product&&$('#project-editor').value!==state.product.content);
 function block() {
   const value=state.busy||state.loading||state.transient;
-  $('#content').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
+  $('#home-view').inert=value;$('#repository-view').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
   const editable=feature()?.review.editable??{gherkin:true,sd:false,tests:false};
   $('#sidebar').inert=value;$('#source-editor').readOnly=value||!editable[state.stage==='SD'?'sd':'tests'];$('#hook-editor').readOnly=value||!editable.tests;$('#project-editor').readOnly=value;$('#requirement-description').readOnly=value||!editable.gherkin;$('#requirement-gherkin').readOnly=value||!editable.gherkin;$('#generate-gherkin').disabled=value||!editable.gherkin||!$('#requirement-description').value.trim();$('#upload-requirement').disabled=value||!editable.gherkin;
   $('#sync').disabled=value||dirty()||!state.detail?.preferences?.configured;
@@ -88,7 +92,8 @@ async function refresh() {
     const repositories=await api('/spec-repositories');if(epoch!==state.epoch)return;state.repositories=repositories;
     const detail=state.repositoryId?await api(`/spec-repositories/${state.repositoryId}`):null;if(epoch!==state.epoch)return;state.detail=detail;
     renderNavigation();$('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
-    if(!detail){clearTimeout(terminalTimer);terminalSession=null;$('#operation-terminal-details').hidden=true;renderHome();return;}
+    if(!detail){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);renderHome();return;}
+    await interactionLog.load(state.repositoryId);if(epoch!==state.epoch)return;
     if(!['features','projects','reports','settings','versions'].includes(state.view))state.view='features';if(!detail.preferences?.configured && state.view!=='versions')state.view='settings';
     $('#repository-title').textContent=detail.title;$('#breadcrumbs').textContent=`工作台 / ${detail.title}`;
     $('#repository-error').hidden=!detail.specError&&!detail.moduleError;$('#repository-error').textContent=[detail.specError,detail.moduleError].filter(Boolean).map(x=>x.message).join('\n');
@@ -113,6 +118,7 @@ const cliOperations = new Set(['repository.tools.prepare','repository.acquire','
 let terminalSession = null, terminalTimer;
 function showOperation(op) {
   if (!op || op.request?.repositoryId !== state.repositoryId) return;
+  if(!$('#operation-terminal-details').closest?.('#form-dialog'))interactionLog.attach(op);
   const details=$('#operation-terminal-details');details.hidden=false;details.dataset.operationId=op.id;
   if (terminalSession?.id === op.id) return;
   clearTimeout(terminalTimer);
@@ -159,6 +165,7 @@ async function executeJob(name,input, {refreshAfter=true}={}) {
   let result;
   try {
     result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected});state.jobId=result.id;
+    await interactionLog.accepted(result);
     let selected=false;
     while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){
       if(!selected&&cliOperations.has(name)){const terminal=await api(`/operations/${result.id}/terminal?offset=0`);if(terminal.hasProgress){showOperation({...result,request:{repositoryId,operation:name}});selected=true;}}
@@ -242,7 +249,7 @@ async function bindRepository() {
       try {
         loaded=await api(`/operations/${registered.connection.operationId}`);
         while(['QUEUED','RUNNING','CANCELLING'].includes(loaded.status)){await new Promise(r=>setTimeout(r,350));loaded=await api(`/operations/${registered.connection.operationId}`);}
-      } finally { $('#content').before(panel); }
+      } finally { $('#interaction-history').append(panel); }
       if(loaded.status!=='SUCCEEDED')note('綁定與設定已保存，內容尚未取得：'+(loaded.error?.message??'請重試'),true);
     }
     await flow('repository.tools.prepare',{});
@@ -393,20 +400,20 @@ async function generateGherkin() {
     renderRequirementHistory(await api(`/spec-repositories/${repositoryId}/requirement/proposals?editorKey=${encodeURIComponent(state.composer.key)}`));
     composerChanged();renderRequirementFeedback(result);
     note('Gherkin 草稿已產生，請在下方直接編輯。');$('#requirement-panel').dataset.generation=result.proposalId;
-  }finally{state.transient=false;$('#generate-gherkin').textContent='產生 Gherkin 草稿';block();}
+  }finally{state.transient=false;$('#generate-gherkin').textContent='產生 Gherkin 草稿';block();if(repositoryId===state.repositoryId)await interactionLog.load(repositoryId);}
   $('#requirement-gherkin').focus();
 }
 async function importDocument() {
   const file=$('#requirement-file').files[0];$('#requirement-file').value='';if(!file)return;
   if(file.size>1024*1024)throw new Error('文件最多 1 MiB；原有內容未被修改。');
-  state.transient=true;block();
+  const repositoryId=state.repositoryId;state.transient=true;block();
   try {
     const bytes=new Uint8Array(await file.arrayBuffer());let binary='';
     for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
     const document=await api(`/spec-repositories/${state.repositoryId}/requirement/import`,'POST',{name:file.name,base64:btoa(binary)});
     const source=$('#requirement-description');source.value=source.value.trim()?source.value+'\n\n'+document.text:document.text;
     $('#document-info').textContent=`已匯入 ${document.name}；只加入上方描述，下方尚未變更。`;composerChanged();note('文件已加入需求描述，點「產生 Gherkin 草稿」才會更新下方。');
-  }finally{state.transient=false;block();}
+  }finally{state.transient=false;block();if(repositoryId===state.repositoryId)await interactionLog.load(repositoryId);}
 }
 async function saveRequirement() {
   const c=state.composer;if(!c)return;
@@ -702,7 +709,8 @@ $('#refresh-versions').addEventListener('click',()=>safe(()=>executeJob('reposit
 $('#start-regression').addEventListener('click',()=>safe(()=>startRegression()));
 $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));
 
-const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
+const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));},beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
+const interactionLog=interactionHistory({api,labels});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
 // Initialize the route only after every view state and handler exists.

@@ -12,6 +12,7 @@ const assets = new Map([
   ['/repositories', ['index.html', 'text/html; charset=utf-8']],
   ['/repositories/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/repositories/development.js', ['development.js', 'text/javascript; charset=utf-8']],
+  ['/repositories/interaction-history.js', ['interaction-history.js', 'text/javascript; charset=utf-8']],
   ['/repositories/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
 const securityHeaders = {

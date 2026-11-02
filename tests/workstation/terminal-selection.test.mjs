@@ -9,7 +9,7 @@ test('same terminal is unhidden and SQLite-only review preserves the real CLI', 
   const nodes=new Map();
   const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:true,dataset:{},textContent:'',append(){}});return nodes.get(id);};
   const state={repositoryId:'repo',view:'features',stage:'GHERKIN',epoch:1};
-  const sandbox={state,feature:()=>null,$:node,document:{createTextNode:x=>x},clearTimeout,setTimeout,api:async url=>({hasProgress:url.includes('OP-cli'),output:'',nextOffset:0,status:'SUCCEEDED'})};
+  const sandbox={interactionLog:{attach(){}},state,feature:()=>null,$:node,document:{createTextNode:x=>x},clearTimeout,setTimeout,api:async url=>({hasProgress:url.includes('OP-cli'),output:'',nextOffset:0,status:'SUCCEEDED'})};
   vm.runInNewContext(fragment+'\nglobalThis.showOperation=showOperation;globalThis.selectOperation=selectOperation;',sandbox);
   const cli={id:'OP-cli',status:'SUCCEEDED',request:{repositoryId:'repo',operation:'repository.acquire'}};
   sandbox.showOperation(cli);
