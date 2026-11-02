@@ -2,7 +2,7 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
-import { appendFileSync } from 'node:fs';
+import {readProgress,saveProgressPhase} from '../git-core/progress-store.mjs';
 import { currentProgress } from '../git-core/progress.mjs';
 import { readFile, mkdir, writeFile, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -47,17 +47,15 @@ async function terminalRuntime(context) {
 export async function readTerminal(home,operationId,offset=0) {
   invariant(Number.isInteger(offset)&&offset>=0,'INVALID_OFFSET','終端位置無效。');
   const directory=await safePath(home,`development/${id(operationId)}`);
-  let output=Buffer.alloc(0),state={phase:'PREPARING'},latestExit=null,hasProgress=false;
-  try{output=await readFile(path.join(directory,'terminal.log'));hasProgress=true;}catch(error){if(error.code!=='ENOENT')throw error;}
-  try{state=JSON.parse(await readFile(path.join(directory,'state.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
-  try{latestExit=JSON.parse(await readFile(path.join(directory,'terminal-exit.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+  const persisted=readProgress(home,id(operationId));
+  const output=persisted?.output??Buffer.alloc(0),state=persisted?.state??{phase:'PREPARING'},latestExit=persisted?.latestExit??null,hasProgress=Boolean(persisted);
   let start=Math.min(offset,output.length);
   while(start<output.length&&(output[start]&0xc0)===0x80)start++;
   let nextOffset=Math.min(output.length,start+65536);
   while(nextOffset<output.length&&(output[nextOffset]&0xc0)===0x80)nextOffset--;
   return {...state,hasProgress,latestExit,output:output.subarray(start,nextOffset).toString('utf8'),nextOffset,hasMore:nextOffset<output.length};
 }
-export async function runPty(pty,command,args,cwd,{log,timeoutMs}) {
+export async function runPty(pty,command,args,cwd,{log,timeoutMs,onInputDelivered}) {
   // The host CLI reads its existing login from HOME. Do not inherit unrelated service credentials.
   const env={PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG??'en_US.UTF-8',TERM:'xterm-256color'};
   for(const k of ['USERPROFILE','SYSTEMROOT','USER','TMPDIR'])if(process.env[k])env[k]=process.env[k];
@@ -67,13 +65,13 @@ export async function runPty(pty,command,args,cwd,{log,timeoutMs}) {
   try { commandId=progress?.startProcess(command,'agent',child.pid); } catch(error) { terminateSpawnedPty(child); throw error; }
   const tracked=new EventEmitter();tracked.pid=child.pid;tracked.kill=signal=>child.kill(signal);trackChild(tracked);
   return new Promise((resolve,reject)=>{
-    let ended=false,timedOut=false,limit=false,terminating=false,killTimer;
+    let ended=false,timedOut=false,limit=false,terminating=false,killTimer,inputFailure=null;
     const terminate=()=>{if(terminating||ended)return;terminating=true;try{process.platform!=='win32'?process.kill(-child.pid,'SIGTERM'):child.kill();}catch{}killTimer=setTimeout(()=>{try{process.platform!=='win32'?process.kill(-child.pid,'SIGKILL'):child.kill();}catch{}},1000);};
     const timer=setTimeout(()=>{timedOut=true;terminate();},timeoutMs);
-    const message=m=>{if(m?.type!=='development.input'||ended)return;try{if(typeof m.data==='string')child.write(m.data);else child.resize(m.cols,m.rows);}catch{/* exited during input */}};
+    const message=m=>{if(m?.type!=='development.input'||ended)return;try{const previous=m.interactionId?progress?.routeInput(m.interactionId):null;if(typeof m.data==='string')child.write(m.data);else child.resize(m.cols,m.rows);if(m.interactionId)onInputDelivered?.(m.interactionId,previous);}catch(error){inputFailure=error;terminate();}};
     process.on('message',message);
     child.onData(data=>{try{log(data);}catch{limit=true;terminate();}});
-    child.onExit(({exitCode,signal})=>{progress?.record(`\r\n[exit] code=${exitCode} signal=${signal ?? 'none'} timeout=${timedOut}\r\n`);progress?.finishProcess(commandId,{exitCode,signal,timedOut});progress?.exit({exitCode,signal,timedOut});ended=true;clearTimeout(timer);clearTimeout(killTimer);process.off('message',message);tracked.emit('close');if(limit)reject(new WorkstationError('TERMINAL_OUTPUT_LIMIT','終端輸出超過上限，開發已停止。'));else resolve({exitCode,signal,timedOut});});
+    child.onExit(({exitCode,signal})=>{progress?.record(`\r\n[exit] code=${exitCode} signal=${signal ?? 'none'} timeout=${timedOut}\r\n`);progress?.finishProcess(commandId,{exitCode,signal,timedOut});progress?.exit({exitCode,signal,timedOut});ended=true;clearTimeout(timer);clearTimeout(killTimer);process.off('message',message);tracked.emit('close');if(inputFailure)reject(inputFailure);else if(limit)reject(new WorkstationError('TERMINAL_OUTPUT_LIMIT','終端輸出超過上限，開發已停止。'));else resolve({exitCode,signal,timedOut});});
   });
 }
 /** Import only product files from this explicit development session. Never replace concurrent SQL edits. */
@@ -110,7 +108,7 @@ export async function captureAgentProducts(context,snapshot,initialModules) {
 }
 export function createDevelopmentLog(logfile) {
   let bytes=0;
-  return text=>{bytes+=Buffer.byteLength(text);invariant(bytes<=4*1024*1024,'OUTPUT_LIMIT','Terminal output limit');const progress=currentProgress();if(progress)progress.output(text);else appendFileSync(logfile,text);};
+  return text=>{bytes+=Buffer.byteLength(text);invariant(bytes<=4*1024*1024,'OUTPUT_LIMIT','Terminal output limit');const progress=currentProgress();invariant(progress,'PROGRESS_REQUIRED','CLI execution requires a durable progress session');progress.output(text);};
 }
 export async function runDevelopment(context,verify) {
   const {root,options,store,request,git}=context,input=request.input,key=`${id(input.requirementId)}/${id(input.featureId)}`;
@@ -127,7 +125,7 @@ export async function runDevelopment(context,verify) {
   await ensureInstallation({...context,profiles:feature.profiles});
   const directory=await safePath(options.home,`development/${request.operationId}`);await mkdir(directory,{recursive:true});
   const log=createDevelopmentLog(path.join(directory,'terminal.log'));
-  const phase=(name,extra={})=>writeJson(path.join(directory,'state.json'),{operationId:request.operationId,key,phase:name,...extra});
+  const phase=(name,extra={})=>saveProgressPhase(options.home,request.operationId,{operationId:request.operationId,key,phase:name,...extra});
   const feedback=await readFeedback(root,key),related=feature.projectIds;
   invariant(related.length,'PROJECT_REQUIRED','請在設定中連結產品。',409);
   let previousFailure='',result;
@@ -144,7 +142,7 @@ export async function runDevelopment(context,verify) {
       const cwd=selected.length===1?path.join(root,selected[0].path):root;
       const args=agentArguments(agent,{prompt,spec:root,project:cwd,task});
       log(`\r\n[開發 ${attempt}/${agent.maxAttempts}] ${agent.command}\r\n`);await phase('RUNNING',{attempt});
-      const outcome=await runPty(pty,command,args,cwd,{log,timeoutMs:agent.timeoutMs});
+      const outcome=await runPty(pty,command,args,cwd,{log,timeoutMs:agent.timeoutMs,onInputDelivered:(interactionId,previousId)=>store.acknowledgeInput(request.operationId,interactionId,previousId)});
       log(`\r\n[CLI exit] code=${outcome.exitCode} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut}\r\n`);
       invariant(!outcome.timedOut&&outcome.exitCode===0&&!outcome.signal,'AGENT_FAILED',outcome.timedOut?'CLI Agent 執行逾時；修改已保留。':(outcome.signal?'CLI Agent 已停止；修改已保留。':`CLI Agent 結束碼 ${outcome.exitCode}；修改已保留。`),422);
       const after=await reviewState(root,input.requirementId,input.featureId);

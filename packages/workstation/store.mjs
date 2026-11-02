@@ -5,12 +5,15 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, chmodSync } from 'node:fs';
 import { normalizeStoredRequest } from './migrate.mjs';
 import { invariant, identity, errorResult } from '../contracts/index.mjs';
+import {installProgressSchema,appendExecutionLog} from '../git-core/progress-store.mjs';
+const messageFields=['prompt','description','message','content','title','name'];
+const interactionMessage=request=>messageFields.map(field=>request.input?.[field]).find(value=>typeof value==='string')??'';
 
 export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 8, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 9, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
@@ -91,16 +94,18 @@ export function openStore(home) {
       previous_path TEXT NOT NULL, local_path TEXT NOT NULL, created_at TEXT NOT NULL,
       PRIMARY KEY(repository_id,operation_id)
     );
-    PRAGMA user_version=8;
+    PRAGMA user_version=9;
   `);
   if(!db.prepare('PRAGMA table_info(spec_repositories)').all().some(c=>c.name==='local_path')) db.exec('ALTER TABLE spec_repositories ADD COLUMN local_path TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_repository_local_path ON spec_repositories(local_path) WHERE local_path IS NOT NULL');
   installDraftSchema(db);
+  installProgressSchema(db);
   db.exec(`DROP INDEX IF EXISTS one_writer_per_repository; CREATE UNIQUE INDEX one_writer_per_repository ON operations(repository_id) WHERE status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate};`);
   db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
   const decode = row => row ? { ...row, request: JSON.parse(row.request_json), result: row.result_json ? JSON.parse(row.result_json) : null, error: row.error_json ? JSON.parse(row.error_json) : null } : null;
   const get = operationId => decode(db.prepare('SELECT * FROM operations WHERE id=?').get(operationId));
+  const atomic=callback=>{const own=!db.isTransaction;if(own)db.exec('BEGIN IMMEDIATE');try{const result=callback();if(own)db.exec('COMMIT');return result;}catch(error){if(own)db.exec('ROLLBACK');throw error;}};
   return {
     ...draftMethods(db),
     connection(repositoryId) { const row=db.prepare('SELECT receipt_json FROM repository_connections WHERE repository_id=?').get(repositoryId);return row?JSON.parse(row.receipt_json):null; },
@@ -159,6 +164,16 @@ export function openStore(home) {
     setSyncReceipt(repositoryId, receipt) { db.prepare('UPDATE repository_preferences SET sync_json=? WHERE repository_id=?').run(JSON.stringify(receipt),repositoryId); },
     get,
     operations(repositoryId) { return db.prepare('SELECT * FROM operations WHERE repository_id=? ORDER BY created_at DESC LIMIT 100').all(repositoryId).map(decode); },
+    interactions(repositoryId,{before,limit=20}={}) {
+      invariant(Number.isInteger(limit)&&limit>=1&&limit<=50&&(before===undefined||Number.isSafeInteger(before)&&before>0),'INVALID_HISTORY_CURSOR','Invalid history cursor');
+      const message=`COALESCE(${messageFields.map(field=>`json_extract(request_json,'$.input.${field}')`).join(',')},'')`;
+      const rows=db.prepare(`SELECT rowid cursor,id,repository_id repositoryId,status,created_at createdAt,finished_at finishedAt,
+        json_extract(request_json,'$.operation') operation,substr(${message},1,2000) message,length(${message})>2000 messageTruncated,
+        json_extract(request_json,'$.input.requirementId') requirementId,json_extract(request_json,'$.input.featureId') featureId,json_extract(request_json,'$.input.parentOperationId') parentOperationId,
+        json_extract(error_json,'$.message') error FROM operations WHERE repository_id=? AND (? IS NULL OR rowid<?) ORDER BY rowid DESC LIMIT ?`).all(repositoryId,before??null,before??null,limit+1);
+      const hasMore=rows.length>limit;return {entries:rows.slice(0,limit),nextCursor:hasMore?rows[limit-1].cursor:null};
+    },
+    interaction(operationId){const operation=get(operationId);invariant(operation,'OPERATION_NOT_FOUND','Operation not found',404);return {id:operationId,message:interactionMessage(operation.request)};},
     enqueue(request) {
       const hash = identity(request);
       db.exec('BEGIN IMMEDIATE');
@@ -172,23 +187,42 @@ export function openStore(home) {
         invariant(!busy, 'REPOSITORY_BUSY', `Spec repository has an active operation ${busy?.id ?? ''}`, 409);
         db.prepare("INSERT INTO operations(id,repository_id,request_hash,request_json,status,created_at) VALUES(?,?,?,?,'QUEUED',?)")
           .run(request.operationId, request.repositoryId, hash, JSON.stringify(request), new Date().toISOString());
+        appendExecutionLog(db,request.operationId,`[QUEUED] ${request.operation}\n`);
         db.exec('COMMIT'); return get(request.operationId);
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
     claim(operationId) {
-      return db.prepare("UPDATE operations SET status='RUNNING',worker_pid=?,started_at=? WHERE id=? AND status='QUEUED'")
+      return atomic(()=>{
+      const changed=db.prepare("UPDATE operations SET status='RUNNING',worker_pid=?,started_at=? WHERE id=? AND status='QUEUED'")
         .run(process.pid, new Date().toISOString(), operationId).changes === 1;
+      if(changed)appendExecutionLog(db,operationId,'[RUNNING]\n');return changed;
+      });
     },
     requestCancellation(operationId) {
       db.prepare("UPDATE operations SET status='CANCELLING' WHERE id=? AND status IN ('QUEUED','RUNNING')").run(operationId);
       return get(operationId);
     },
     finish(operationId, status, result, error) {
+      return atomic(()=>{
       if (get(operationId)?.status === 'CANCELLING' && status !== 'CANCELLED') return get(operationId);
-      db.prepare("UPDATE operations SET status=?,result_json=?,error_json=?,finished_at=? WHERE id=? AND status IN ('QUEUED','RUNNING','CANCELLING')")
+      const changed=db.prepare("UPDATE operations SET status=?,result_json=?,error_json=?,finished_at=? WHERE id=? AND status IN ('QUEUED','RUNNING','CANCELLING')")
         .run(status, result === undefined ? null : JSON.stringify(result), error ? JSON.stringify(errorResult(error)) : null, new Date().toISOString(), operationId);
+      if(changed.changes)appendExecutionLog(db,operationId,`[${status}]\n`);
+      if(changed.changes)for(const row of db.prepare("SELECT id FROM operations WHERE json_extract(request_json,'$.operation')='interaction.cli.input' AND json_extract(request_json,'$.input.parentOperationId')=? AND status IN ('QUEUED','RUNNING','CANCELLING')").all(operationId)) {
+        const child=get(row.id),delivered=child.result?.delivery==='sent';
+        this.finish(child.id,!delivered&&status==='SUCCEEDED'?'FAILED':status,{...child.result,reason:delivered?'PARENT_FINISHED':'NOT_DELIVERED',parentStatus:status},!delivered?{code:'CLI_INPUT_NOT_DELIVERED',message:'輸入未取得 CLI 送達確認。'}:error);
+      }
       if (['INTERRUPTED','CANCELLED','FAILED'].includes(status)) this.interruptRegression(operationId,status);
       return get(operationId);
+      });
+    },
+    acknowledgeInput(parentId,operationId,previousId) {
+      return atomic(()=>{
+        const current=get(operationId);invariant(current?.request.operation==='interaction.cli.input'&&current.request.input.parentOperationId===parentId&&current.status==='RUNNING','INVALID_INPUT_RECEIPT','輸入不屬於此 CLI 作業。');
+        if(current.result?.delivery==='sent')return;
+        db.prepare('UPDATE operations SET result_json=? WHERE id=?').run(JSON.stringify({delivery:'sent',sentAt:new Date().toISOString()}),operationId);appendExecutionLog(db,operationId,'[INPUT SENT]\n');
+        if(previousId){const previous=get(previousId);if(previous?.request.operation==='interaction.cli.input'&&previous.request.input.parentOperationId===parentId&&previous.result?.delivery==='sent')this.finish(previousId,'SUCCEEDED',{...previous.result,reason:'NEXT_INPUT'});}
+      });
     },
     recover() {
       // A worker may die after committing SQLite but before updating its job row.

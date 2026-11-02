@@ -49,6 +49,7 @@ export async function dispatch(service, request) {
     if (method === 'GET') result = service.list();
     else if (method === 'POST') { result = service.register(input); status = 201; }
   } else if (parts[0] === 'spec-repositories' && parts.length === 2 && method === 'GET') result = await service.detail(id(parts[1]));
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'interactions' && parts.length === 3 && method === 'GET') result = service.interactions(id(parts[1]),{before:url.searchParams.has('before')?Number(url.searchParams.get('before')):undefined,limit:url.searchParams.has('limit')?Number(url.searchParams.get('limit')):20});
   else if (parts[0] === 'spec-repositories' && parts[2] === 'agent-preview' && parts.length === 3 && method === 'POST') result = await service.agentPreview(id(parts[1]),input);
   else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts.length === 3 && method === 'GET') result = await service.requirement(id(parts[1]), id(url.searchParams.get('requirementId')), id(url.searchParams.get('featureId')));
   else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts[3] === 'generate' && parts.length === 4 && method === 'POST') result = service.generateRequirement(id(parts[1]), input);
@@ -63,6 +64,7 @@ export async function dispatch(service, request) {
   else if (parts[0] === 'spec-repositories' && parts.length===3 && parts[2]==='versions' && method==='GET') result=await service.versions(id(parts[1]),url.searchParams.get('ref'));
   else if (parts[0] === 'spec-repositories' && parts.length===3 && parts[2]==='version-file' && method==='GET') result=await service.versionFile(id(parts[1]),url.searchParams.get('ref'),url.searchParams.get('path'));
   else if (parts[0] === 'spec-repositories' && parts[2] === 'workflow' && parts.length === 3 && method === 'GET') result = await service.workflow(id(parts[1]),url.searchParams.get('feature')||undefined);
+  else if(parts[0]==='operations'&&parts.length===3&&parts[2]==='interaction'&&method==='GET')result=service.interaction(id(parts[1]));
   else if(parts[0]==='operations'&&parts.length===3&&parts[2]==='terminal'&&method==='GET')result=await service.terminal(id(parts[1]),Number(url.searchParams.get('offset')??0));
   else if(parts[0]==='operations'&&parts.length===3&&parts[2]==='input'&&method==='POST')result=service.terminalInput(id(parts[1]),input);
   else if (parts[0] === 'operations' && parts.length === 1 && method === 'POST') { result = service.enqueue(input); status = 202; }

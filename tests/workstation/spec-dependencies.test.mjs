@@ -1,3 +1,4 @@
+import {readProgress} from '../../packages/git-core/progress-store.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -12,8 +13,7 @@ import { identity,writeJson,readJson,exists } from '../../packages/contracts/ind
 import { prepareRun } from '../../packages/spec-toolkit/engine.mjs';
 
 async function npmStarts(home,id) {
-  const file=path.join(home,`development/${id}/processes.json`);
-  return await exists(file)?(await readJson(file)).filter(p=>p.command==='npm').length:0;
+  return (readProgress(home,id)?.processes??[]).filter(p=>p.command==='npm').length;
 }
 
 test('one Spec Repo installs once across requirements/retries, while consumers and other repos remain isolated',async t=>{

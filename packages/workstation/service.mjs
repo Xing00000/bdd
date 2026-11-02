@@ -25,7 +25,13 @@ export async function createWorkstation(configuration) {
   const options = { autoAcquire: true, allowLocal: false, hosts: ['github.com'], enableExecution: false, ...configuration, home: await realpath(configuration.home) };
   const store = openStore(options.home);
   try { await migrateCheckoutDirectory(options.home); } catch (error) { store.close(); throw error; }
-  const children = new Map(); let closing = false;
+  const children = new Map(),terminalDrafts=new Map(); let closing = false;
+  function recordInteraction(repositoryId,operation,input,action) {
+    const operationId=`OP-${randomUUID()}`;
+    store.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});store.claim(operationId);
+    try {const result=action();store.finish(operationId,'SUCCEEDED',result);return {...result,interactionId:operationId};}
+    catch(error){store.finish(operationId,'FAILED',undefined,error);throw error;}
+  }
   function launch(operationId) {
     if (closing || children.has(operationId) || store.get(operationId)?.status !== 'QUEUED') return;
     const child = spawn(process.execPath, [fileURLToPath(new URL('./worker.mjs', import.meta.url)), JSON.stringify(options), operationId], {
@@ -37,6 +43,7 @@ export async function createWorkstation(configuration) {
     child.once('error', error => store.finish(operationId, 'FAILED', undefined, error));
     child.once('close', () => {
       children.delete(operationId);
+      terminalDrafts.delete(operationId);
       const current = store.get(operationId);
       if (current?.status === 'CANCELLING')
         store.finish(operationId, 'CANCELLED', undefined, { code: 'OPERATION_CANCELLED', message: 'Worker stopped; inspect partial Git changes before retrying' });
@@ -58,13 +65,29 @@ export async function createWorkstation(configuration) {
     async terminal(operationId, offset=0) {
       const operation=this.operation(operationId);
       const { readTerminal }=await import('./development.mjs');
-      return {...await readTerminal(options.home,operationId,offset),status:operation.status,result:operation.result,error:operation.error};
+      return {...await readTerminal(options.home,operationId,offset),status:operation.status,result:operation.result,error:operation.error,submitted:operation.request.input};
     },
     terminalInput(operationId, input) {
       const operation=this.operation(operationId),child=children.get(operationId);
       invariant(operation.request.operation==='workflow.develop'&&operation.status==='RUNNING'&&child?.connected,'TERMINAL_UNAVAILABLE','終端已結束或不屬於這個服務。',409);
       invariant(typeof input.data==='string'&&Buffer.byteLength(input.data)<=4096 || input.data===undefined&&Number.isInteger(input.cols)&&input.cols>=20&&input.cols<=300&&Number.isInteger(input.rows)&&input.rows>=5&&input.rows<=150,'INVALID_TERMINAL_INPUT','終端輸入無效。');
-      child.send({type:'development.input',...(typeof input.data==='string'?{data:input.data}:{cols:input.cols,rows:input.rows})});return {sent:true};
+      const interactions=[];
+      if(typeof input.data==='string') {
+        const draft=terminalDrafts.get(operationId)??{text:'',active:null,previousCR:false};let segment='';
+        invariant(Buffer.byteLength(draft.text+input.data)<=64*1024,'TERMINAL_INPUT_LIMIT','尚未送出的終端輸入超過上限。');
+        for(const char of input.data) {
+          segment+=char;
+          if(char==='\r'||char==='\n') {
+            if(char==='\n'&&draft.previousCR){draft.previousCR=false;continue;}
+            const interactionId=`OP-${randomUUID()}`;
+            const accepted=store.enqueue({schemaVersion:1,operationId:interactionId,repositoryId:operation.repository_id,operation:'interaction.cli.input',input:{parentOperationId:operationId,message:draft.text}});
+            store.claim(interactionId);draft.active=interactionId;draft.text='';draft.previousCR=char==='\r';
+            child.send({type:'development.input',data:segment,interactionId},error=>{if(error)store.finish(interactionId,'FAILED',undefined,error);});segment='';interactions.push(accepted);
+          } else {draft.previousCR=false;if(char==='\x7f'||char==='\b')draft.text=Array.from(draft.text).slice(0,-1).join('');else draft.text+=char;}
+        }
+        if(segment)child.send({type:'development.input',data:segment});terminalDrafts.set(operationId,draft);
+      } else child.send({type:'development.input',cols:input.cols,rows:input.rows});
+      return {sent:true,interactions:interactions.map(op=>store.get(op.id))};
     },
     async requirement(repositoryId, requirementId, featureId) {
       store.repository(id(repositoryId));
@@ -75,14 +98,16 @@ export async function createWorkstation(configuration) {
     },
     generateRequirement(repositoryId,input) {
       store.repository(id(repositoryId));
+      return recordInteraction(repositoryId,'interaction.requirement.generate',input,()=>{
       invariant(typeof input.editorKey==='string'&&/^(?:new-[A-Za-z0-9-]+|[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)$/.test(input.editorKey)&&input.editorKey.length<=180,'INVALID_EDITOR','需求編輯識別無效。');
       requirementText(input.previousGherkin??'','Gherkin');
       const generated=generateRequirement(input.description);
       const receipt=store.saveRequirementProposal(repositoryId,{...input,previousGherkin:input.previousGherkin??'',gherkin:generated.gherkin});
       return {...generated,...receipt};
+      });
     },
     requirementProposals(repositoryId,key) {store.repository(id(repositoryId));return store.requirementProposals(repositoryId,key);},
-    importRequirementDocument(repositoryId,input) {store.repository(id(repositoryId));return importRequirementDocument(input);},
+    importRequirementDocument(repositoryId,input) {store.repository(id(repositoryId));return recordInteraction(repositoryId,'interaction.document.import',input,()=>importRequirementDocument(input));},
     list() { return store.repositories().map(r=>({...r,localPath:r.localPath??managedLocation(options.home,r.id),connection:store.connection(r.id)})); },
     register(input) {
       const repositoryId = id(input.id ?? `SPEC-${randomUUID()}`);
@@ -162,6 +187,8 @@ export async function createWorkstation(configuration) {
       const operation = store.enqueue(request); launch(operation.id); return operation;
     },
     operation(operationId) { const value = store.get(id(operationId)); invariant(value, 'OPERATION_NOT_FOUND', 'Operation not found', 404); return value; },
+    interactions(repositoryId,query) {store.repository(id(repositoryId));return store.interactions(repositoryId,query);},
+    interaction(operationId){return store.interaction(id(operationId));},
     async wait(operationId, timeoutMs = 60000) {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
@@ -171,8 +198,9 @@ export async function createWorkstation(configuration) {
       }
       throw new Error('Operation wait timed out; the durable job may still be running');
     },
-    cancel(operationId) {
+    cancel(operationId,{record=true}={}) {
       const operation = this.operation(operationId), child = children.get(operation.id);
+      if(record){const value=recordInteraction(operation.repository_id,'interaction.cancel',{parentOperationId:operationId,message:'停止作業'},()=>this.cancel(operationId,{record:false}));return {...value,interaction:store.get(value.interactionId)};}
       invariant(operation.status === 'QUEUED' || operation.status === 'RUNNING', 'OPERATION_FINISHED', 'Operation already finished', 409);
       invariant(operation.status === 'QUEUED' || child, 'WORKER_NOT_OWNED', 'This process does not own the worker; do not signal an unverified PID', 409);
       if (child) store.requestCancellation(operationId);
@@ -189,7 +217,7 @@ export async function createWorkstation(configuration) {
       const active = [...children.entries()];
       for (const [operationId] of active) {
         const operation = this.operation(operationId);
-        if (['QUEUED', 'RUNNING'].includes(operation.status)) this.cancel(operationId);
+        if (['QUEUED', 'RUNNING'].includes(operation.status)) this.cancel(operationId,{record:false});
       }
       await Promise.all(active.map(([, child]) => new Promise(resolve => {
         if (child.exitCode !== null || child.signalCode) return resolve();

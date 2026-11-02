@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { handleProgress } from '../../packages/workstation/mcp-progress.mjs';
+import {openProgressStore} from '../../packages/git-core/progress-store.mjs';
 
 const rpc=(method,params={})=>({jsonrpc:'2.0',id:1,method,params});
 test('protocol versions apply to initialize, calls and notifications', async()=>{
@@ -25,7 +26,7 @@ test('process metadata is bounded and only allowed fields are returned',async()=
     const call=()=>handleProgress(store,home,{method:'POST',headers:{host:'localhost:1234'},body:rpc('tools/call',{name:'workbench_get_job_progress',arguments:{repositoryId:'SPEC-one',jobId:'OP-one'}})});
     const result=(await call()).body.result.structuredContent;
     assert.equal(result.agent.state,'RUNNING');assert.equal(result.agent.command,'[redacted]');assert.doesNotMatch(JSON.stringify(result),/hidden|argv|env/);
-    await writeFile(file,' '.repeat(1024*1024+1));assert.ok((await call()).body.error);
+    const database=openProgressStore(home);database.update('OP-one','processes_json',Array.from({length:4097},()=>({state:'RUNNING'})));database.close();assert.ok((await call()).body.error);
   } finally {await rm(home,{recursive:true,force:true});}
 });
 test('bridge returns safe same-id errors and follows negotiated version',async()=>{
@@ -39,15 +40,14 @@ test('bridge returns safe same-id errors and follows negotiated version',async()
   } finally {await rm(dir,{recursive:true,force:true});}
 });
 
-test('failed process registration terminates the spawned process group',async()=>{
+test('failed process registration terminates the spawned process group',async t=>{
   const { spawn }=await import('node:child_process');
   const { withProgress }=await import('../../packages/git-core/progress.mjs');
   const { runPty }=await import('../../packages/workstation/development.mjs');
   const home=await mkdtemp(path.join(os.tmpdir(),'mcp-cleanup-'));let child;
   try {
-    await mkdir(path.join(home,'development','OP-one','processes.json'),{recursive:true});
     const pty={spawn(){child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});return {pid:child.pid,kill:signal=>child.kill(signal),onExit:fn=>child.once('exit',(exitCode,signal)=>fn({exitCode,signal}))};}};
-    await assert.rejects(withProgress(home,'OP-one',()=>runPty(pty,'node',[],home,{log(){},timeoutMs:5000})));
+    await assert.rejects(withProgress(home,'OP-one',async()=>{const {currentProgress}=await import('../../packages/git-core/progress.mjs');t.mock.method(currentProgress(),'startProcess',()=>{throw new Error('SQLite registration failed');});return runPty(pty,'node',[],home,{log(){},timeoutMs:5000});}));
     await new Promise(resolve=>child.once('exit',resolve));
     assert.ok(child.signalCode);
   } finally {await rm(home,{recursive:true,force:true});}

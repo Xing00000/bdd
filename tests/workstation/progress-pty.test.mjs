@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import {readProgress} from '../../packages/git-core/progress-store.mjs';
 import { withProgress } from '../../packages/git-core/progress.mjs';
 import { execute, processEnvironment, terminateSpawnedPty } from '../../packages/git-core/index.mjs';
 import { readTerminal } from '../../packages/workstation/development.mjs';
@@ -68,7 +69,7 @@ test('controlling PTY pipe relay preserves binary and NUL output', async t => {
     const result = await execute(process.execPath, ['-e', 'process.stdout.write(Buffer.from([0,255,10,13,65]))'], { env: processEnvironment(), binaryOutput: true });
     assert.equal(result.exitCode, 0); assert.deepEqual(result.stdout, Buffer.from([0,255,10,13,65]));
   });
-  assert.match(await readFile(path.join(home, 'development/OP-test/terminal.log'), 'utf8'), /controlling-PTY pipe relay/);
+  assert.match(readProgress(home,'OP-test').output.toString('utf8'), /controlling-PTY pipe relay/);
 });
 test('progress bounds bytes, removes OSC across chunks and pages UTF-8 at byte boundaries', async t => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'progress-')); t.after(() => rm(home, { recursive: true, force: true }));
@@ -78,7 +79,7 @@ test('progress bounds bytes, removes OSC across chunks and pages UTF-8 at byte b
     progress.output('\x1b]52;c;private\n'); progress.output('data\x07\n');
     for (let i = 0; i < 100; i++) progress.output('界'.repeat(16000) + '\n');
   });
-  const bytes = await readFile(path.join(home, 'development/OP-test/terminal.log'));
+  const bytes = readProgress(home,'OP-test').output;
   assert.ok(bytes.length <= 4 * 1024 * 1024); assert.doesNotMatch(bytes.toString(), /private|data/);
   let offset = 0, collected = '';
   do { const page = await readTerminal(home, 'OP-test', offset); collected += page.output; assert.ok(page.nextOffset > offset); offset = page.nextOffset; } while (offset < bytes.length);
@@ -113,7 +114,7 @@ test('carriage-return progress is visible before completion and bounded output r
     for (let i=0;i<100;i++) progress.output('x'.repeat(50000)+'\n');
     progress.record('[exit] code=17\r\n');
   });
-  const bytes=await readFile(path.join(home,'development/OP-live/terminal.log'));
+  const bytes=readProgress(home,'OP-live').output;
   assert.ok(bytes.length<=4*1024*1024);
   assert.match(bytes.toString(),/\[output truncated\]/);
   assert.match(bytes.toString(),/\[exit\] code=17/);
@@ -126,11 +127,11 @@ test('polling at the cap preserves offsets and exposes the later exit', async t 
   await withProgress(home, 'OP-cap', async () => {
     const progress = currentProgress();
     for (let i=0;i<100;i++) progress.output('界'.repeat(16000)+'\n');
-    const before = await readFile(path.join(home, 'development/OP-cap/terminal.log'));
+    const before = readProgress(home,'OP-cap').output;
     let offset=0, page;
     do { page=await readTerminal(home,'OP-cap',offset); offset=page.nextOffset; } while(page.hasMore);
     progress.record('[exit] code=17\r\n'); progress.exit({exitCode:17,signal:null});
-    const after=await readFile(path.join(home,'development/OP-cap/terminal.log'));
+    const after=readProgress(home,'OP-cap').output;
     assert.deepEqual(after.subarray(0,before.length),before);
     const final=await readTerminal(home,'OP-cap',offset);
     assert.equal(final.latestExit.exitCode,17); assert.ok(final.nextOffset>=offset);
@@ -146,7 +147,7 @@ test('concurrent Git metadata reads avoid progress relays while mutations retain
     await git.init(repo);
     await Promise.all(Array.from({length:12},()=>git.inspect(repo)));
   });
-  const log=await readFile(path.join(home,'development/OP-concurrent/terminal.log'),'utf8');
+  const log=readProgress(home,'OP-concurrent').output.toString('utf8');
   assert.match(log,/controlling-PTY pipe relay.*git init/);
   assert.equal((log.match(/\[start /g)??[]).length,1);
 });
@@ -159,6 +160,6 @@ test('concurrent supervised Git operations complete with metadata inspections', 
     await git.init(repo);
     const states=await Promise.all(Array.from({length:4},()=>git.inspect(repo)));
     assert.ok(states.every(state=>state.head===null));
-    assert.match(await readFile(path.join(home,`development/OP-parallel-${i}/terminal.log`),'utf8'),/controlling-PTY pipe relay.*git init/);
+    assert.match(readProgress(home,`OP-parallel-${i}`).output.toString('utf8'),/controlling-PTY pipe relay.*git init/);
   })));
 });

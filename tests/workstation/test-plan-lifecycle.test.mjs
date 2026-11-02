@@ -1,3 +1,4 @@
+import {readProgress} from '../../packages/git-core/progress-store.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -78,7 +79,7 @@ test('settings installs tools; design codegens skeleton; explicit LLM completion
   await assert.rejects(f.job('workflow.tests.complete',{...ids,expectedDigest:(await f.current()).review.hashes.tests}),{code:'AGENT_DELETED_TEST_SOURCE'});
   assert.equal((await f.service.readFile('SPEC-plan','tests/REQ-001/arithmetic/obsolete.ts')).content,'export const obsolete = true;\n');
   for(const operation of f.operations.filter(op=>op.operation==='workflow.tests.complete'||op.operation==='workflow.review'&&op.input.stage==='sd')) {
-    const processes=JSON.parse(await readFile(path.join(f.home,'development',operation.operationId,'processes.json'),'utf8'));
+    const processes=readProgress(f.home,operation.operationId).processes;
     assert.ok(processes.every(process=>process.command!=='npm'),'Generation must never install packages');
   }
   await assert.rejects(f.save(designPath,'Changed approved design'),{code:'STAGE_READ_ONLY'});

@@ -1,3 +1,4 @@
+import {readProgress} from '../../packages/git-core/progress-store.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, readFile, mkdir, symlink, rm } from 'node:fs/promises';
@@ -54,7 +55,7 @@ test('selected additions and deletions refresh the index without reset or changi
   assert.equal((await git.command(f.repo,['show',':new.txt'])).stdout,'new source');
   assert.equal((await git.command(f.repo,['show',':unrelated.txt'])).stdout,'staged work');
   assert.equal(await readFile(path.join(f.repo,'unrelated.txt'),'utf8'),'unstaged work');
-  const log=await readFile(path.join(f.home,'development/OP-index/terminal.log'),'utf8');
+  const log=readProgress(f.home,'OP-index').output.toString('utf8');
   assert.ok(log.includes('git update-index'));assert.ok(!log.includes('git reset'));
 });
 

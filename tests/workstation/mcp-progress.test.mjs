@@ -7,6 +7,7 @@ import { handleProgress } from '../../packages/workstation/mcp-progress.mjs';
 import { withProgress } from '../../packages/git-core/progress.mjs';
 import { dispatch } from '../../packages/workstation/http.mjs';
 import { openStore } from '../../packages/workstation/store.mjs';
+import {openProgressStore} from '../../packages/git-core/progress-store.mjs';
 
 test('read-only MCP protocol, scoped progress, redaction and activity', async () => {
   const home=await mkdtemp(path.join(os.tmpdir(),'mcp-progress-'));
@@ -49,7 +50,7 @@ test('SQLite-backed interrupted progress keeps missing exit unknown and queries 
     store.enqueue({operationId:'OP-one',repositoryId:'SPEC-one',operation:'workflow.develop',input:{}});
     store.claim('OP-one');
     const dir=path.join(home,'development','OP-one');await mkdir(dir,{recursive:true});
-    await writeFile(path.join(dir,'processes.json'),JSON.stringify([{commandId:'one',command:'node',role:'agent',pid:1,state:'RUNNING',startedAt:'2020-01-01T00:00:00.000Z'}]));
+    const logs=openProgressStore(home);logs.update('OP-one','processes_json',[{commandId:'one',command:'node',role:'agent',pid:1,state:'RUNNING',startedAt:'2020-01-01T00:00:00.000Z'}]);logs.close();
     store.finish('OP-one','INTERRUPTED',undefined,{code:'WORKER_INTERRUPTED',message:'Worker ended'});
     const before=store.get('OP-one');
     const response=await handleProgress(store,home,{method:'POST',headers:{host:'localhost:1234'},body:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'workbench_get_job_progress',arguments:{repositoryId:'SPEC-one',jobId:'OP-one'}}}});

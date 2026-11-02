@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { appendFileSync, mkdirSync, statSync, writeFileSync, renameSync } from 'node:fs';
+import {openProgressStore} from './progress-store.mjs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -7,26 +7,25 @@ const storage = new AsyncLocalStorage();
 const limit = 4 * 1024 * 1024;
 export function currentProgress() { return storage.getStore(); }
 export function withProgress(home, operationId, callback) {
-  const directory = path.join(home, 'development', operationId);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  let bytes = 0, pending = '', osc = false, escape = false, truncated = false;
-  try { bytes = statSync(path.join(directory, 'terminal.log')).size; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const database=openProgressStore(home);database.importLegacy(operationId);database.ensure(operationId);
+  let pending = '', osc = false, escape = false, inputInteraction=null;
+  const truncated=new Set();
   const marker = '\r\n[output truncated]\r\n';
-  const processes = [];
+  const processes = database.read(operationId).processes;
   const saveProcesses = () => {
-    const target = path.join(directory, 'processes.json'), temporary = `${target}.${randomUUID()}.tmp`;
-    writeFileSync(temporary, JSON.stringify(processes), { mode: 0o600 }); renameSync(temporary, target);
+    database.update(operationId,'processes_json',processes);
   };
   const reserve = 4096;
   const append = (text, record = false) => {
-    let data = Buffer.from(text);
-    if (!record && bytes + data.length > limit - reserve) {
-      if (!truncated) { truncated = true; append(marker, true); }
-      writeFileSync(path.join(directory, 'activity'), '', { mode: 0o600 });
-      return;
+    const data = Buffer.from(text);
+    for(const target of [operationId,inputInteraction].filter(Boolean)) {
+      const used=database.get(target).bytes;
+      if(!record&&used+data.length>limit-reserve) {
+        if(!truncated.has(target)){truncated.add(target);database.append(target,marker);}
+        database.touch(target);continue;
+      }
+      if(used+data.length<=limit)database.append(target,data);
     }
-    if (bytes + data.length > limit) return;
-    appendFileSync(path.join(directory, 'terminal.log'), data, { mode: 0o600 }); bytes += data.length;
   };
   const clean = text => text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '[OSC removed]')
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
@@ -35,6 +34,7 @@ export function withProgress(home, operationId, callback) {
   const flush = () => { if (pending) { append(clean(pending)); pending = ''; } };
   const progress = {
     home,
+    routeInput(interactionId){flush();const previous=inputInteraction;inputInteraction=interactionId;database.ensure(interactionId);database.update(interactionId,'phase_json',{phase:'RUNNING',parentOperationId:operationId});database.update(interactionId,'processes_json',processes);return previous;},
     startProcess(command, role, pid) {
       const item = { commandId: randomUUID(), command: path.basename(command), role, pid, state: 'RUNNING', startedAt: new Date().toISOString() };
       processes.push(item); saveProcesses(); return item.commandId;
@@ -50,7 +50,7 @@ export function withProgress(home, operationId, callback) {
     },
     output(text) { let safe = ''; for (const char of text) { if (osc) { if (char === '\x07' || (escape && char === '\\')) { osc = false; escape = false; safe += '[OSC removed]'; } else escape = char === '\x1b'; } else if (escape) { if (char === ']') { osc = true; escape = false; } else { safe += '\x1b' + char; escape = false; } } else if (char === '\x1b') escape = true; else safe += char; } pending += safe; const end = Math.max(pending.lastIndexOf('\n'), pending.lastIndexOf('\r')); if (end >= 0) { append(clean(pending.slice(0, end + 1))); pending = pending.slice(end + 1); } if (pending.length > 65536) { pending = '[output redacted: unterminated line]\n'; flush(); } },
     record(text) { flush(); append(clean(text), true); },
-    exit(outcome) { const target=path.join(directory, 'terminal-exit.json'), temporary=target+'.tmp'; writeFileSync(temporary, JSON.stringify(outcome), { mode: 0o600 }); renameSync(temporary,target); }, flush
+    exit(outcome) {database.update(operationId,'exit_json',outcome);if(inputInteraction)database.update(inputInteraction,'exit_json',outcome);}, flush
   };
-  return storage.run(progress, async () => { try { return await callback(); } finally { flush(); } });
+  return storage.run(progress, async () => { try { return await callback(); } finally { try{flush();}finally{database.close();} } });
 }
