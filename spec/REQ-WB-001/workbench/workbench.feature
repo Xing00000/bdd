@@ -388,3 +388,34 @@ Feature: 多人共用的BDD軟體開發工作台
       | tests   | TESTS          | Gherkin及SD確認                   | 測試與程式基線              |
       | source  | IMPLEMENTATION | Gherkin及SD確認與測試基線         | 程式基線                    |
       | verify  | VERIFICATION   | Gherkin及SD確認與測試及程式基線   | 僅執行結果                  |
+
+  @AC-WB-036
+  Scenario: 從左側聊天室清單開啟中間對話頁籤
+    Given 使用者已開啟需求工作台
+    When 使用者從左側聊天室區建立聊天室
+    Then 左側清單顯示該聊天室
+    And 中間開啟該聊天室的對話頁籤與訊息輸入區
+    When 使用者切換其他頁籤再點選該聊天室
+    Then 回到相同對話且不重複建立頁籤
+    And 關閉頁籤不刪除聊天室
+
+  @AC-WB-037
+  Scenario: Codex 管理上下文並經 Copilot 回覆且保存聊天紀錄
+    Given Codex 與 GitHub Copilot CLI 已可用且具有推論權限
+    And 使用者已開啟聊天室
+    When 使用者送出文字訊息
+    Then 使用者訊息先保存至 SQLite
+    And Codex 使用該聊天室對應的 thread 管理上下文並經 adapter 呼叫 Copilot
+    And 對話視窗顯示真實助手回覆並將內容與完成狀態保存至 SQLite
+    When 使用者重新載入並開啟該聊天室
+    Then 顯示先前保存的訊息
+    And 後續訊息延續同一 Codex thread
+    And Codex 壓縮上下文不刪除 SQLite 的原始訊息
+
+  @AC-WB-038
+  Scenario: 推論失敗時保留訊息並顯示可核對的錯誤
+    Given 使用者已開啟要驗證失敗處理的聊天室
+    When 訊息送出後 CLI 不可用、未授權或推論失敗
+    Then SQLite 保留已送出的使用者訊息與失敗狀態
+    And 對話視窗顯示錯誤且不建立假助手回覆
+    And 同一聊天室有進行中的回覆時不接受重複送出

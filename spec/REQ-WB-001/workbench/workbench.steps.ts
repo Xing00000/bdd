@@ -1,3 +1,4 @@
+import {world,detail,createRoom,send} from './chat.steps.ts';
 import { Given, When, Then } from './testing/support/fixtures.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -2851,4 +2852,147 @@ Then(/^可使用已確認文件及測試基線作為開發依據$/,async({sut})=
   await expect(sut.page.getByTestId('source-editor')).toBeVisible();expect(sut.head('spec').test_stage).toBe('COMPLETED');
   expect(sut.db.all("SELECT document_version_id FROM baseline_documents WHERE baseline_id=(SELECT id FROM baselines WHERE feature_id=? AND kind='tests' AND valid=1)",[String(sut.vars.featureId)])).toHaveLength(3);
  });
+});
+
+// AC-WB-036–038: source-bound chat scenarios.
+Given(/^使用者已開啟需求工作台$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(394, 'Given', async () => {await expect(page.getByTestId('requirement-sidebar')).toBeVisible();
+  });
+});
+
+When(/^使用者從左側聊天室區建立聊天室$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(395, 'When', async () => {await createRoom(page);
+  });
+});
+
+Then(/^左側清單顯示該聊天室$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(396, 'Then', async () => {await expect(page.getByTestId('chat-room-'+world(page).roomId)).toBeVisible();
+  });
+});
+
+Then(/^中間開啟該聊天室的對話頁籤與訊息輸入區$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(397, 'Then', async () => {await expect(page.getByTestId('workspace-tabs').getByRole('button',{name:'對話 · '+world(page).title,exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toBeVisible();
+  });
+});
+
+When(/^使用者切換其他頁籤再點選該聊天室$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(398, 'When', async () => {await page.getByTestId('sidebar-workflow-settings').click();await expect(page.getByRole('heading',{name:'流程設定',exact:true})).toBeVisible();await page.getByTestId('chat-room-'+world(page).roomId).click();
+  });
+});
+
+Then(/^回到相同對話且不重複建立頁籤$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(399, 'Then', async () => {await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toBeVisible();await expect(page.getByTestId('workspace-tabs').getByRole('button',{name:'對話 · '+world(page).title,exact:true})).toHaveCount(1);
+  });
+});
+
+Then(/^關閉頁籤不刪除聊天室$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(400, 'Then', async () => {await page.getByRole('button',{name:'關閉 對話 · '+world(page).title,exact:true}).click();await page.getByTestId('chat-room-'+world(page).roomId).click();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toBeVisible();
+  });
+});
+
+Given(/^Codex 與 GitHub Copilot CLI 已可用且具有推論權限$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(404, 'Given', async () => {const w=world(page);const response=await page.request.get(w.url+'/chat-settings');expect(response.ok()).toBe(true);const settings=await response.json();expect(execFileSync(settings.codexExecutable,['--version'],{encoding:'utf8'})).toContain('codex-cli');expect(settings.copilotArgs.length).toBeGreaterThan(0);
+  });
+});
+
+Given(/^使用者已開啟聊天室$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(405, 'Given', async () => {await createRoom(page);
+  });
+});
+
+Given(/^使用者已開啟要驗證失敗處理的聊天室$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(417, 'Given', async () => {await createRoom(page);
+  });
+});
+
+When(/^使用者送出文字訊息$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(406, 'When', async () => {await send(page,`Remember this verification marker: ${world(page).marker}. Reply with only this marker. Do not use tools.`);
+  });
+});
+
+Then(/^使用者訊息先保存至 SQLite$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(407, 'Then', async () => {await expect.poll(async()=>{const d=await detail(page);return d.messages.some((m:any)=>m.role==='user'&&m.content.includes(world(page).marker));}).toBe(true);
+  });
+});
+
+Then(/^Codex 使用該聊天室對應的 thread 管理上下文並經 adapter 呼叫 Copilot$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(408, 'Then', async () => {await expect.poll(async()=>Boolean((await detail(page)).thread_id),{timeout:30000}).toBe(true);world(page).thread=(await detail(page)).thread_id;
+  });
+});
+
+Then(/^對話視窗顯示真實助手回覆並將內容與完成狀態保存至 SQLite$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(409, 'Then', async () => {await expect(page.getByTestId('chat-message-assistant')).toHaveCount(1,{timeout:180000});await expect(page.getByTestId('chat-message-assistant')).toContainText(world(page).marker);const d=await detail(page);expect(d.messages.map((m:any)=>m.status)).toEqual(['completed','completed']);world(page).title=d.title;
+  });
+});
+
+When(/^使用者重新載入並開啟該聊天室$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(410, 'When', async () => {
+ const w=world(page),url=page.url();await w.server.app.close();w.server=await createServer(w.options);await w.server.app.listen({host:'127.0.0.1',port:Number(new URL(w.url).port)});await page.goto(url);await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toBeVisible();
+
+  });
+});
+
+Then(/^顯示先前保存的訊息$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(411, 'Then', async () => {await expect(page.getByTestId('chat-message-user')).toContainText(world(page).marker);await expect(page.getByTestId('chat-message-assistant')).toContainText(world(page).marker);
+  });
+});
+
+Then(/^後續訊息延續同一 Codex thread$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(412, 'Then', async () => {await send(page,'What verification marker did I give you? Return only the marker.');await expect(page.getByTestId('chat-message-assistant')).toHaveCount(2,{timeout:180000});await expect(page.getByTestId('chat-message-assistant').last()).toContainText(world(page).marker);expect((await detail(page)).thread_id).toBe(world(page).thread);
+  });
+});
+
+Then(/^Codex 壓縮上下文不刪除 SQLite 的原始訊息$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(413, 'Then', async () => {const w=world(page),before=(await detail(page)).messages;const response=await page.request.post(w.url+'/chat-rooms/'+w.roomId+'/compact',{timeout:180000});expect(response.ok(),await response.text()).toBe(true);expect((await detail(page)).messages).toEqual(before);
+  });
+});
+
+When(/^訊息送出後 CLI 不可用、未授權或推論失敗$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(418, 'When', async () => {
+ const w=world(page);w.codexExecutable=(await (await page.request.get(w.url+'/chat-settings')).json()).codexExecutable;await page.getByText('對話設定',{exact:true}).click();await page.getByRole('textbox',{name:'對話 Codex 執行檔',exact:true}).fill(join(w.options.dataRoot,'unavailable-cli'));await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();await expect(page.getByText('已儲存',{exact:true})).toBeVisible();await send(page,'<script>window.untrustedChatExecuted=true</script>');
+
+  });
+});
+
+Then(/^SQLite 保留已送出的使用者訊息與失敗狀態$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(419, 'Then', async () => {await expect.poll(async()=> (await detail(page)).messages[0]?.status).toBe('failed');const rows=await world(page).server.core.store.all('SELECT * FROM chat_messages WHERE room_id=?',[world(page).roomId]);expect(rows).toHaveLength(1);expect(rows[0].error).toContain('Codex');
+  });
+});
+
+Then(/^對話視窗顯示錯誤且不建立假助手回覆$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(420, 'Then', async () => {await expect(page.getByRole('alert').filter({hasText:'回覆失敗'})).toBeVisible();await expect(page.getByTestId('chat-message-assistant')).toHaveCount(0);expect(await page.evaluate(()=>Object.hasOwn(window,'untrustedChatExecuted'))).toBe(false);
+  });
+});
+
+Then(/^同一聊天室有進行中的回覆時不接受重複送出$/, async ({sut,page}) => {
+  const expect=sut.check;
+  await sut.step(421, 'Then', async () => {
+ const w=world(page),settings=await (await page.request.get(w.url+'/chat-settings')).json();settings.codexExecutable=w.codexExecutable;expect((await page.request.put(w.url+'/chat-settings',{data:settings})).ok()).toBe(true);
+ await send(page,'Reply with the number 42 only.');await expect(page.getByRole('button',{name:'回覆中…',exact:true})).toBeDisabled();
+ const response=await page.request.post(w.url+'/chat-rooms/'+w.roomId+'/messages',{data:{content:'Duplicate'}});expect(response.status()).toBe(409);
+ await expect(page.getByTestId('chat-message-assistant')).toHaveCount(1,{timeout:180000});
+ expect((await detail(page)).messages.filter((m:any)=>m.content==='Duplicate')).toHaveLength(0);
+
+  });
 });

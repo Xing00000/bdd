@@ -1,6 +1,9 @@
 // Source-case review notes: expectations and oracles inspected against the direct TypeScript callbacks.
 // This is review metadata, never an instruction plan or runtime step implementation.
 export const scenarioReviews={
+ '036':['Create a room through the sidebar and open the central conversation tab','Room title and composer are visible; revisiting deduplicates tabs and closing does not delete the room'],
+ '037':['Run real Codex and Copilot text inference, restart the application and resume its thread','Exact original user text and real replies persist in SQLite, thread id remains stable, and compaction preserves the original message rows'],
+ '038':['Fail an actual CLI launch then run a real reply while attempting a duplicate send','Failed input and errors remain visible, no assistant reply is fabricated, HTML is escaped, and the duplicate is rejected without losing a subsequent draft'],
  '030':['Create independent requirement from the fixed sidebar, add/select a sibling Gherkin, and edit its name with workspace links in the same tree row','Verify distinct per-Gherkin statuses, fixed sidebar, full-screen multi-tab content, single-home workspace ordering, and selected requirement/Gherkin after reload'],
  '031':['Link two canonical local code project directories to one requirement and run pwd in both real PTYs','Document identities remain unchanged with requirement ownership; each actual PTY prints the selected registered directory; projects are settings resources'],
  '032':['Start a fresh metadata database and verify the Codex/Kiro CLI records, exact checked-in Playwright-BDD Skill content, four stage-specific Agents, and their default workflow assignments through the application','Edit the CLI and Skill through the UI, delete Kiro through the UI, restart the server on the same database, and verify edits/deletion plus one-time seed history'],

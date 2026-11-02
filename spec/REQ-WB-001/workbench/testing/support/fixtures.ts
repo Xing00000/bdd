@@ -29,4 +29,4 @@ export const test=base.extend<{productEnvironment:void;sut:Workbench}>({
     try{await use(sut);}finally{await sut.close();}
   },
 });
-export const {Given,When,Then}=createBdd(test);
+export const {Given,When,Then,BeforeScenario,AfterScenario,AfterStep}=createBdd(test);

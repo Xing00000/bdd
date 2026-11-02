@@ -1120,3 +1120,23 @@ AC028 檢查 selected a 的兩個 tests 全執行與回傳，b 沒有本 run cas
 - [Playwright CLI／Test list](https://playwright.dev/docs/test-cli#test-list)：--list、--test-list、--project、--no-deps 與定位語意。
 - [playwright-bdd 9.2.1 generation paths](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/src/generate/paths.ts)、[缺步驟設定](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/docs/configuration/options.md)。
 - [node-pty](https://github.com/microsoft/node-pty)、[xterm.js](https://xtermjs.org/docs/)、[GitHub CI variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables)。
+
+## 聊天室增量設計（AC-WB-036～038，待批准）
+
+### Owner 與接線
+
+沿用既有 AC-WB 情境編號。正式入口依 `package.json` 的 `npm start` 與 `docs/architecture/workstation.md`，為 `packages/workstation/http.mjs`、`public/index.html`、`public/app.js`；`public/chat.js` 提供左側聊天室與中間對話頁籤。既有 Vue 入口 `ui/src/RequirementSidebar.vue`、`ui/src/App.vue` 也消費相同聊天服務。聊天室不要求先選需求或專案。
+
+聊天 schema 的唯一 owner 為 `src/adapters/sqlite/chat.ts`，聊天用例為 `src/application/chat.ts`。正式入口的 `packages/workstation/chat.mjs` 延遲載入編譯後服務，透過 `store.chatStorage()` 在既有 `WB_HOME/metadata.sqlite` 原子安裝同一份 schema，不新增第二份聊天資料庫；Vue 入口經 `src/adapters/sqlite/migrations.ts` 的 11→12 migration 與既有 worker 存取其 metadata。兩個入口不互相複製聊天資料。聊天室保存 id、title、Codex threadId 與時間；訊息保存 id、roomId、順序、role、完整 content、執行狀態與錯誤。訊息與執行狀態由 SQLite 擁有；上下文組裝、壓縮與 thread 執行狀態由 Codex 擁有。
+
+### 執行與錯誤
+
+依使用者 2026-11-02 的操作修正，按「新對話」直接建立，不要求聊天室名稱；預設標題由 `src/domain/chat.ts` 擁有，首次送出時以第一則訊息正規化空白並限制標題長度，與原文同交易保存。訊息本身保留完整首尾空白。送出期間若輸入下一則草稿，不清除新草稿。
+
+聊天服務驅動 Codex app-server，provider adapter 將文字請求轉至官方 Copilot CLI。沿用已驗證的文字聊天範圍，尚未驗證的工具呼叫與非文字輸入必須明確拒絕，不移交 Copilot 自行執行工具。CLI 介面僅接受 prompt，adapter 將 role 標籤序列化為 JSON；不宣稱等同原生模型 role／工具協定。回覆完成後顯示全文，目前不宣稱逐 token 串流。執行檔、啟動參數、模型與逾時由 `chat_settings` 擁有，預設值僅定義於 `src/adapters/runtime/chat-settings.ts`。Codex 使用工作台自己的 chat/codex 目錄，不依賴 `/tmp` 探測環境或改動使用者全域 Codex config。工作台關閉或逾時時終止擁有的 Codex 與 Copilot 程序群組，避免 npm loader 留下 native child。
+
+送出前保存使用者訊息並鎖定聊天室執行；真實回覆、失敗與中斷均持久化。切換／關閉頁籤不刪除聊天室，也不取消正在執行的回覆。程序重新啟動後恢復聊天室與紀錄；未完成執行必須顯示中斷，不冒充完成。Codex thread 無法恢復時明確回報，不靜默換新 thread。保留完整訊息，壓縮不修改聊天原文。
+
+### 驗證與證據
+
+UIUX／e2e：Chromium 經正式 sidebar 與頁籤操作，驗證建立、重複開啟、頁籤切換及重新載入，保存畫面與預期／實際對照。Integration：正式 SQLite migration／store 驗證持久化、排序、狀態與聊天室隔離。真實外部整合：Codex → adapter → Copilot → SQLite，驗證多輪與失敗，不以 mock 回覆冒充外部通過。驗收 HTML 沿用現有報告入口，分開列出自動結果、外部服務限制與畫面人工審閱狀態。新增的工具拒絕行為另有明確斷言。

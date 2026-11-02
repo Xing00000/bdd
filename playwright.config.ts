@@ -1,2 +1,2 @@
-// Default execution always targets the implemented BDD steps.
-export { default } from './bdd.config.ts';
+// The public workstation is the only UI acceptance target.
+export { default } from './playwright.chat.config.ts';

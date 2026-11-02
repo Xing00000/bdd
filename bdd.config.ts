@@ -3,7 +3,7 @@ import { defineBddConfig } from 'playwright-bdd';
 const raw=process.env.WB_COMPLETION_RAW==='1';
 const generated = defineBddConfig({
   features: 'spec/REQ-WB-001/workbench/workbench.feature',
-  steps: ['spec/REQ-WB-001/workbench/testing/support/fixtures.ts', 'spec/REQ-WB-001/workbench/workbench.steps.ts'],
+  steps: ['spec/REQ-WB-001/workbench/testing/support/fixtures.ts', 'spec/REQ-WB-001/workbench/workbench.steps.ts','spec/REQ-WB-001/workbench/chat.steps.ts'],
   outputDir: 'spec/REQ-WB-001/workbench', featuresRoot: 'spec/REQ-WB-001/workbench',
   missingSteps: 'fail-on-gen', examplesTitleFormat: '<case_id>',
 });
