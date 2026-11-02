@@ -1,11 +1,11 @@
 /** One durable submission and its execution transcript per card. */
-export function interactionHistory({api,labels}) {
+export function interactionHistory({api,labels,getType}) {
   const section=document.querySelector('#interaction-history'),list=document.querySelector('#interaction-list'),more=document.querySelector('#interaction-more');
-  const cards=new Map();let repositoryId=null,cursor=null,generation=0;
+  const cards=new Map();let repositoryId=null,cursor=null,generation=0,type=null;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
   const element=(tag,text,cls)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;};
   function parkTerminal(){const terminal=document.querySelector('#operation-terminal-details');if(terminal){terminal.hidden=true;section.append(terminal);}for(const card of cards.values())card.log.hidden=false;}
-  function reset(id){generation++;parkTerminal();for(const card of cards.values())clearTimeout(card.timer);cards.clear();list.replaceChildren();repositoryId=id;cursor=null;section.hidden=!id;more.hidden=true;}
+  function reset(id){generation++;parkTerminal();for(const card of cards.values())clearTimeout(card.timer);cards.clear();list.replaceChildren();repositoryId=id;type=getType();cursor=null;section.hidden=!id;more.hidden=true;}
   function ensure(entry) {
     let card=cards.get(entry.id);
     if(!card) {
@@ -37,8 +37,9 @@ export function interactionHistory({api,labels}) {
     finally{card.loading=false;}
   }
   async function load(id,{older=false}={}) {
-    if(!id){reset(null);return;}if(repositoryId!==id)reset(id);
-    const epoch=generation,value=await api(`/spec-repositories/${id}/interactions${older&&cursor?`?before=${cursor}`:''}`);
+    if(!id){reset(null);return;}if(repositoryId!==id||type!==getType())reset(id);
+    const query=new URLSearchParams({type});if(older&&cursor)query.set('before',cursor);
+    const epoch=generation,value=await api(`/spec-repositories/${id}/interactions?${query}`);
     if(epoch!==generation)return;
     const entries=value.entries;
     for(const entry of entries){const card=ensure(entry);if(!card.article.isConnected)list.append(card.article);if(active(entry.status)&&!card.timer)void poll(card);}
@@ -48,15 +49,17 @@ export function interactionHistory({api,labels}) {
     section.hidden=false;
   }
   async function accepted(op) {
-    if(repositoryId!==op.request?.repositoryId)reset(op.request.repositoryId);
+    if(op.interactionType!==getType())return;
+    if(repositoryId!==op.request?.repositoryId||type!==getType())reset(op.request.repositoryId);
     const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});list.prepend(card.article);card.details.open=true;
     await load(repositoryId);
   }
   function attach(op) {
-    if(repositoryId!==op.request.repositoryId)reset(op.request.repositoryId);
+    if(op.interactionType!==getType())return false;
+    if(repositoryId!==op.request.repositoryId||type!==getType())reset(op.request.repositoryId);
     const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});if(!card.article.isConnected)list.prepend(card.article);
-    if(document.querySelector('#operation-terminal-details').parentElement===card.body)return;
-    parkTerminal();card.log.hidden=true;card.body.prepend(document.querySelector('#operation-terminal-details'));card.details.open=true;section.hidden=false;
+    if(document.querySelector('#operation-terminal-details').parentElement===card.body)return true;
+    parkTerminal();card.log.hidden=true;card.body.prepend(document.querySelector('#operation-terminal-details'));card.details.open=true;section.hidden=false;return true;
   }
   more.addEventListener('click',()=>{more.disabled=true;void load(repositoryId,{older:true}).catch(error=>{more.textContent=error.message;}).finally(()=>{more.disabled=false;});});
   return {load,accepted,attach,reset};
