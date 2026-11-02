@@ -31,6 +31,7 @@
 | `packages/git-core/` | Git 原生來源分類、輸出及同步工具，不是儲存引擎 |
 | `packages/spec-toolkit/` | 規格契約、內容摘要、可攜工具、驗收候選與證據 |
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
+| `src/http/server.ts` | 共用後端的相容性 API／runtime 測試 host，只回傳 API 與正式產物，不供應網站／SPA；`ui/` 已移除。 |
 | `packages/workstation/chat.mjs`、`public/chat.js` | 正式入口的聊天室接線；重用 `src/application/chat.ts` 與 `src/adapters/sqlite/chat.ts`，聊天資料存同一個 `WB_HOME/metadata.sqlite`。Codex 擁有模型上下文，SQLite 擁有原始訊息。 |
 
 ## SQLite schema 10

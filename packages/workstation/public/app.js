@@ -1,4 +1,5 @@
 import { developmentView } from './development.js';
+import {chatRoomsView} from './chat.js';
 import { interactionHistory } from './interaction-history.js';
 const $ = selector => document.querySelector(selector);
 const all = selector => [...document.querySelectorAll(selector)];
@@ -72,6 +73,8 @@ async function previewAgent(purpose) {
 }
 async function guard() { if(!dirty())return true;if(!await ask('有尚未儲存的編輯','離開會捨棄畫面中的草稿；已存入 SQLite 的內容不受影響。','捨棄草稿並離開'))return false;state.editor=null;state.hookEditor=null;state.composer=null;state.composerRequest++;state.product=null;state.formDirty=false;return true; }
 async function navigate(patch,{protect=true,replace=false}={}) {
+  if(state.view==='chat'&&!Object.hasOwn(patch,'view'))patch.view='features';
+  chat.leave();
   if(state.busy||state.transient)return;if(protect&&!await guard())return;
   if ((Object.hasOwn(patch,'repositoryId')&&patch.repositoryId!==state.repositoryId)
     ||(Object.hasOwn(patch,'featureKey')&&patch.featureKey!==state.featureKey)) {
@@ -82,16 +85,20 @@ async function navigate(patch,{protect=true,replace=false}={}) {
   for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
   $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';
   const url=new URL(location.href);url.pathname='/';url.search='';
+  if(state.view==='chat'){url.searchParams.set('view','chat');url.searchParams.set('chat',state.chatId);}
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);}
   history[replace?'replaceState':'pushState']({},'',url);if(mobileNavigation.matches){$('#sidebar').classList.remove('open');updateNavigationToggle();}await refresh();
 }
-async function route() { const q=new URLSearchParams(location.search);await navigate({repositoryId:q.get('repo'),view:q.get('view')??'features',featureKey:q.get('feature'),projectId:q.get('project'),stage:q.get('stage')??'GHERKIN'},{protect:false,replace:true}); }
+async function route() { const q=new URLSearchParams(location.search);await navigate({repositoryId:q.get('repo'),view:q.get('view')??'features',featureKey:q.get('feature'),projectId:q.get('project'),stage:q.get('stage')??'GHERKIN',chatId:q.get('chat')},{protect:false,replace:true}); }
 async function refresh() {
   const epoch=++state.epoch;state.loading=true;block();
   try {
     const repositories=await api('/spec-repositories');if(epoch!==state.epoch)return;state.repositories=repositories;
     const detail=state.repositoryId?await api(`/spec-repositories/${state.repositoryId}`):null;if(epoch!==state.epoch)return;state.detail=detail;
-    renderNavigation();$('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
+    renderNavigation();$('#chat-view').hidden=state.view!=='chat';$('#content').classList.toggle('chat-active',state.view==='chat');
+    if(state.view==='chat'){ $('#home-view').hidden=true;$('#repository-view').hidden=true;$('#interaction-history').hidden=true;$('#breadcrumbs').textContent='工作台 / 對話';await chat.open(state.chatId);return;}
+    $('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
+    await chat.refreshList().catch(error=>note(error.message,true));
     if(!detail){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);renderHome();return;}
     if(!['features','projects','reports','settings','versions'].includes(state.view))state.view='features';if(!detail.preferences?.configured && state.view!=='versions')state.view='settings';
     $('#repository-title').textContent=detail.title;$('#breadcrumbs').textContent=`工作台 / ${detail.title}`;
@@ -115,8 +122,8 @@ const activeOperation = status => ['QUEUED','RUNNING','CANCELLING'].includes(sta
 let actionVersion=0;
 const beginAction=()=>++actionVersion;
 const cliOperations = new Set(['repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
-let terminalSession = null, terminalTimer;
 function currentHistoryType(){return state.view==='features'?state.stage:({projects:'PROJECTS',reports:'REPORTS',versions:'VERSIONS',settings:'SETTINGS'}[state.view]??'SYSTEM');}
+let terminalSession = null, terminalTimer;
 function showOperation(op) {
   if (!op || op.request?.repositoryId !== state.repositoryId) return;
   if(!$('#operation-terminal-details').closest?.('#form-dialog')&&!interactionLog.attach(op))return;
@@ -714,5 +721,6 @@ const development=developmentView({api,view:()=>state,feature,refresh,navigate,a
 const interactionLog=interactionHistory({api,labels,getType:currentHistoryType});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
+const chat=chatRoomsView({api,el,button,navigate:id=>navigate({view:'chat',chatId:id}),workspace:()=>navigate({view:'features'}),note});
 // Initialize the route only after every view state and handler exists.
 await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'測試執行已停用';await route();});

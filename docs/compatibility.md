@@ -6,7 +6,11 @@
 
 舊「全域產品／SQLite 文件工作區」不再是工作台產品模型。`npm start`、`src/main.ts` 與 `/` 都進入新 Spec Repo 工作台；沒有舊站切換連結，也不掛載舊 `/requirements` 或 `/projects` HTTP routes。
 
-原 `ui/`、`src/application/`、`src/http/server.ts` 等保留為尚未全面遷移之 Agent、MCP、錄製與資料庫能力的相容來源／回歸測試。它們不被正式工作台入口載入。不能把這些功能宣稱為已完成新 UI 接線；本次完整 UI 驗收涵蓋規格庫、產品開發、驗收與 Git 發布流程。
+依 2026-11-02 的單一入口要求，`ui/` 的 Vue 畫面、Vite 設定與前端相依套件已移除；build 清理舊 `dist/public`，`src/http/server.ts` 不再註冊 SPA、靜態檔案或 HTML fallback。正式網站只由 `packages/workstation/public/` 提供，沿用 `npm start` 與既有 `?repo=...&view=features&feature=...&stage=...` 網址。
+
+`src/application/`、SQLite migrations、Codex／Copilot adapter、MCP、錄製及資料庫 API 保留。這些是共用後端／相容性測試來源，不是第二個網站；例如 `/projects` 可回傳 API JSON，但不會回傳 Vue HTML。不能把保留 API 宣稱為所有舊控制項都已遷移到正式畫面。
+
+原 Vue 整合測試中的 sibling／stage／baseline／Agent／PTY／預設範例持久化斷言，改由同一個真實 API 與 runtime 執行，沒有刪除測試案例或放寬資料斷言。已移除元件的版面、Vue 選單與頁籤 selector 不再是產品契約；正式畫面改由 `tests/chat-ui` 與 `tests/workstation-e2e` 驗證。純畫格綁定與座標邏輯移至 `src/domain/browser-binding.ts`，既有斷言保留；退役 viewer 的輸入程式只以 `tests/fixtures/retired-viewer-input.source.txt` 保存為固定協定測試資料，不包含可建置的網站入口，也不冒充目前 UI 的瀏覽器驗收。
 
 ## SQLite authoring（schema 5）
 
@@ -26,7 +30,7 @@ Operational DB schema 4 保留 schema 3 的轉換，新增 `repository_preferenc
 
 舊 SQLite documents 可透過明確配置的 `WB_LEGACY_DB` 唯讀匯入；原文、歷史與可驗證圖片保留，舊完成／PASSED 狀態不轉成新確認。原測試先存為文字，需人工映射到新的 tests/REQ/feature 與產品。
 
-`spec/REQ-WB-001` 仍是原工作台的歷史驗收契約，尚未搬到使用者的 `bdd-spec`。它不是新 Repo 模板，也不代表新工作台的功能來源。沒有默改已批准的 hash 或刪除作者寫的情境來掩蓋缺口。
+`spec/REQ-WB-001` 仍是原工作台的歷史驗收契約與 codegen／BDD mapping 測試資料，尚未搬到使用者的 `bdd-spec`。它不是新 Repo 模板，也不代表目前工作台的完整功能來源。移除 UI 不改寫其歷史情境或宣稱舊畫面驗收仍通過；`npm run spec:generate`／`spec:verify`／`test:tooling` 保留工具相容性檢查。`npm test` 與 `npm run test:e2e` 統一使用正式工作台的 Playwright 設定，報告只有 `workstation` 產品入口。
 
 原 generated workbench spec 及 deploy 副本已不提交。`npm run spec:list`／`npm run test:tooling` 會先生成；canonical SQLite migrations、seed 與 `npm run deploy` 的來源保留。MCP 的 annotated spec 尚無可完全重建的生成器，因此暫不當成可刪副本。
 
