@@ -35,7 +35,7 @@ export async function configuration(root) {
   invariant(config.reports?.storage === 'git' && config.reports.publishMode === 'explicit', 'INVALID_REPORT_POLICY', 'v1 reports use Git and explicit publication');
   return config;
 }
-export const TOOLKIT_VERSION = '1.6.0';
+export const TOOLKIT_VERSION = '1.6.1';
 export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'git-core/progress.mjs', 'git-core/progress-store.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/tags.mjs', 'spec-toolkit/dependencies.mjs', 'spec-toolkit/cli.mjs']);
 export async function toolkitSnapshot(toolkitRoot) {
   const files = await Promise.all(TOOLKIT_FILES.map(async relative => ({ path: relative, content: await readFile(path.join(toolkitRoot, relative)) })));

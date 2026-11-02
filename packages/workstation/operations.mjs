@@ -40,7 +40,7 @@ export function validateRequest(request) {
   version(request); id(request.operationId, 'operationId'); id(request.repositoryId, 'repositoryId');
   invariant(operationNames.includes(request.operation), 'OPERATION_NOT_ALLOWED', 'Choose a documented workstation operation', 400);
   invariant(request.input && typeof request.input === 'object' && !Array.isArray(request.input), 'INVALID_INPUT', 'input must be an object', 400);
-  invariant(!Object.keys(request).some(k => !['schemaVersion', 'operationId', 'repositoryId', 'operation', 'expected', 'input', 'target'].includes(k)), 'UNKNOWN_REQUEST_FIELD', 'Unknown operation request field', 400);
+  invariant(!Object.keys(request).some(k => !['schemaVersion', 'operationId', 'repositoryId', 'operation', 'expected', 'input', 'target','interactionType'].includes(k)), 'UNKNOWN_REQUEST_FIELD', 'Unknown operation request field', 400);
   if (request.target) {
     invariant(['spec', 'project'].includes(request.target.kind), 'INVALID_TARGET', 'Target kind must be spec or project');
     if (request.target.kind === 'project') id(request.target.projectId);

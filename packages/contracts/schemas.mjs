@@ -9,6 +9,7 @@ const object = (properties, required = Object.keys(properties), extra = {}) => (
 const command = array({ type: 'string', maxLength: 4000 }, { minItems: 1, maxItems: 80 });
 const reviewRecord = object({ digest: hash, confirmedBy: { type: 'string', minLength: 1, maxLength: 120 }, confirmedAt: { type: 'string', format: 'date-time' } });
 const root = value => ({ $schema: 'https://json-schema.org/draft/2020-12/schema', ...value });
+export const interactionTypes=Object.freeze(['GHERKIN','SD','TESTS','IMPLEMENTATION','VERIFICATION','SETTINGS','PROJECTS','REPORTS','VERSIONS','SYSTEM']);
 export const schemas = Object.freeze({
   workbench: root(object({
     schemaVersion: { const: 1 }, specRepositoryId: identifier,
@@ -29,6 +30,7 @@ export const schemas = Object.freeze({
   review: root(object({ schemaVersion: { const: 1 }, features: { type: 'object', propertyNames: identifier,
     additionalProperties: object({ gherkin: reviewRecord, sd: reviewRecord, tests: reviewRecord }, []) } })),
   operation: root(object({ schemaVersion: { const: 1 }, operationId: identifier, repositoryId: identifier, operation: text,
+    interactionType:{enum:interactionTypes},
     expected: { type: 'object', properties: { head: { anyOf: [commit, { type: 'null' }] }, branch: { anyOf: [text, { type: 'null' }] }, fingerprint: hash } },
     input: { type: 'object' }, target: object({ kind: { enum: ['spec', 'project'] }, projectId: identifier }, ['kind'])
   }, ['schemaVersion', 'operationId', 'repositoryId', 'operation', 'input'])),

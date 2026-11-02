@@ -64,3 +64,19 @@ test('claim and completion roll back their status when the corresponding SQLite 
   db.exec("CREATE TRIGGER fail_log BEFORE INSERT ON execution_log_chunks WHEN CAST(NEW.content AS TEXT)='[SUCCEEDED]'||char(10) BEGIN SELECT RAISE(ABORT,'log append failed'); END;");
   assert.throws(()=>store.finish('OP-atomic','SUCCEEDED',{}),/log append failed/);assert.equal(store.get('OP-atomic').status,'RUNNING');
 });
+
+test('history is filtered before pagination and CLI replies inherit their parent stage, including legacy backfill',async t=>{
+  const home=await mkdtemp(path.join(os.tmpdir(),'interaction-types-'));t.after(()=>rm(home,{recursive:true,force:true}));let store=openStore(home);
+  store.register({id:'SPEC-types',title:'Types',remoteUrl:'https://github.com/example/types.git'});
+  const enqueue=(operationId,operation,input={},context)=>store.enqueue({schemaVersion:1,operationId,repositoryId:'SPEC-types',operation,input,...(context?{interactionType:context}:{})});
+  enqueue('OP-design','repository.save',{kind:'source',path:'spec/REQ-001/login/login.sd.md',content:'Design text'});store.finish('OP-design','SUCCEEDED',{});
+  enqueue('OP-develop','workflow.develop',{},'GHERKIN');enqueue('OP-reply','interaction.cli.input',{parentOperationId:'OP-develop',message:'CLI reply'},'GHERKIN');store.finish('OP-develop','SUCCEEDED',{});
+  assert.equal(store.get('OP-reply').interactionType,'IMPLEMENTATION');
+  for(let index=0;index<25;index++){const id=`OP-demand-${index}`;enqueue(id,'workflow.requirement.save',{description:`Demand ${index}`});store.finish(id,'SUCCEEDED',{});}
+  const design=store.interactions('SPEC-types',{type:'SD',limit:1});assert.equal(design.entries.length,1);assert.equal(design.entries[0].id,'OP-design');assert.equal(design.nextCursor,null);
+  assert.ok(store.interactions('SPEC-types',{type:'GHERKIN',limit:2}).entries.every(entry=>entry.interactionType==='GHERKIN'));
+  assert.equal(store.interactions('SPEC-types',{type:'IMPLEMENTATION'}).entries.length,2);
+  assert.throws(()=>store.interactions('SPEC-types',{type:'invalid'}),{code:'INVALID_INTERACTION_TYPE'});store.close();
+  const db=new DatabaseSync(path.join(home,'metadata.sqlite'));db.exec('UPDATE operations SET interaction_type=NULL; PRAGMA user_version=9;');db.close();store=openStore(home);
+  try{assert.equal(store.get('OP-reply').interactionType,'IMPLEMENTATION');assert.equal(store.interactions('SPEC-types',{type:'SD'}).entries[0].id,'OP-design');}finally{store.close();}
+});
