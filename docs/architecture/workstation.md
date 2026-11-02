@@ -32,7 +32,7 @@
 | `packages/spec-toolkit/` | 規格契約、內容摘要、可攜工具、驗收候選與證據 |
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
 
-## SQLite schema 7
+## SQLite schema 9
 
 `spec_repositories` 保存綁定網址，不因連線失敗取消登錄。以下是需要備份的正式資料，不是可丟棄快取：
 
@@ -43,6 +43,14 @@
 - `repository_preferences`、`operations`、`tooling_checks`、`runs`：站台偏好、持久操作、真實檢查與驗收紀錄。
 
 `repository_projection` 記錄已輸出修訂、檔案摘要、Git 版本及同步位置，不取代 SQLite 原文。`report_index` 為可由 Git 重建的衍生索引。報告、截圖與 traces 保留在執行證據檔案中，SQLite 保存其執行及索引 metadata，不把大量二進位報告放進文字表。
+
+### 互動留言與執行歷程
+
+每次明確送出的操作以 `operations` 保存原始請求、時間、狀態、結果與錯誤，作為一筆互動留言；普通儲存、CLI 派工、Gherkin 生成、文件匯入與停止操作均保留歷程。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方按送出順序呈現留言及其可收合執行 log；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
+
+`git-core/progress-store.mjs` 是 `execution_logs`／`execution_log_chunks` 的唯一 schema 與輸出 owner。metadata 保存階段、程序與退出碼，輸出以 byte offset 分塊追加到 `metadata.sqlite`。作業 claim／finish、對應 log 與子互動完成使用同一交易；寫入失敗不會留下已完成狀態。每份 transcript 沿用既有 4 MiB 上限及截斷標示，ANSI／憑證處理與 UTF-8 分頁契約保留。新紀錄不依賴 `terminal.log`、`processes.json` 或 `state.json`；舊檔僅在 SQL 尚無紀錄時一次性讀入，拒絕 symlink，匯入後 SQLite 為唯一來源，不再從修改後的舊檔覆寫。
+
+CLI 終端每次 Enter 建立 `interaction.cli.input` 子留言，保存文字及 parent operation ID；逐字輸入與 resize 不另建留言。worker 在真正寫入 PTY 後保存 delivery ack，再結束前一筆互動；之後輸出同時寫入該筆獨立 log 與原作業完整 transcript。下一次 Enter 或原作業結束會封存前一筆，未取得送達確認的輸入不得隨 parent 成功而變成成功。人工停止另記一筆留言；服務關閉等系統清理不偽造成使用者送出。
 
 來源匯入、審閱摘要與測試型別檢查統一由 `git-core.gitSourceFiles` 使用 Git 原生 `ls-files --cached --others --exclude-standard` 列出來源，再存取檔案，避免遍歷被忽略的快取與連結。固定路徑則由 `gitSourcePaths` 使用 `check-ignore --stdin -z` 判定；不另寫檔名排除或 gitignore parser。這保留巢狀規則、`!` 例外、使用者 global excludes、`.git/info/exclude` 及已追蹤檔案的 Git 語意。SQLite 隔離副本將已接受的來源放入暫存 Git index，保留「已追蹤但命中 ignore pattern 仍是來源」的行為；無 checkout 的來源以暫存 Git metadata 判定。這些本機操作不提交、不連線、不修改原 checkout，建立 index 時停用外部 Git 設定與 hooks，不執行來源指定的 filters。
 
