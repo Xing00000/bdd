@@ -13,6 +13,7 @@ test('two real submissions retain separate collapsible SQL logs after page and s
   app.service.register({id:'SPEC-history-ui',title:'History UI',remoteUrl:f.remote});
   const job=async(operation,input)=>{const operationId=`OP-${crypto.randomUUID()}`;app.service.enqueue({schemaVersion:1,operationId,repositoryId:'SPEC-history-ui',operation,input});const result=await app.service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));};
   await job('repository.setup',{reviewer:'Human',projects:[]});await job('workflow.create',{requirementId:'REQ-001',featureId:'history',title:'History'});
+  for(let index=0;index<25;index++)app.service.generateRequirement('SPEC-history-ui',{editorKey:'REQ-001/history',description:`Earlier requirement ${index}`,previousGherkin:''});
   const browser=await chromium.launch();t.after(()=>browser.close());const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`${origin}/?repo=SPEC-history-ui&view=features&feature=REQ-001%2Fhistory&stage=GHERKIN`);
   await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
@@ -26,11 +27,16 @@ test('two real submissions retain separate collapsible SQL logs after page and s
     ids.push(await page.locator('#notice').getAttribute('data-job-id'));
   }
   const first=page.locator(`[data-interaction-id="${ids[0]}"]`),second=page.locator(`[data-interaction-id="${ids[1]}"]`);
+  await expect(page.locator('#interaction-list > article').first()).toHaveAttribute('data-interaction-id',ids[1]);
+  const beforeOlder=await page.locator('#interaction-list > article').count();await page.locator('#interaction-more').click();
+  await expect.poll(()=>page.locator('#interaction-list > article').count()).toBeGreaterThan(beforeOlder);
+  await expect(page.locator('#interaction-list > article').first()).toHaveAttribute('data-interaction-id',ids[1]);
   await expect(first.locator('.interaction-message')).toHaveText('First independent message');await expect(second.locator('.interaction-message')).toHaveText('Second independent message');
   await expect(first.locator('details')).toHaveJSProperty('open',true);await first.locator('summary').click();await expect(first.locator('details')).toHaveJSProperty('open',false);await expect(second.locator('details')).toHaveJSProperty('open',true);
   await first.locator('summary').click();await expect(first.locator('.interaction-log')).toContainText('[SUCCEEDED]');
   await app.close();await rm(path.join(f.home,'development'),{recursive:true,force:true});
   app=await createStandaloneServer(options);await new Promise(resolve=>app.server.listen(port,'127.0.0.1',resolve));await page.reload();
+  await expect(page.locator('#interaction-list > article').first()).toHaveAttribute('data-interaction-id',ids[1]);
   await expect(first.locator('.interaction-message')).toHaveText('First independent message');await expect(second.locator('.interaction-message')).toHaveText('Second independent message');
   await first.locator('summary').click();await second.locator('summary').click();
   await expect(first.locator('.interaction-log')).toContainText('[SUCCEEDED]');await expect(second.locator('.interaction-log')).toContainText('[SUCCEEDED]');

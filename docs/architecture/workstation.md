@@ -46,7 +46,7 @@
 
 ### 互動留言與執行歷程
 
-每次明確送出的操作以 `operations` 保存原始請求、時間、狀態、結果與錯誤，作為一筆互動留言；普通儲存、CLI 派工、Gherkin 生成、文件匯入與停止操作均保留歷程。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方按送出順序呈現留言及其可收合執行 log；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
+每次明確送出的操作以 `operations` 保存原始請求、時間、狀態、結果與錯誤，作為一筆互動留言；普通儲存、CLI 派工、Gherkin 生成、文件匯入與停止操作均保留歷程。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方以最新送出在上的順序呈現留言及其可收合執行 log，載入更早紀錄時加在下方；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
 
 `git-core/progress-store.mjs` 是 `execution_logs`／`execution_log_chunks` 的唯一 schema 與輸出 owner。metadata 保存階段、程序與退出碼，輸出以 byte offset 分塊追加到 `metadata.sqlite`。作業 claim／finish、對應 log 與子互動完成使用同一交易；寫入失敗不會留下已完成狀態。每份 transcript 沿用既有 4 MiB 上限及截斷標示，ANSI／憑證處理與 UTF-8 分頁契約保留。新紀錄不依賴 `terminal.log`、`processes.json` 或 `state.json`；舊檔僅在 SQL 尚無紀錄時一次性讀入，拒絕 symlink，匯入後 SQLite 為唯一來源，不再從修改後的舊檔覆寫。
 

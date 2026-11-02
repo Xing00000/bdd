@@ -40,21 +40,21 @@ export function interactionHistory({api,labels}) {
     if(!id){reset(null);return;}if(repositoryId!==id)reset(id);
     const epoch=generation,value=await api(`/spec-repositories/${id}/interactions${older&&cursor?`?before=${cursor}`:''}`);
     if(epoch!==generation)return;
-    const entries=[...value.entries].reverse();
+    const entries=value.entries;
     for(const entry of entries){const card=ensure(entry);if(!card.article.isConnected)list.append(card.article);if(active(entry.status)&&!card.timer)void poll(card);}
     // SQL cursors establish submission order, independently of response timing.
-    [...cards.values()].sort((a,b)=>(a.entry.cursor??Number.MAX_SAFE_INTEGER)-(b.entry.cursor??Number.MAX_SAFE_INTEGER)).forEach((card,index)=>{if(list.children[index]!==card.article)list.insertBefore(card.article,list.children[index]??null);});
+    [...cards.values()].sort((a,b)=>(b.entry.cursor??Number.MAX_SAFE_INTEGER)-(a.entry.cursor??Number.MAX_SAFE_INTEGER)).forEach((card,index)=>{if(list.children[index]!==card.article)list.insertBefore(card.article,list.children[index]??null);});
     cursor=value.nextCursor;more.hidden=!cursor;
     section.hidden=false;
   }
   async function accepted(op) {
     if(repositoryId!==op.request?.repositoryId)reset(op.request.repositoryId);
-    const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});list.append(card.article);card.details.open=true;
+    const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});list.prepend(card.article);card.details.open=true;
     await load(repositoryId);
   }
   function attach(op) {
     if(repositoryId!==op.request.repositoryId)reset(op.request.repositoryId);
-    const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});if(!card.article.isConnected)list.append(card.article);
+    const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});if(!card.article.isConnected)list.prepend(card.article);
     if(document.querySelector('#operation-terminal-details').parentElement===card.body)return;
     parkTerminal();card.log.hidden=true;card.body.prepend(document.querySelector('#operation-terminal-details'));card.details.open=true;section.hidden=false;
   }
