@@ -65,7 +65,7 @@ test('claim and completion roll back their status when the corresponding SQLite 
   assert.throws(()=>store.finish('OP-atomic','SUCCEEDED',{}),/log append failed/);assert.equal(store.get('OP-atomic').status,'RUNNING');
 });
 
-test('history is filtered before pagination and CLI replies inherit their parent stage, including legacy backfill',async t=>{
+test('only LLM tasks and their CLI replies appear in stage history, including legacy backfill',async t=>{
   const home=await mkdtemp(path.join(os.tmpdir(),'interaction-types-'));t.after(()=>rm(home,{recursive:true,force:true}));let store=openStore(home);
   store.register({id:'SPEC-types',title:'Types',remoteUrl:'https://github.com/example/types.git'});
   const enqueue=(operationId,operation,input={},context)=>store.enqueue({schemaVersion:1,operationId,repositoryId:'SPEC-types',operation,input,...(context?{interactionType:context}:{})});
@@ -73,10 +73,16 @@ test('history is filtered before pagination and CLI replies inherit their parent
   enqueue('OP-develop','workflow.develop',{},'GHERKIN');enqueue('OP-reply','interaction.cli.input',{parentOperationId:'OP-develop',message:'CLI reply'},'GHERKIN');store.finish('OP-develop','SUCCEEDED',{});
   assert.equal(store.get('OP-reply').interactionType,'IMPLEMENTATION');
   for(let index=0;index<25;index++){const id=`OP-demand-${index}`;enqueue(id,'workflow.requirement.save',{description:`Demand ${index}`});store.finish(id,'SUCCEEDED',{});}
-  const design=store.interactions('SPEC-types',{type:'SD',limit:1});assert.equal(design.entries.length,1);assert.equal(design.entries[0].id,'OP-design');assert.equal(design.nextCursor,null);
-  assert.ok(store.interactions('SPEC-types',{type:'GHERKIN',limit:2}).entries.every(entry=>entry.interactionType==='GHERKIN'));
+  enqueue('OP-tests','workflow.tests.complete',{prompt:'Complete tests'});store.finish('OP-tests','FAILED',null,{message:'Agent unavailable'});
+  enqueue('OP-local-reply','interaction.cli.input',{parentOperationId:'OP-design',message:'Not an LLM reply'});store.finish('OP-local-reply','FAILED',null,{message:'Not a CLI'});
+  assert.equal(store.get('OP-local-reply').isLlmInteraction,false);
+  const page=store.interactions('SPEC-types',{limit:1});assert.equal(page.entries[0].id,'OP-tests');assert.ok(page.nextCursor);
+  assert.equal(store.interactions('SPEC-types',{limit:1,before:page.nextCursor}).entries[0].id,'OP-reply');
+  assert.equal(store.get('OP-tests').isLlmInteraction,true);
+  const design=store.interactions('SPEC-types',{type:'SD',limit:1});assert.equal(design.entries.length,0);assert.equal(store.get('OP-design').isLlmInteraction,false);assert.equal(design.nextCursor,null);
+  assert.equal(store.interactions('SPEC-types',{type:'GHERKIN',limit:2}).entries.length,0);
   assert.equal(store.interactions('SPEC-types',{type:'IMPLEMENTATION'}).entries.length,2);
   assert.throws(()=>store.interactions('SPEC-types',{type:'invalid'}),{code:'INVALID_INTERACTION_TYPE'});store.close();
   const db=new DatabaseSync(path.join(home,'metadata.sqlite'));db.exec('UPDATE operations SET interaction_type=NULL; PRAGMA user_version=9;');db.close();store=openStore(home);
-  try{assert.equal(store.get('OP-reply').interactionType,'IMPLEMENTATION');assert.equal(store.interactions('SPEC-types',{type:'SD'}).entries[0].id,'OP-design');}finally{store.close();}
+  try{assert.equal(store.get('OP-reply').interactionType,'IMPLEMENTATION');assert.equal(store.interactions('SPEC-types',{type:'SD'}).entries.length,0);}finally{store.close();}
 });

@@ -3,6 +3,12 @@ import {invariant} from '../contracts/index.mjs';
 
 const stages={gherkin:'GHERKIN',sd:'SD',tests:'TESTS'};
 const reviewType=value=>typeof value==='string'&&Object.hasOwn(stages,value)?stages[value]:'SYSTEM';
+// These operations invoke the real CLI agent; local drafting and saves do not.
+const llmTasks=['workflow.tests.complete','workflow.develop'];
+export function llmInteractionPredicate(alias='operations') {
+  const tasks=llmTasks.map(name=>`'${name}'`).join(',');
+  return `(json_extract(${alias}.request_json,'$.operation') IN (${tasks}) OR (json_extract(${alias}.request_json,'$.operation')='interaction.cli.input' AND EXISTS (SELECT 1 FROM operations parent WHERE parent.id=json_extract(${alias}.request_json,'$.input.parentOperationId') AND parent.repository_id=${alias}.repository_id AND json_extract(parent.request_json,'$.operation') IN (${tasks}))))`;
+}
 const fixed={
   'workflow.requirement.save':'GHERKIN','workflow.create':'GHERKIN','workflow.draft':'GHERKIN','interaction.requirement.generate':'GHERKIN','interaction.document.import':'GHERKIN','spec.feature.create':'GHERKIN',
   'workflow.tests.generate':'TESTS','workflow.tests.complete':'TESTS','spec.tests.check':'TESTS',
