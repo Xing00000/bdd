@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { id, identity, invariant } from '../contracts/index.mjs';
 import { validateAgentSettings, renderAgentPrompt } from './agent-settings.mjs';
+import {negotiateProtocolVersion} from './mcp-protocol.mjs';
 
 export function previewAgentPrompt(snapshot, repositoryId, root, input) {
   const {purpose,requirementId,featureId}=input;
@@ -60,8 +61,8 @@ export function taskRpc(bundle, request) {
   if(!request||request.jsonrpc!=='2.0'||typeof request.method!=='string'||(request.id!==undefined&&typeof request.id!=='string'&&typeof request.id!=='number'))return reply(null,{code:-32600,message:'Invalid Request'});
   if(request.id===undefined)return null;
   if(request.method==='initialize') {
-    if(!['2025-03-26','2025-11-25'].includes(request.params?.protocolVersion))return reply(null,{code:-32602,message:'Unsupported protocol version'});
-    return reply({protocolVersion:request.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'workbench-task',version:'1.0.0'}});
+    if(typeof request.params?.protocolVersion!=='string'||!request.params.protocolVersion.trim())return reply(null,{code:-32602,message:'Protocol version is required'});
+    return reply({protocolVersion:negotiateProtocolVersion(request.params.protocolVersion),capabilities:{tools:{}},serverInfo:{name:'workbench-task',version:'1.0.0'}});
   }
   if(request.method==='ping')return reply({});
   const tools=[

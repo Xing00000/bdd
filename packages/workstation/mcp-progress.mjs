@@ -1,5 +1,6 @@
 import { id, invariant } from '../contracts/index.mjs';
 import {readProgress} from '../git-core/progress-store.mjs';
+import {supportedProtocolVersions,negotiateProtocolVersion} from './mcp-protocol.mjs';
 
 const definitions = [
   ['workbench_list_repositories', {}, []],
@@ -39,13 +40,13 @@ export async function handleProgress(store, home, request) {
   if(request.headers.origin) {let origin;try{origin=new URL(request.headers.origin);}catch{} invariant(origin && request.headers.origin===origin.origin && origin.origin===`http://${host}`,'ORIGIN_DENIED','Origin denied',403);}
   if(request.method!=='POST')return {status:405,headers:{allow:'POST'},body:''};
   const version=request.headers['mcp-protocol-version'] ?? '2025-03-26';
-  if(!['2025-03-26','2025-11-25'].includes(version))return {status:400,body:{error:'Unsupported MCP protocol version'}};
+  if(!supportedProtocolVersions.includes(version))return {status:400,body:{error:'Unsupported MCP protocol version'}};
   const q=request.body, response=(result,error)=>({jsonrpc:'2.0',id:q?.id??null,...(error?{error}:{result})});
   if(!q || typeof q!=='object'||Array.isArray(q)||q.jsonrpc!=='2.0'||typeof q.method!=='string'||(q.id!==undefined && typeof q.id!=='string' && typeof q.id!=='number')|| (q.params!==undefined && (!q.params||typeof q.params!=='object'||Array.isArray(q.params))))return {status:200,body:response(null,{code:-32600,message:'Invalid Request'})};
   if(q.id===undefined)return {status:202,body:''};
   try {
     let result;
-    if(q.method==='initialize') {invariant(['2025-11-25','2025-03-26'].includes(q.params?.protocolVersion),'INVALID_VERSION','Unsupported protocol version');result={protocolVersion:q.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'workbench-progress',version:'1.0.0'}};}
+    if(q.method==='initialize') {result={protocolVersion:negotiateProtocolVersion(q.params?.protocolVersion),capabilities:{tools:{}},serverInfo:{name:'workbench-progress',version:'1.0.0'}};}
     else if(q.method==='ping')result={};
     else if(q.method==='tools/list')result={tools:definitions};
     else if(q.method==='tools/call') {

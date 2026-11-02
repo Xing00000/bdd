@@ -12,6 +12,12 @@ const snapshot={revision:1,settings:{agent:validateAgentSettings()},files:[
   {target:'spec',path:'spec/REQ-one/login/login.feature',content:'Feature: Approved login'},
   {target:'spec',path:'spec/REQ-other/other/other.feature',content:'unrelated private content'}
 ]};
+test('task MCP negotiates the installed Codex protocol and returns a supported version for another proposal',()=>{
+  const initialize=protocolVersion=>taskRpc({task:{},artifacts:{}},{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion}});
+  assert.equal(initialize('2025-06-18').result.protocolVersion,'2025-06-18');
+  assert.equal(initialize('2099-01-01').result.protocolVersion,'2025-11-25');
+  assert.equal(initialize(undefined).error.code,-32602);
+});
 test('edited prompt dispatches verbatim, while missing approval and stale previews are rejected',()=>{
   const preview=previewAgentPrompt(snapshot,'SPEC-one','/repo',selection);
   assert.ok(preview.prompt.length<250);assert.match(preview.prompt,/workbench_get_task/);

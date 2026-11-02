@@ -13,6 +13,7 @@ test('protocol versions apply to initialize, calls and notifications', async()=>
   for(const body of [rpc('initialize',{protocolVersion:'2025-11-25'}),rpc('ping'),{jsonrpc:'2.0',method:'notifications/initialized'}]) {
     assert.equal((await call('bad',body)).status,400);
     assert.notEqual((await call('2025-11-25',body)).status,400);
+    assert.notEqual((await call('2025-06-18',body)).status,400);
     assert.notEqual((await call(undefined,body)).status,400);
   }
 });
