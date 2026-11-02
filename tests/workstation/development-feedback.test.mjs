@@ -48,7 +48,7 @@ test('only a newer genuine passing run clears feedback; an old success or a newe
  assert.equal(state({...manifest,testOutcome:'FAILED',startedAt:'2026-01-03T00:00:00Z'}).stage,'IMPLEMENTATION');
 });
 test('development settings use executable and argument arrays, never a shell command or approval bypass',async()=>{
- assert.deepEqual(validateAgentSettings().args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{prompt}']);
+ assert.deepEqual(validateAgentSettings().args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}']);
  assert.equal(await agentExecutable(process.execPath),process.execPath);
  for(const value of [{command:''},{command:'x\nrm'},{args:'rm -rf'},{maxAttempts:10},{timeoutMs:0}])assert.throws(()=>validateAgentSettings(value),{code:'INVALID_AGENT'});
  await assert.rejects(()=>agentExecutable('bdd-agent-certainly-absent-123'),{code:'AGENT_NOT_INSTALLED'});

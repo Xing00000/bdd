@@ -17,7 +17,8 @@ import { readFeedback } from './feedback.mjs';
 import { workflowStatus } from './workflow.mjs';
 
 export { validateAgentSettings } from './agent-settings.mjs';
-import { validateAgentSettings, renderAgentPrompt } from './agent-settings.mjs';
+import { validateAgentSettings } from './agent-settings.mjs';
+import { approvedAgentPrompt, writeAgentTask, agentArguments } from './agent-task.mjs';
 export async function agentExecutable(command) {
   const candidates=path.isAbsolute(command)?[command]:(process.env.PATH??'').split(path.delimiter).filter(Boolean).map(p=>path.join(p,command));
   for(const file of candidates)try{await access(file,constants.X_OK);return file;}catch{/* next PATH entry */}
@@ -118,6 +119,7 @@ export async function runDevelopment(context,verify) {
   await inDraftView(snapshot,async view=>invariant(Object.values((await reviewState(view,input.requirementId,input.featureId)).confirmed).every(Boolean),'REVIEWS_REQUIRED','請先確認需求、設計與測試。',409));
   const workflow=(await workflowStatus({...context,repositoryId:request.repositoryId},key)).workflows[0];
   invariant(workflow.status!=='COMPLETE','STAGE_READ_ONLY','本階段已完成；請先從驗收回報問題，再進入開發。',409);
+  const prompt=approvedAgentPrompt(snapshot,context,'development');
   const agent=validateAgentSettings(snapshot.settings.agent),command=await agentExecutable(agent.command),pty=await terminalRuntime(context);
   await prepareProjection(context);
   const feature=(await scan(root)).features.find(f=>f.key===key);
@@ -136,14 +138,11 @@ export async function runDevelopment(context,verify) {
       invariant(selected.length===related.length&&modules.every(m=>m.actual&&!m.dirty),'UNSAVED_PRODUCT','產品有外部未儲存的變更；原稿已保留。',409);
       const reviewed=await reviewState(root,input.requirementId,input.featureId);
       invariant(Object.values(reviewed.confirmed).every(Boolean),'REVIEWS_REQUIRED','規格已變更，請重新確認。',409);
-      const prompt=renderAgentPrompt(agent,{requirementId:input.requirementId,featureId:input.featureId,spec:root,
-        projects:selected.map(p=>path.join(root,p.path)).join(', '),
-        feedback:feedback.items.slice(-20).map(f=>f.message).join('\n').slice(-20000),previousFailure});
+      const task=await writeAgentTask(path.join(directory,`attempt-${attempt}`),snapshot,{purpose:'development',requirementId:input.requirementId,featureId:input.featureId,workspace:root,
+        products:selected.map(p=>path.join(root,p.path)),feedback:feedback.items,previousFailure});
       await writeFile(path.join(directory,'prompt.txt'),prompt,{mode:0o600});
       const cwd=selected.length===1?path.join(root,selected[0].path):root;
-      const replacements={'{prompt}':prompt,'{spec}':root,'{project}':cwd};
-      const args=agent.args.map(arg=>Object.hasOwn(replacements,arg)?replacements[arg]:arg);
-      if(!agent.args.includes('{prompt}'))args.push(prompt);
+      const args=agentArguments(agent,{prompt,spec:root,project:cwd,task});
       log(`\r\n[開發 ${attempt}/${agent.maxAttempts}] ${agent.command}\r\n`);await phase('RUNNING',{attempt});
       const outcome=await runPty(pty,command,args,cwd,{log,timeoutMs:agent.timeoutMs});
       log(`\r\n[CLI exit] code=${outcome.exitCode} signal=${outcome.signal ?? 'none'} timeout=${outcome.timedOut}\r\n`);

@@ -8,7 +8,7 @@ import { fixture, toolkitRoot } from './helpers.mjs';
 
 test('editable seed pins the model without injecting a general-purpose skill manual',async()=>{
   const seed=validateAgentSettings();
-  assert.deepEqual(seed.args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{prompt}']);
+  assert.deepEqual(seed.args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}']);
   assert.equal(seed.skills,'');
   assert.equal(seed.maxAttempts,3);assert.equal(seed.timeoutMs,900000);
 });
@@ -37,7 +37,7 @@ test('effective prompt substitutes once and appends literal skills without inter
   const values={requirementId:'REQ-X',featureId:'login',spec:'/tmp/a b',projects:'/tmp/product',feedback:'literal {spec} $(echo bad)',previousFailure:'retry'};
   const settings={prompt:'{requirementId}/{featureId}: {spec}; {projects}; {feedback}; {previousFailure}',skills:'skill {unknown}'};
   assert.ok(renderAgentPrompt(settings,values).endsWith('REQ-X/login: /tmp/a b; /tmp/product; literal {spec} $(echo bad); retry\n\nskill {unknown}'));
-  assert.ok(renderAgentPrompt({prompt:'{feedback}',skills:''},values).endsWith('\n\n'+values.feedback));
+  assert.equal(renderAgentPrompt({prompt:'{feedback}',skills:''},values),values.feedback);
   assert.throws(()=>renderAgentPrompt({prompt:'{spec}'},{}),{code:'INVALID_AGENT'});
 });
 
@@ -48,15 +48,12 @@ test('both dispatch stages carry only the selected approved feature and stage co
   const values={requirementId:'REQ-X',featureId:'login',spec:'/spec-repo',projects:'/product',feedback:'',previousFailure:''};
   for(const purpose of ['development','testPlan']) {
     const prompt=renderAgentPrompt({skills:legacy},values,purpose);
-    assert.ok(prompt.includes('/spec-repo/spec/REQ-X/login/login.feature'));
-    assert.ok(prompt.includes('/spec-repo/spec/REQ-X/login/login.sd.md'));
-    assert.ok(prompt.includes('/spec-repo/tests/REQ-X/login/'));
-    assert.ok(prompt.includes('Do not restart specification writing'));
-    assert.ok(!prompt.includes('## Phase 1: Planning'));
-    assert.ok(!prompt.includes('Example Feature File'));
-    assert.ok(!prompt.includes('Shopping cart'));
-    assert.ok(prompt.includes(purpose==='testPlan'?'TEST PLAN COMPLETION':'PRODUCT IMPLEMENTATION'));
-    assert.ok(prompt.includes(purpose==='testPlan'?'Write only /spec-repo/tests/REQ-X/login/':'Modify only these products: /product'));
+    assert.ok(prompt.includes('REQ-X/login'));
+    assert.ok(prompt.includes('workbench_get_task'));
+    assert.ok(prompt.includes('workbench_read_artifact'));
+    assert.ok(prompt.length<250);
+    assert.ok(!prompt.includes('/spec-repo'));
+    assert.ok(!prompt.includes('Phase 1'));
   }
 });
 

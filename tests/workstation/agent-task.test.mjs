@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import {previewAgentPrompt,approvedAgentPrompt,writeAgentTask,agentArguments,taskRpc} from '../../packages/workstation/agent-task.mjs';
+import {validateAgentSettings} from '../../packages/workstation/agent-settings.mjs';
+
+const selection={requirementId:'REQ-one',featureId:'login',purpose:'development'};
+const snapshot={revision:1,settings:{agent:validateAgentSettings()},files:[
+  {target:'spec',path:'spec/REQ-one/login/login.feature',content:'Feature: Approved login'},
+  {target:'spec',path:'spec/REQ-other/other/other.feature',content:'unrelated private content'}
+]};
+test('edited prompt dispatches verbatim, while missing approval and stale previews are rejected',()=>{
+  const preview=previewAgentPrompt(snapshot,'SPEC-one','/repo',selection);
+  assert.ok(preview.prompt.length<250);assert.match(preview.prompt,/workbench_get_task/);
+  const context={root:'/repo',request:{repositoryId:'SPEC-one',input:{...selection,...preview,prompt:'My exact edited prompt\nDo this carefully.'}}};
+  assert.equal(approvedAgentPrompt(snapshot,context,'development'),context.request.input.prompt);
+  assert.throws(()=>approvedAgentPrompt({...snapshot,revision:2},context,'development'),{code:'PROMPT_CHANGED'});
+  assert.throws(()=>approvedAgentPrompt(snapshot,{...context,root:'/moved'},'development'),{code:'PROMPT_CHANGED'});
+  assert.throws(()=>approvedAgentPrompt(snapshot,{...context,request:{...context.request,input:{...selection}}},'development'),{code:'PROMPT_REQUIRED'});
+  assert.throws(()=>approvedAgentPrompt(snapshot,{...context,request:{...context.request,input:{...context.request.input,prompt:' '}}},'development'),{code:'PROMPT_REQUIRED'});
+  assert.throws(()=>agentArguments({args:['exec','{prompt}']},{prompt:'do this'}),{code:'AGENT_MCP_REQUIRED'});
+});
+test('a real stdio task MCP exposes only frozen selected artifacts and no write operations',async t=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'agent-task-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const file=await writeAgentTask(directory,snapshot,{...selection,workspace:'/isolated',products:['/isolated/product'],feedback:[{message:'fix layout'}],previousFailure:'last failure'});
+  const bundle=JSON.parse(await readFile(file,'utf8'));
+  const args=agentArguments(validateAgentSettings(),{prompt:'exact prompt',spec:'/isolated',project:'/isolated/product',task:file});
+  assert.equal(args.at(-1),'exact prompt');assert.ok(args.some(a=>a.startsWith('mcp_servers.workbench_task=')));
+  const queries=[
+    {method:'initialize',params:{protocolVersion:'2025-11-25'}},
+    {method:'tools/list'},
+    {method:'tools/call',params:{name:'workbench_get_task',arguments:{}}},
+    {method:'tools/call',params:{name:'workbench_read_artifact',arguments:{path:snapshot.files[0].path}}},
+    {method:'tools/call',params:{name:'workbench_read_artifact',arguments:{path:snapshot.files[1].path}}},
+    {method:'tools/call',params:{name:'write_file',arguments:{path:'/etc/passwd'}}}
+  ].map((query,index)=>({jsonrpc:'2.0',id:index,...query}));
+  const result=spawnSync(process.execPath,['scripts/mcp-agent-task.mjs',file],{input:queries.map(q=>JSON.stringify(q)).join('\n')+'\n',encoding:'utf8'});
+  assert.equal(result.status,0,result.stderr);
+  const responses=result.stdout.trim().split('\n').map(line=>JSON.parse(line));
+  assert.equal(responses[0].result.protocolVersion,'2025-11-25');
+  assert.ok(responses[1].result.tools.every(tool=>tool.annotations.readOnlyHint));
+  assert.equal(responses[2].result.structuredContent.previousFailure,'last failure');
+  assert.deepEqual(responses[2].result.structuredContent.artifacts,[snapshot.files[0].path]);
+  assert.equal(responses[3].result.structuredContent.content,'Feature: Approved login');
+  assert.equal(responses[4].error.code,-32602);assert.equal(responses[5].error.code,-32602);
+  assert.equal(taskRpc(bundle,{jsonrpc:'2.0',method:'notifications/initialized'}),null);
+});

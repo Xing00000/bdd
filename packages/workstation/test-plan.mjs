@@ -5,11 +5,12 @@ import { id, invariant, digest, identity, safePath, atomicWrite, writeJson, walk
 import { execute, processEnvironment } from '../git-core/index.mjs';
 import { scan, reviewState } from '../spec-toolkit/index.mjs';
 import { ensureDraft, inDraftView, sourceFiles, draftProjectFiles, readDraftFile } from './authoring.mjs';
-import { validateAgentSettings, renderAgentPrompt } from './agent-settings.mjs';
+import { validateAgentSettings } from './agent-settings.mjs';
 import { agentExecutable } from './development.mjs';
 import { useRepositoryTools } from './repository-tools.mjs';
 import { checkTests } from './repository-actions.mjs';
 import { refreshWorkflowFiles, draftModules } from './workflow-state.mjs';
+import { approvedAgentPrompt, writeAgentTask, agentArguments } from './agent-task.mjs';
 
 export async function generateTestPlan(context) {
   const {options,store,request}=context,repositoryId=request.repositoryId,input=request.input;
@@ -31,17 +32,18 @@ export async function generateTestPlan(context) {
   const current=await inDraftView(snapshot,root=>reviewState(root,input.requirementId,input.featureId));
   invariant(input.expectedDigest===current.hashes.tests,'CONTENT_CHANGED','測試計劃已變更，請先重新讀取再交由 LLM 補齊。',409);
   invariant(options.enableExecution,'EXECUTION_DISABLED','主機尚未啟用測試計劃生成；系統設計已保存。',403);
+  const prompt=approvedAgentPrompt(snapshot,context,'testPlan');
   const agent=validateAgentSettings(snapshot.settings.agent),command=await agentExecutable(agent.command);
   const parent=await safePath(options.home,`test-plans/${request.operationId}`);await mkdir(parent,{recursive:true});
   const root=await mkdtemp(path.join(parent,'attempt-'));
   try {
-    return await generateInView(context,snapshot,feature,root,prefix,receiptId,agent,command);
+    return await generateInView(context,snapshot,feature,root,prefix,receiptId,agent,command,prompt,parent);
   } finally {
     for(const relative of ['node_modules','.generated','.runtime/dependencies/cache'])await rm(await safePath(root,relative),{recursive:true,force:true});
   }
 }
 
-async function generateInView(context,snapshot,feature,root,prefix,receiptId,agent,command) {
+async function generateInView(context,snapshot,feature,root,prefix,receiptId,agent,command,prompt,parent) {
   const {options,store,request}=context,repositoryId=request.repositoryId,input=request.input;
   const scoped=file=>!file.path.startsWith('spec/')&&!file.path.startsWith('tests/')
     ||file.path.startsWith(`spec/${feature.key}/`)
@@ -70,11 +72,9 @@ async function generateInView(context,snapshot,feature,root,prefix,receiptId,age
     invariant(result.exitCode===0&&!result.timedOut&&!result.overflow,'TEST_PLAN_WORKSPACE_FAILED',(result.stderr||result.stdout).slice(-4000));
   }
   const before=await sourceFiles(root),projectHashes=await contextHashes(root);
-  const prompt=renderAgentPrompt(agent,{requirementId:input.requirementId,featureId:input.featureId,spec:root,projects:projects.join(', '),feedback:'',previousFailure:''},'testPlan');
+  const task=await writeAgentTask(parent,snapshot,{purpose:'testPlan',requirementId:input.requirementId,featureId:input.featureId,workspace:root,products:projects,feedback:[]});
   await atomicWrite(path.join(root,'.runtime/test-plan-prompt.txt'),prompt);
-  const replacements={'{prompt}':prompt,'{spec}':root,'{project}':root};
-  const args=agent.args.map(arg=>Object.hasOwn(replacements,arg)?replacements[arg]:arg);
-  if(!agent.args.includes('{prompt}'))args.push(prompt);
+  const args=agentArguments(agent,{prompt,spec:root,project:root,task});
   const result=await execute(command,args,{cwd:root,env:processEnvironment({HOME:process.env.HOME}),timeoutMs:agent.timeoutMs});
   await writeJson(path.join(root,'.runtime/test-plan-agent.json'),result);
   invariant(result.exitCode===0&&!result.signal&&!result.timedOut&&!result.overflow,'TEST_PLAN_AGENT_FAILED',`測試計劃生成失敗，原內容保留。\n${(result.stderr+result.stdout).slice(-12000)}`);

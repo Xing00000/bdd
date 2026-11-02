@@ -47,6 +47,13 @@ export async function createWorkstation(configuration) {
   for (const operationId of store.recover()) launch(operationId);
   const service = {
     options,
+    async agentPreview(repositoryId,input) {
+      store.repository(id(repositoryId));
+      const root=await repositoryPath(options.home,repositoryId,store);
+      const snapshot=await ensureDraft({root,options,store,repositoryId});
+      const {previewAgentPrompt}=await import('./agent-task.mjs');
+      return previewAgentPrompt(snapshot,repositoryId,root,input);
+    },
     async mcpProgress(request) { const { handleProgress } = await import('./mcp-progress.mjs'); return handleProgress(store, options.home, request); },
     async terminal(operationId, offset=0) {
       const operation=this.operation(operationId);

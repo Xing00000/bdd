@@ -28,14 +28,15 @@ async function setup(t,{featureText=gherkin}={}) {
   const options=service.options;
   let sequence=0;
   const operations=[];
-  const job=(operation,input={})=>{
+  const job=async(operation,input={})=>{
+    if(operation==='workflow.tests.complete')input={...input,...await service.agentPreview('SPEC-plan',{...input,purpose:'testPlan'})};
     const operationId=`OP-plan-${++sequence}`;operations.push({operation,operationId,input});
     return withProgress(f.home,operationId,()=>executeOperation(options,store,{schemaVersion:1,repositoryId:'SPEC-plan',operationId,operation,input}));
   };
   const agentFile=path.join(f.base,'test-plan-agent.mjs');
   const agentBody=`import {writeFile} from 'node:fs/promises';\nconst root=process.argv[2];\nawait writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});\nawait writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});\n`;
   await writeFile(agentFile,agentBody);
-  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agentFile,'{spec}'],skills:''}});
+  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agentFile,'{spec}','{task}'],skills:''}});
   try { await job('repository.tools.prepare'); }
   catch(error) { assert.equal(error.code,'INSTALL_REQUIRED');assert.deepEqual(error.details.install.browsers,['chromium']);await job('repository.tools.prepare',{installConsent:error.details.install.digest}); }
   await job('workflow.create',{...ids,title:'Arithmetic'});
@@ -127,8 +128,9 @@ test('invalid and empty handlers are rejected independently of discovery',async 
   const f=await setup(t);await generate(f);
   const parent=path.join(f.home,'test-plans');
   let candidate;
-  for(const operation of await readdir(parent))for(const attempt of await readdir(path.join(parent,operation))) {
-    const root=path.join(parent,operation,attempt);
+  for(const operation of await readdir(parent))for(const attempt of await readdir(path.join(parent,operation),{withFileTypes:true})) {
+    if(!attempt.isDirectory())continue;
+    const root=path.join(parent,operation,attempt.name);
     try{await readFile(path.join(root,'.runtime/test-plan-agent.json'));candidate=root;}catch(error){if(error.code!=='ENOENT')throw error;}
   }
   assert.ok(candidate);
