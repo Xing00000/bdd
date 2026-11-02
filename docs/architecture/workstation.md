@@ -47,13 +47,13 @@
 
 ### 互動留言與執行歷程
 
-每次明確送出的操作以 `operations` 保存原始請求、時間、狀態、結果與錯誤，作為一筆互動留言；普通儲存、CLI 派工、Gherkin 生成、文件匯入與停止操作均保留歷程。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方以最新送出在上的順序呈現留言及其可收合執行 log，載入更早紀錄時加在下方；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
+作業以 `operations` 保存原始請求、時間、狀態、結果與錯誤，供執行與診斷使用。使用者可見的互動留言只包含 LLM 派工（補完測試計劃、實作）及該任務的 CLI 回覆；普通儲存、本機 Gherkin 生成、文件匯入、測試執行與停止操作不顯示為留言。LLM 派工即使在前置檢查失敗仍保留失敗紀錄。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方以最新送出在上的順序呈現留言及其可收合執行 log，載入更早紀錄時加在下方；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
 
-`interaction-types.mjs` 是歷程分類 owner，依操作、審閱階段及來源檔案判定 `GHERKIN`／`SD`／`TESTS`／`IMPLEMENTATION`／`VERIFICATION` 等類型；通用操作可帶入目前頁面的合法類型，已知業務操作不受錯誤的前端類型覆寫。類型保存於 `operations.interaction_type`，CLI 回覆及停止紀錄繼承 parent 類型。schema10 依原始請求回填既有紀錄，無法判定的舊操作保留為 `SYSTEM`，不冒稱所屬業務階段。歷史 API 在 SQL 分頁之前依類型過濾；切換階段會清除前階段的畫面與輪詢，只在目前階段下方顯示相符的互動。未帶類型的 API 查詢仍可讀取完整歷史。
+`interaction-types.mjs` 是歷程分類 owner，依操作、審閱階段及來源檔案判定 `GHERKIN`／`SD`／`TESTS`／`IMPLEMENTATION`／`VERIFICATION` 等類型；通用操作可帶入目前頁面的合法類型，已知業務操作不受錯誤的前端類型覆寫。類型保存於 `operations.interaction_type`，CLI 回覆及停止紀錄繼承 parent 類型。schema10 依原始請求回填既有紀錄，無法判定的舊操作保留為 `SYSTEM`，不冒稱所屬業務階段。歷史 API 在 SQL 分頁之前依類型過濾；切換階段會清除前階段的畫面與輪詢，只在目前階段下方顯示相符的互動。未帶類型的 API 查詢仍只回傳 LLM 互動。`interaction-types.mjs` 的 LLM predicate 統一決定 SQL 分頁資格與作業回傳的 `isLlmInteraction`；前端依該欄位決定是否即時建立或附加互動卡片。
 
 `git-core/progress-store.mjs` 是 `execution_logs`／`execution_log_chunks` 的唯一 schema 與輸出 owner。metadata 保存階段、程序與退出碼，輸出以 byte offset 分塊追加到 `metadata.sqlite`。作業 claim／finish、對應 log 與子互動完成使用同一交易；寫入失敗不會留下已完成狀態。每份 transcript 沿用既有 4 MiB 上限及截斷標示，ANSI／憑證處理與 UTF-8 分頁契約保留。新紀錄不依賴 `terminal.log`、`processes.json` 或 `state.json`；舊檔僅在 SQL 尚無紀錄時一次性讀入，拒絕 symlink，匯入後 SQLite 為唯一來源，不再從修改後的舊檔覆寫。
 
-CLI 終端每次 Enter 建立 `interaction.cli.input` 子留言，保存文字及 parent operation ID；逐字輸入與 resize 不另建留言。worker 在真正寫入 PTY 後保存 delivery ack，再結束前一筆互動；之後輸出同時寫入該筆獨立 log 與原作業完整 transcript。下一次 Enter 或原作業結束會封存前一筆，未取得送達確認的輸入不得隨 parent 成功而變成成功。人工停止另記一筆留言；服務關閉等系統清理不偽造成使用者送出。
+CLI 終端每次 Enter 建立 `interaction.cli.input` 子留言，保存文字及 parent operation ID；逐字輸入與 resize 不另建留言。worker 在真正寫入 PTY 後保存 delivery ack，再結束前一筆互動；之後輸出同時寫入該筆獨立 log 與原作業完整 transcript。下一次 Enter 或原作業結束會封存前一筆，未取得送達確認的輸入不得隨 parent 成功而變成成功。人工停止保留作業診斷紀錄，但不另顯示互動留言；服務關閉等系統清理不偽造成使用者送出。
 
 來源匯入、審閱摘要與測試型別檢查統一由 `git-core.gitSourceFiles` 使用 Git 原生 `ls-files --cached --others --exclude-standard` 列出來源，再存取檔案，避免遍歷被忽略的快取與連結。固定路徑則由 `gitSourcePaths` 使用 `check-ignore --stdin -z` 判定；不另寫檔名排除或 gitignore parser。這保留巢狀規則、`!` 例外、使用者 global excludes、`.git/info/exclude` 及已追蹤檔案的 Git 語意。SQLite 隔離副本將已接受的來源放入暫存 Git index，保留「已追蹤但命中 ignore pattern 仍是來源」的行為；無 checkout 的來源以暫存 Git metadata 判定。這些本機操作不提交、不連線、不修改原 checkout，建立 index 時停用外部 Git 設定與 hooks，不執行來源指定的 filters。
 

@@ -49,13 +49,13 @@ export function interactionHistory({api,labels,getType}) {
     section.hidden=false;
   }
   async function accepted(op) {
-    if(op.interactionType!==getType())return;
+    if(!op.isLlmInteraction||op.interactionType!==getType())return;
     if(repositoryId!==op.request?.repositoryId||type!==getType())reset(op.request.repositoryId);
     const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});list.prepend(card.article);card.details.open=true;
     await load(repositoryId);
   }
   function attach(op) {
-    if(op.interactionType!==getType())return false;
+    if(!op.isLlmInteraction||op.interactionType!==getType())return false;
     if(repositoryId!==op.request.repositoryId||type!==getType())reset(op.request.repositoryId);
     const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});if(!card.article.isConnected)list.prepend(card.article);
     if(document.querySelector('#operation-terminal-details').parentElement===card.body)return true;
