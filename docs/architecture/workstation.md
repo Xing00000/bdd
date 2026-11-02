@@ -31,8 +31,9 @@
 | `packages/git-core/` | Git 原生來源分類、輸出及同步工具，不是儲存引擎 |
 | `packages/spec-toolkit/` | 規格契約、內容摘要、可攜工具、驗收候選與證據 |
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
+| `packages/workstation/chat.mjs`、`public/chat.js` | 正式入口的聊天室接線；重用 `src/application/chat.ts` 與 `src/adapters/sqlite/chat.ts`，聊天資料存同一個 `WB_HOME/metadata.sqlite`。Codex 擁有模型上下文，SQLite 擁有原始訊息。 |
 
-## SQLite schema 9
+## SQLite schema 10
 
 `spec_repositories` 保存綁定網址，不因連線失敗取消登錄。以下是需要備份的正式資料，不是可丟棄快取：
 
@@ -47,6 +48,8 @@
 ### 互動留言與執行歷程
 
 每次明確送出的操作以 `operations` 保存原始請求、時間、狀態、結果與錯誤，作為一筆互動留言；普通儲存、CLI 派工、Gherkin 生成、文件匯入與停止操作均保留歷程。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方以最新送出在上的順序呈現留言及其可收合執行 log，載入更早紀錄時加在下方；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
+
+`interaction-types.mjs` 是歷程分類 owner，依操作、審閱階段及來源檔案判定 `GHERKIN`／`SD`／`TESTS`／`IMPLEMENTATION`／`VERIFICATION` 等類型；通用操作可帶入目前頁面的合法類型，已知業務操作不受錯誤的前端類型覆寫。類型保存於 `operations.interaction_type`，CLI 回覆及停止紀錄繼承 parent 類型。schema10 依原始請求回填既有紀錄，無法判定的舊操作保留為 `SYSTEM`，不冒稱所屬業務階段。歷史 API 在 SQL 分頁之前依類型過濾；切換階段會清除前階段的畫面與輪詢，只在目前階段下方顯示相符的互動。未帶類型的 API 查詢仍可讀取完整歷史。
 
 `git-core/progress-store.mjs` 是 `execution_logs`／`execution_log_chunks` 的唯一 schema 與輸出 owner。metadata 保存階段、程序與退出碼，輸出以 byte offset 分塊追加到 `metadata.sqlite`。作業 claim／finish、對應 log 與子互動完成使用同一交易；寫入失敗不會留下已完成狀態。每份 transcript 沿用既有 4 MiB 上限及截斷標示，ANSI／憑證處理與 UTF-8 分頁契約保留。新紀錄不依賴 `terminal.log`、`processes.json` 或 `state.json`；舊檔僅在 SQL 尚無紀錄時一次性讀入，拒絕 symlink，匯入後 SQLite 為唯一來源，不再從修改後的舊檔覆寫。
 
@@ -99,6 +102,8 @@ Toolkit 1.4.0 將此模組納入正式 manifest。升級既有 req-tags 工具�
 每次派工保存固定 SQL 修訂的任務資料，`scripts/mcp-agent-task.mjs` 以 stdio 提供 `workbench_get_task` 與 `workbench_read_artifact`。前者提供工作目錄、允許寫入範圍、驗證入口、回報與失敗資料及 artifact 名稱；後者只能讀取該任務映射的所選功能和必要共用測試原文，不接受任意檔案路徑，不提供寫入工具。實作及測試計劃原有後端審閱、範圍、型別及獨立驗證 gate 保留。
 
 預設 CLI 參數中的 `{mcp}` 依 [Codex MCP 設定契約](https://developers.openai.com/codex/mcp) 展開為本次 `workbench_task` 的 command／args 設定，要求伺服器初始化成功，不修改使用者全域設定。自訂 CLI adapter 可透過 `{task}` 接收相同任務檔案並接入 MCP；兩種參數都缺少時拒絕派工，避免極簡 Prompt 在沒有資料通道時啟動。`{prompt}` 是使用者最後送出的文字，`{spec}`／`{project}` 仍可用於自訂 CLI 的工作目錄參數。
+
+任務與進度 MCP 共用 `mcp-protocol.mjs` 的版本協商，包含本機 Codex 0.166.0 實際提出的 `2025-06-18`。對未支援的版本提案依 [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) 回覆伺服器支援的版本，不把可協商的客戶端版本直接當成致命錯誤。驗證包含實機 Codex app-server 的 ephemeral thread 初始化，不送出模型 turn 或執行產品修改。
 
 設定儲存與工具準備分為兩個獨立操作：`repository.setup` 先保存 SQLite 設定，設定畫面接著呼叫 `repository.tools.prepare`，依既有安裝授權準備該 Spec Repo 的持久套件與可執行功能要求的瀏覽器；尚無功能時沿用 `defaultProfiles`。解析出的 lockfile 以修訂 compare-and-swap 保存。設定保存成功不代表工具已準備成功；準備失敗可從設定頁重試。瀏覽器完整性使用已安裝 Playwright registry 的正式安裝目標，包含 headless shell 與 ffmpeg 等相依執行檔，舊收據不取代檔案檢查。骨架生成與 LLM 補齊只讀取匹配的已安裝工具副本，不會執行 npm；套件缺失或身分改變時明確要求返回設定頁。
 
