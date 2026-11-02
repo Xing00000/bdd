@@ -84,7 +84,13 @@ Toolkit 1.4.0 將此模組納入正式 manifest。升級既有 req-tags 工具�
 
 需求、系統設計、測試計劃、開發實作、驗收使用同一套流程。`spec-toolkit.reviewState` 依 SQLite 所存確認紀錄與來源摘要推導階段及可編輯性；UI、API、生成器不得另存一份階段或自行解除確認。通過階段的原文、來源描述與測試模組唯讀，後端來源儲存也檢查同一 owner，不能只靠前端鎖定。
 
-`agent-settings.mjs` 統一產生實作與測試計劃的階段上下文：僅列目前單一 `.feature`、同名 SD、測試目錄、產品範圍及該功能的驗證入口。上游已完成審閱，不再加入規格撰寫／重新核准、教學、範例或其他技術棧流程。Skills 預設留空；既有設定只有精確等於舊版內建完整 BDD skill 的值才會透過既有設定補全交易退役，自訂 Prompt、參數及自訂 Skills 保留。已啟動的 CLI 持有原派工內容；設定更新不會重啟或改寫執行中的任務。CLI 自身的全域指引仍由該 CLI 管理。
+`agent-settings.mjs` 的實作與測試計劃預設 Prompt 僅包含任務識別、動作及 MCP 工具入口，不展開規格、SD、產品路徑、回報、失敗紀錄或通用流程。Skills 預設留空；只精確遷移已知舊 factory Prompt／參數／完整 BDD skill，自訂值保留。CLI 自身的全域指引仍由該 CLI 管理。
+
+`agent-task.mjs` 是預覽、派工及任務資料 owner。預覽 API 不建立作業或啟動 CLI；畫面可編輯完整 Prompt，取消不派工，送出後原樣傳入 CLI，不再附加隱藏內容。後端要求非空 Prompt 及涵蓋 repository、作者修訂、設定、所選功能、階段與本地位置的預覽摘要；過期則拒絕。內部重試沿用同一已送出 Prompt，新的失敗資料只更新該次 attempt 的任務 MCP。已啟動的工作不因設定更新而重啟。
+
+每次派工保存固定 SQL 修訂的任務資料，`scripts/mcp-agent-task.mjs` 以 stdio 提供 `workbench_get_task` 與 `workbench_read_artifact`。前者提供工作目錄、允許寫入範圍、驗證入口、回報與失敗資料及 artifact 名稱；後者只能讀取該任務映射的所選功能和必要共用測試原文，不接受任意檔案路徑，不提供寫入工具。實作及測試計劃原有後端審閱、範圍、型別及獨立驗證 gate 保留。
+
+預設 CLI 參數中的 `{mcp}` 依 [Codex MCP 設定契約](https://developers.openai.com/codex/mcp) 展開為本次 `workbench_task` 的 command／args 設定，要求伺服器初始化成功，不修改使用者全域設定。自訂 CLI adapter 可透過 `{task}` 接收相同任務檔案並接入 MCP；兩種參數都缺少時拒絕派工，避免極簡 Prompt 在沒有資料通道時啟動。`{prompt}` 是使用者最後送出的文字，`{spec}`／`{project}` 仍可用於自訂 CLI 的工作目錄參數。
 
 設定儲存與工具準備分為兩個獨立操作：`repository.setup` 先保存 SQLite 設定，設定畫面接著呼叫 `repository.tools.prepare`，依既有安裝授權準備該 Spec Repo 的持久套件與可執行功能要求的瀏覽器；尚無功能時沿用 `defaultProfiles`。解析出的 lockfile 以修訂 compare-and-swap 保存。設定保存成功不代表工具已準備成功；準備失敗可從設定頁重試。瀏覽器完整性使用已安裝 Playwright registry 的正式安裝目標，包含 headless shell 與 ffmpeg 等相依執行檔，舊收據不取代檔案檢查。骨架生成與 LLM 補齊只讀取匹配的已安裝工具副本，不會執行 npm；套件缺失或身分改變時明確要求返回設定頁。
 
