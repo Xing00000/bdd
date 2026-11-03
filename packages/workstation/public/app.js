@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded',()=>{ document.querySelector('#sett
 const stages = [
   ['GHERKIN','需求確認','需求'],['SD','系統設計','設計'],['TESTS','測試計劃','測試'],['IMPLEMENTATION','開發實作','開發'],['VERIFICATION','驗收','驗收']
 ];
-const labels = { 'workflow.design.generate':'LLM 生成系統文件', 'workflow.gherkin.generate':'LLM 生成 Gherkin', 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
+const labels = { 'workflow.delete':'刪除需求', 'workflow.design.generate':'LLM 生成系統文件', 'workflow.gherkin.generate':'LLM 生成 Gherkin', 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
 Object.assign(labels,{'interaction.requirement.generate':'產生 Gherkin','interaction.document.import':'匯入文件'});
 labels['interaction.cli.input']='CLI 回覆';
 labels['interaction.cancel']='停止作業';
@@ -299,6 +299,15 @@ async function saveSettings() {
   }
   state.formDirty=false;await flow('repository.tools.prepare',{});await refresh();
 }
+async function deleteRequirement() {
+  const f=feature();if(!f||!await guard())return;
+  const repositoryId=state.repositoryId,expectedRevision=state.scope?.revision;
+  const confirmed=await ask('刪除需求？',`刪除「${f.title}」（${f.key}）？\n\n此需求將從清單移除，已保存文件、測試與執行歷程仍會保留。\nSQLite 刪除標記：spec/${f.key}/feature.yaml`,'刪除需求');
+  if(!confirmed)return;
+  if(repositoryId!==state.repositoryId||feature()?.key!==f.key)throw new Error('所選需求已變更，請重新確認。');
+  const result=await executeJob('workflow.delete',{requirementId:f.requirementId,featureId:f.id,expectedRevision,confirmedKey:f.key},{refreshAfter:false});
+  if(result){state.editor=null;state.hookEditor=null;state.composer=null;await navigate({featureKey:null,stage:'GHERKIN'},{protect:false});note('需求已刪除，已保存歷程保留。');}
+}
 async function createFeature() {
   await navigate({view:'features',featureKey:'__new__',stage:'GHERKIN'});
   $('#requirement-description').focus();
@@ -308,7 +317,7 @@ async function renderWorkflow(epoch) {
   if(state.featureKey!=='__new__'&&!features.some(f=>f.key===state.featureKey))state.featureKey=features[0]?.key??null;
   const titleCounts=new Map();for(const item of features)titleCounts.set(item.title,(titleCounts.get(item.title)??0)+1);
   $('#feature-select').replaceChildren(...features.map(f=>new Option(titleCounts.get(f.title)>1?`${f.title} (${f.requirementId})`:f.title,f.key)));$('#feature-select').value=state.featureKey??'';
-  const f=feature();$('#workflow').hidden=false;$('#feature-empty').hidden=Boolean(f);
+  const f=feature();$('#delete-feature').hidden=!f;$('#workflow').hidden=false;$('#feature-empty').hidden=Boolean(f);
   $('#stage-nav').hidden=!f;$('#scope-details').hidden=!f||state.stage!=='SD'||!f.review.editable.sd;
   if(!f){
     state.stage='GHERKIN';$('#phase-title').textContent='需求';$('#feature-status').textContent='草稿';
@@ -606,7 +615,7 @@ on('#close-dialog','click',()=>closeDialog());on('#cancel-dialog','click',()=>cl
 $('#form-dialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog();});
 on('#cancel-job','click',()=>state.jobId&&api(`/operations/${state.jobId}/cancel`,'POST',{}));
 on('#sync','click',()=>{if(dirty())throw new Error('請先儲存畫面中的草稿，遠端同步只處理已儲存內容。');return executeJob('repository.sync',{});});
-on('#new-feature','click',createFeature);
+on('#new-feature','click',createFeature);on('#delete-feature','click',deleteRequirement);
 on('#upload-requirement','click',()=>$('#requirement-file').click());
 on('#requirement-file','change',importDocument);
 on('#requirement-description','input',composerChanged);on('#requirement-gherkin','input',composerChanged);

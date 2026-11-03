@@ -104,3 +104,5 @@ Agent 結束後，工作台將產品修改保存到 SQLite 及本機版本，再
 ### Local read-only MCP progress
 
 The Settings page shows the `MCP 進度 API` URL for the running local workbench. A local stdio MCP client can run `node scripts/mcp-progress.mjs http://127.0.0.1:<port>/repository-api/v1/mcp/progress` with the actual port from Settings. The bridge forwards JSON-RPC to that loopback endpoint and does not configure any client automatically. A cloud parent conversation cannot directly reach the Mac's localhost; remote access is outside this feature.
+
+需求清單旁可按「刪除需求」，確認後從清單移除。已保存文件、測試與執行歷程會保留，刪除後的需求不能再編輯、退回或確認；目前沒有還原按鈕。刪除最後一筆後仍可新增，系統不會重用已刪除需求的識別碼。
