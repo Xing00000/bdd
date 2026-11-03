@@ -1,6 +1,6 @@
 # SD：BDD 軟體開發工作台
 
-版本：0.16；日期：2026-10-18；需求：REQ-WB-001；Gherkin：`workbench.feature`；狀態：**同步既有資料庫的一次性 Agent seed 升級；本版待使用者確認**。
+版本：0.19；日期：2026-11-03；需求：REQ-WB-001；Gherkin：`workbench.feature`；狀態：**使用者已批准工作站聊天工具循環及人工驗收與修改實作流程**。
 
 本文件採用 `src/domain/sd-format.ts` 的統一章節，包含本 Gherkin 的架構、開發檔案、流程、DDL／DML、migration、部署產物與驗收契約。設計與實際執行結果分開；執行結果以 `test-results/` 的當次產物為準。
 
@@ -1121,22 +1121,102 @@ AC028 檢查 selected a 的兩個 tests 全執行與回傳，b 沒有本 run cas
 - [playwright-bdd 9.2.1 generation paths](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/src/generate/paths.ts)、[缺步驟設定](https://github.com/vitalets/playwright-bdd/blob/v9.2.1/docs/configuration/options.md)。
 - [node-pty](https://github.com/microsoft/node-pty)、[xterm.js](https://xtermjs.org/docs/)、[GitHub CI variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables)。
 
-## 聊天室增量設計（AC-WB-036～038，待批准）
+## 聊天室增量設計（AC-WB-036～039，已批准）
 
 ### Owner 與接線
 
-沿用既有 AC-WB 情境編號。正式入口依 `package.json` 的 `npm start` 與 `docs/architecture/workstation.md`，為 `packages/workstation/http.mjs`、`public/index.html`、`public/app.js`；`public/chat.js` 提供左側聊天室與中間對話頁籤。既有 Vue 入口 `ui/src/RequirementSidebar.vue`、`ui/src/App.vue` 也消費相同聊天服務。聊天室不要求先選需求或專案。
+沿用既有 AC-WB 情境編號。正式入口依 `package.json` 的 `npm start` 與 `docs/architecture/workstation.md`，為 `packages/workstation/http.mjs`、`public/index.html`、`public/app.js`；`public/chat.js` 提供左側聊天室與中間對話頁籤。聊天室不要求先選需求或專案；舊 Vue 入口已移除。
 
-聊天 schema 的唯一 owner 為 `src/adapters/sqlite/chat.ts`，聊天用例為 `src/application/chat.ts`。正式入口的 `packages/workstation/chat.mjs` 延遲載入編譯後服務，透過 `store.chatStorage()` 在既有 `WB_HOME/metadata.sqlite` 原子安裝同一份 schema，不新增第二份聊天資料庫；Vue 入口經 `src/adapters/sqlite/migrations.ts` 的 11→12 migration 與既有 worker 存取其 metadata。兩個入口不互相複製聊天資料。聊天室保存 id、title、Codex threadId 與時間；訊息保存 id、roomId、順序、role、完整 content、執行狀態與錯誤。訊息與執行狀態由 SQLite 擁有；上下文組裝、壓縮與 thread 執行狀態由 Codex 擁有。
+聊天 schema 的唯一 owner 為 `src/adapters/sqlite/chat.ts`，聊天用例為 `src/application/chat.ts`。正式入口的 `packages/workstation/chat.mjs` 延遲載入編譯後服務，透過 `store.chatStorage()` 在既有 `WB_HOME/metadata.sqlite` 原子安裝同一份 schema，不新增第二份聊天資料庫。聊天室保存 id、title、Codex threadId 與時間；訊息保存 id、roomId、順序、role、完整 content、執行狀態與錯誤。訊息與執行狀態由 SQLite 擁有；上下文組裝、壓縮與 thread 執行狀態由 Codex 擁有。
 
 ### 執行與錯誤
 
 依使用者 2026-11-02 的操作修正，按「新對話」直接建立，不要求聊天室名稱；預設標題由 `src/domain/chat.ts` 擁有，首次送出時以第一則訊息正規化空白並限制標題長度，與原文同交易保存。訊息本身保留完整首尾空白。送出期間若輸入下一則草稿，不清除新草稿。
 
-聊天服務驅動 Codex app-server，provider adapter 將文字請求轉至官方 Copilot CLI。沿用已驗證的文字聊天範圍，尚未驗證的工具呼叫與非文字輸入必須明確拒絕，不移交 Copilot 自行執行工具。CLI 介面僅接受 prompt，adapter 將 role 標籤序列化為 JSON；不宣稱等同原生模型 role／工具協定。回覆完成後顯示全文，目前不宣稱逐 token 串流。執行檔、啟動參數、模型與逾時由 `chat_settings` 擁有，預設值僅定義於 `src/adapters/runtime/chat-settings.ts`。Codex 使用工作台自己的 chat/codex 目錄，不依賴 `/tmp` 探測環境或改動使用者全域 Codex config。工作台關閉或逾時時終止擁有的 Codex 與 Copilot 程序群組，避免 npm loader 留下 native child。
+聊天服務驅動 Codex app-server，provider adapter 將文字、role、function call／output 歷史序列化轉至官方 Copilot CLI。Copilot 的 `assistant.message.toolRequests` 原生結構化事件轉成 Responses function calls，保留工具名稱、namespace、call ID 與 arguments；Codex 實際執行 MCP，再把 output 送入下一次推論。這是已驗證的工作站工具子集，不宣稱任意 Responses／Copilot 協定完全等價。非文字內容、其他 namespace、無對應 call ID 的結果明確拒絕。回覆完成後顯示全文，目前不宣稱逐 token 串流。執行檔、啟動參數、模型與逾時由 `chat_settings` 擁有，預設值僅定義於 `src/adapters/runtime/chat-settings.ts`。Codex 使用工作台自己的 chat/codex 目錄，不依賴 `/tmp` 探測環境或改動使用者全域 Codex config。工作台關閉或逾時時終止擁有的 Codex 與 Copilot 程序群組，避免 npm loader 留下 native child。
+
+### 工作站 MCP（AC-WB-039 / UIUX / Chromium / e2e）
+
+使用者於 2026-11-03 明確批准此情境與設計。`packages/workstation/chat-tools.mjs` 只接收工作站既有 service，重用進度 MCP 的三個讀取工具，另提供 `workbench_generate_requirement` 與 `workbench_get_requirement_proposals`。產生提案沿用 `service.generateRequirement()`，同一個 SQLite 保存需求原文、Gherkin 草稿及 interaction；不寫入 authoring state、不確認任何階段。查詢沿用 service，禁止任意 SQL／shell／stage confirmation 工具。
+
+聊天啟用時建立綁定 loopback 的私有 MCP endpoint 與隨機 bearer token；Codex 以環境變數接收 token，不寫入設定或對話。僅 `workbench_generate_requirement` 使用明確的 per-tool `approval_mode = "approve"`，讓已批准的提案能力在非互動式聊天中執行；其 `readOnlyHint` 維持 false，不偽裝成讀取工具，其他工具不繼承此寫入批准。關閉順序為中斷聊天 runtime、等待推論程序結束、關閉 MCP endpoint，最後由工作站關閉資料庫。Copilot 僅連接每次推論的私有工具目錄，目錄拒絕執行任何工具；捕捉 toolRequests 後中止該次 Copilot。`--available-tools` 僅開放此目錄，不靠持續維護內建工具黑名單。版本協商唯一 owner 仍是 `mcp-protocol.mjs`；build 複製該來源供編譯後 runtime 使用。
+
+正式 UI 驗收來源：`tests/chat-ui/chat.spec.mjs` 的 AC-WB-039 與 `chat-tools-driver.ts`。先建立隨機名稱／ID 的隔離工作站 fixture；使用者指令只給名稱，不給 repository ID。驗證 Codex 原生 JSONL 中的 function call／output 關聯、工作站 API、SQLite proposal／interaction、未變動的 authoring state，以及畫面回覆；重新啟動完整工作站後，要求實際讀取提案並驗證同一 thread、同一 proposal ID 與原文。HTML 附件提供實際畫面、期望／結果、工具紀錄及來源。`tests/workstation/chat-tools.test.mjs` 另驗證 bearer token、origin、未知工具、無效參數與重啟持久化。BDD 原始情境沿用既有來源映射；既有 001～038 的歷史測試入口不作此情境的產品驗收證據。
 
 送出前保存使用者訊息並鎖定聊天室執行；真實回覆、失敗與中斷均持久化。切換／關閉頁籤不刪除聊天室，也不取消正在執行的回覆。程序重新啟動後恢復聊天室與紀錄；未完成執行必須顯示中斷，不冒充完成。Codex thread 無法恢復時明確回報，不靜默換新 thread。保留完整訊息，壓縮不修改聊天原文。
 
 ### 驗證與證據
 
 UIUX／e2e：Chromium 經正式 sidebar 與頁籤操作，驗證建立、重複開啟、頁籤切換及重新載入，保存畫面與預期／實際對照。Integration：正式 SQLite migration／store 驗證持久化、排序、狀態與聊天室隔離。真實外部整合：Codex → adapter → Copilot → SQLite，驗證多輪與失敗，不以 mock 回覆冒充外部通過。驗收 HTML 沿用現有報告入口，分開列出自動結果、外部服務限制與畫面人工審閱狀態。新增的工具拒絕行為另有明確斷言。
+
+
+## 聊天串流（AC-WB-040）
+
+依使用者 2026-11-03 授權，移除聊天室短輪詢。主 owner 為 `src/application/chat.ts`，保留目前 AC-WB 身分規約。Copilot CLI `--stream on --output-format json` 的 `assistant.message_delta.data.deltaContent` 經 Responses SSE、Codex `item/agentMessage/delta` 傳到 ChatRuntime.onDelta。只傳助手文字，不傳 reasoning 或工具參數。CLI help 與本機 generate-json-schema、真實 CLI probe 核對格式。
+
+瀏覽器以 HTTP POST 送訊息，`GET /repository-api/v1/chat-events?roomId=...` 訂閱 SSE；相容 API 為 `/chat-events`。兩個 HTTP host 共用 `src/http/chat-stream.ts`。事件包含 revision；snapshot 提供聊天室清單及目前房間，delta 提供使用者訊息 ID、增量文字與 UTF-16 起始位置；只有快照傳累積文字，避免每個 token 重傳全部前綴。初始化與重連以一致 revision 快照恢復，完成或失敗則送出 SQLite 最新狀態。瀏覽器丟棄過期 revision，部分文字不另建完成訊息；服務重啟仍按既有規則將 pending 標記 interrupted。未完成文字只在服務記憶體，不保證跨服務重啟保存。
+
+慢速連線遇到寫入背壓即斷開，由 EventSource 重連取得快照；關閉連線解除訂閱，服務關閉先結束 SSE 再等待 HTTP 連線排空。同源讀取檢查沿用目前私有 loopback 部署；未新增認證或 CORS 例外。
+
+驗證 owner：`tests/chat-ui/chat.spec.mjs` 的 AC-WB-040 使用真實 CLI，保存 SSE 增量、順序、推論期間完整對話 GET 計數、UI 截圖及重載後結果。`tests/integration/chat-stream.test.ts` 使用受控 runtime 與真 SQLite、HTTP SSE 測試完成前送達、生成中重連、完成替換、失敗及 shutdown；不將其視為真實推論測試。視覺審閱 pending，無自動視覺 baseline。
+
+## 人工驗收與修改實作（AC-WB-041／042）
+
+使用者於 2026-11-03 批准上方直接顯示 Playwright 報告、下方一個驗收意見輸入及「LLM 修改實作／驗收通過」兩個動作。提案時暫用 040／041；登記前發現平行工作已將 040 指派給聊天串流，因此採用下一組未使用的 041／042。未更動或重用既有 canonical key，批准的行為不變。
+
+主 owner 為 `packages/workstation/workflow-state.mjs`、`acceptance.mjs` 與既有 SQLite authoring service。技術驗證維持由 sealed manifest 決定；完整通過進入 `VERIFICATION`／`AWAITING_ACCEPTANCE`，不自動完成。`workflow.accept` 只接受目前完整通過、沒有待修意見的報告，核對 run ID、manifest digest 及實際封存檔案後，與 workflow projection 在同一 SQLite revision CAS 交易保存 `spec/<requirement>/<feature>/acceptance.json`。紀錄包含確認者、時間、可空白意見及來源摘要；來源編輯 API 不可寫入此檔。舊報告、產品／來源變動及後續新意見不能沿用舊確認來完成流程；歷史確認與報告不刪除。
+
+`public/app.js` 直接顯示受隔離的 Playwright iframe，其他歷史報告收在下方。使用者另明確要求歷史報告也可展開看到 Playwright 報告：每筆封存報告在原位置各自展開，首次展開才驗證 manifest 並載入該 run／report key 的原生 HTML；收合再展開保留同一 iframe，不替換目前報告或改變驗收對象。需求歷史與規格庫驗收紀錄共用 `reportCard`，所有 iframe 由同一 `nativeReportFrame` 設定 sandbox。缺少原生報告或讀取失敗會顯示明確訊息。意見為修改所需、通過時可空白，切換功能時分別保留未送出的文字。「LLM 修改實作」以意見原文作為已審閱 Prompt，不再開另一個表單；仍取得並驗證既有派工摘要。在同一個 `workflow.develop` 作業中，先驗證來源修訂與報告身分、保存 feedback，再啟動真實 CLI／PTY。該作業本身即實作區的新互動，包含原文、狀態與終端輸出，不能只保存 feedback 冒充派工。既有安裝確認流程仍有效，重試保持原始意見並更新合法的派工摘要。自動測試產生新報告後重新等待人工驗收。
+
+驗收證據：`tests/chat-ui/acceptance.spec.mjs` 與 `tests/workstation/acceptance-fixture.mjs` 使用真正的 Spec Repo、產品 Git 版本、官方 Playwright-BDD runner／HTML reporter、健康檢查與真實 Codex CLI。041 先有舊實作互動與失敗報告，從畫面送出意見後驗證原文進入新互動、產品被修改、規格與測試不變、獨立 Playwright 重驗通過而仍待人工驗收。042 驗證已通過的真報告內嵌顯示、人工確認才完成，以及完整重啟後仍保留同一確認。HTML 附實際畫面、前後狀態、封存報告、實作作業與來源。`tests/workstation/acceptance.test.mjs` 的 sealed manifest 明確是狀態／拒絕契約 fixture，不宣稱模型推論或產品測試通過；另核對過期識別、跨需求、偽造檔案、失敗／不完整結果與重啟持久化。
+
+歷史展開驗證沿用 AC-WB-041 的歷史報告保留契約：`acceptance.spec.mjs` 以兩次真實獨立 Playwright 執行產生目前與歷史報告，從清單各自展開、核對 run URL 與原生報告內的實際通過案例，收合／重開不重複 iframe，上方目前報告與等待人工驗收狀態保持不變。這個子測試不呼叫模型，不冒充 LLM 修改驗證。
+
+
+## 統一 Agent／Skill 管理（AC-WB-043）
+
+授權來源：使用者批准「統一 SQLite 管理、生成時選擇」設計並要求實作及 Playwright 驗證。沿用本專案既有 AC-WB 身分規約與正式單一 UI，無 Rust crate owner；主要 owner 為 `packages/workstation/agent-catalog.mjs`，SQLite schema 接在既有 `store.mjs`（schema 11）。不修改人工 review hash 或 screenshot baseline。
+
+七張資料表分別管理 Agent、Agent 版本、Skill、Skill 版本、文字資源、預設技能順序與各規格庫／任務預設。遷移保存舊值，變更為新版本並檢查 expectedRevision。Skill 資源拒絕絕對路徑、跨目錄與重複；支援 UTF-8 文字，總量沿用 Skill 上限。資料庫為唯一 owner，派工工作區與 MCP task 是凍結版本的派生資料。
+
+四個任務共用前端 selector 與既有 `agentPreview`／`approvedAgentPrompt`。選項只傳版本 ID，工作台從 registry 解析、核對預覽摘要，再凍結到既有 operations.request_json。HTTP 不信任客戶端的 agentSnapshot。執行中的快照與資源不受後續編輯影響；更新或封存之後的舊選擇／預覽拒絕派工。新預設不會被單次選擇修改。原 embedded agent 欄位僅保留歷史／遷移用途。
+
+`tests/chat-ui/agent-catalog-driver.mjs` 為單一 e2e 行為 owner，供 Playwright 的 `agent-catalog.spec.mjs` 及 BDD steps 共用。checkpoint 依序：開啟隔離工作台、UI 新增 Agent／含資源 Skill 並設定預設、重啟保留、選擇及預覽、真實 Codex CLI Gherkin 生成、更新後拒絕舊預覽。核對 SQLite 資源原文、產出指定 Feature 名稱、operation 的不可變版本快照及 409。保留 UI 畫面、當次測試來源、派工請求及結果為 HTML 報告附件。`tests/workstation/agent-catalog.test.mjs` 額外驗證遷移只做一次、任務適用範圍、資源隔離、舊版本可讀、同步更新拒絕及重開資料庫保留。
+
+視覺 baseline 未定義；截圖供人工審閱，不自動授予視覺驗收。舊 BDD 工作台 harness 另有人工批准 hash 與已退役 UI 的前置條件，不更新人工批准以繞過它；正式入口採目前 Playwright 單一 UI suite 實際執行。
+
+
+## Agent 與 Prompt 拆分（AC-WB-044）
+
+使用者明確要求拆分並授權實作。`prompt-catalog.mjs` 為獨立 Prompt metadata／不可變版本／遷移 owner，模板變數與限制共用 `agent-settings.mjs` 的 validator。Schema 12 增加 Prompt 版本與任務預設引用，現有 Agent／operation 歷史原文不改寫；遷移備份與交易沿用 store owner。新 Agent 版本只存 command／args／maxAttempts／timeoutMs，不能再混入四種 Prompt 欄位。已凍結的舊快照仍走其歷史契約。
+
+同一 selector 分別輸出 agentRevisionId、promptRevisionId、skillRevisionIds，切換執行器不重設模板與技能。resolve 驗證三者為可用最新版本及適用任務；預覽 digest 包含三者快照。派工保存實際模板原文、版本與最終可編輯 Prompt，更新／封存不追溯影響舊工作。
+
+AC-WB-043 的共用真實 UI driver 同時覆蓋新增 Prompt、獨立 Agent 欄位、預設保留、切換另一 Agent 仍使用同一 Prompt／Skills、真實 Gherkin 生成、改 Prompt 後 409 且 Agent 版本數不增加。AC-WB-044 透過同一 driver checkpoints 接線，沒有第二份行為實作。`prompt-catalog.test.mjs` 核對 schema 11 遷移舊行與作業 JSON 不變、原文含空白保留、重開不重複遷移、同模板可重用、適用任務、缺少選擇、過期更新及封存拒絕。
+
+實際驗收仍使用正式單一 UI Playwright suite；HTML 附件保存畫面、派工與 SQLite 對照。未變更人工 review hash 或視覺 baseline；舊 BDD harness 的批准／已退役 UI 前置條件維持原狀。
+
+## 系統決策問答、文件模式與 Git Prompt seed（AC-WB-045／046）
+
+使用者授權：生成系統文件須將未決項目轉為 radio 問答且永遠有「其他」自訂輸入，答案保存到系統決策；生成後預覽，明確編輯，儲存及跨階段後回預覽；預設功能 Prompt 進 Git seed data。
+
+主 owner 為 `packages/spec-toolkit/design-decisions.mjs`，將結構化問答放在 `.sd.md` 中，沿用 SQLite 原文與 revision／SHA／review 鎖定機制，不新增平行設定。schema Version 1，question／option id 唯一，必須明確 answer:null 或合法答案；其他答案需非空 customText。模型新答案必須 null，前端程式永遠補 other，不將選項當已實作事實；重生成不得刪去舊問題或改寫已答語意。新生成缺少區塊為格式錯誤，零未決以 items:[] 表示。尚未回答時前端 disable 確認、後端 confirm owner 回 409；不放寬測試 handler 驗證。
+
+前端明確 preview／edit 狀態，預設及產生／儲存／重載／導航後為 preview。依使用者要求，文件編輯與儲存按鈕在同一控制列位置互斥：preview 僅顯示編輯，edit 僅顯示儲存；唯讀階段兩者均不顯示。模式由 design-view owner 提供，renderNext 沿用既有權限控制儲存可見性；問答區的儲存系統決策保留獨立操作。Markdown renderer 鎖定版本、raw HTML 關閉、sandbox iframe 不允許 scripts；問答使用原生 radio 與 text input，保留未儲存資料的既有導航保護。其他輸入尚空時保持題目未決。手寫編輯與問答共享 textarea 原文，儲存走同一 operation／SQLite 交易；選答案不等於簽署系統設計。
+
+單一瀏覽器 scenario driver `tests/chat-ui/design-decisions-driver.mjs` 同時供正式 Playwright suite 與 BDD steps；controlled PTY peer 僅驗證傳輸／UI，另跑真實 Codex CLI 生成。實測 checkpoints 包括初始預覽、生成多題／每題 other／無預選、保存未回答草稿及後端拒絕確認、其他及既有選項保存、重載保留、預覽草稿不寫 DB、儲存後回預覽、跨階段及腳本不執行。報告附同次畫面、當次測試來源與 SQLite 文件原文。無視覺 baseline，自動測試不代簽人工視覺審閱。
+
+`tests/workstation/design-decisions.test.mjs` 驗證 schema、其他必填、無效選項、重生成不代答／不刪舊決策、全部功能 seed 對應及自訂文字保留。Git seed 位於 `packages/workstation/seeds/prompts.json`，不把執行規則、API 密鑰或使用者自訂 Prompt 混入預設資料。新增共享模組也加入 TOOLKIT_FILES，確保派生 Spec Repo 使用相同確認門檻。人工批准 hash、golden 與 snapshot 不更新。
+
+
+## 對話模型清單與選擇（AC-WB-047）
+
+授權來源：使用者明確要求「對話應該要能取得模型清單、選擇模型」。沿用 `ChatSettings.model` 為唯一選擇來源，SQLite 保存且後續訊息沿用；Codex 仍保存、恢復與壓縮上下文，Copilot CLI 接收實際推論模型。選擇適用既有共用對話設定，不另建房間級或瀏覽器級設定。
+
+`ChatRuntime.models` → `copilot-models.ts` 使用官方 Copilot SDK stdio framing 及 `connect`、`auth.getStatus`、`models.list` RPC，沿用目前執行檔／參數、登入與逾時設定。只查目錄、不提交推論或執行客戶端工具；查詢程序受既有 process group、取消與 shutdown owner 管理。`GET /chat-models` 與正式工作台 `/repository-api/v1/chat-models` 沿用相同 service。非登入、錯誤格式、重複 ID、啟動／RPC／逾時失敗顯示錯誤；合法空陣列保持空，不從成本分類或固定模型名猜出可選清單。`auto` 為 CLI 明確支援的自動模式，不冒充具體可手選模型。
+
+`chat.js` 在輸入框下方的送出按鈕旁顯示模型 select，桌面與手機同列；開啟對話自動讀取模型清單，依使用者修正不顯示重新整理模型按鈕。模型與進階設定共用前端保存序列，使用同一設定 owner 的 `PATCH /chat-settings` 與 SQLite json_patch 原子更新指定欄位，保留並行變更的其他設定；保存模型時禁止送出訊息，回覆中不允許切換，失敗回到原選擇。舊設定的模型不在目錄時保留識別且明確標記，等待使用者自行選擇；目錄錯誤不靜默換模型。進階設定表單不再另有模型文字欄，保存設定時保留最新模型。
+
+`ChatModelsDriver` 的 catalog 協定 peer 明確是傳輸／UI fixture，不是模型推論：驗證非空模型可選、SQLite 保存、重載與刷新保留選擇、進階設定不覆蓋模型及桌面／手機排版。另一個 Playwright 情境直接查真實 Copilot CLI 並附原始回傳；目前環境已登入但目錄是空陣列，介面應明示而不偽造模型。`copilot-models.test.ts` 驗證非空／空／無效／重複／未登入、取消／shutdown，以及真 SQLite 下更換模型後下一則訊息取得新設定且原 thread 與歷史保留；受控 reply 僅測路由，不冒充模型回答。
+
+官方協定依據：https://github.com/github/copilot-sdk/blob/main/nodejs/src/client.ts 。`SessionModelList.modelPriceCategories` 明定只含價格中繼資料，未出現在可選清單者不能手選：https://github.com/github/copilot-sdk/blob/main/nodejs/src/generated/rpc.ts 。

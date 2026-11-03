@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "requirementId": "REQ-WB-001",
   "featurePath": "spec/REQ-WB-001/workbench/workbench.feature",
-  "featureSha256": "086f4d87c37a6f62a1043b9f56c445badb23b2c7562e97e1b05a28935d211834",
-  "scenarioCount": 38,
-  "expandedCaseCount": 58,
+  "featureSha256": "999aed1036975cf228be4cf195652250ddb6aaf782cc9db06a10fc4025adb6ca",
+  "scenarioCount": 42,
+  "expandedCaseCount": 62,
   "scenarioIds": [
     "AC-WB-001",
     "AC-WB-002",
@@ -43,27 +43,31 @@
     "AC-WB-035",
     "AC-WB-036",
     "AC-WB-037",
-    "AC-WB-038"
+    "AC-WB-038",
+    "AC-WB-039",
+    "AC-WB-040",
+    "AC-WB-041",
+    "AC-WB-042"
   ],
   "sdPath": "spec/REQ-WB-001/workbench/workbench.sd.md",
-  "sdVersion": "0.16",
-  "sdSha256": "b6a388a6426c7571e7981344da26a21668488b497432f5270d328607d24d809f",
+  "sdVersion": "0.19",
+  "sdSha256": "86a37d0a43209077945655bdefee56a161d9f270c4a5d27401aa7ecb20240c07",
   "sdStatus": "confirmed",
   "sdApproval": {
-    "sha256": "b6a388a6426c7571e7981344da26a21668488b497432f5270d328607d24d809f",
-    "source": "User authorized implementation and mandatory Playwright verification of AC-WB-036–038 on 2026-11-02. Implementation documentation corrects the owner to the existing npm start entry and records the shared schema/runtime; acceptance behavior is unchanged. User additionally required one-click new conversations without naming; titles derive from the first message."
+    "sha256": "86a37d0a43209077945655bdefee56a161d9f270c4a5d27401aa7ecb20240c07",
+    "source": "User explicitly approved the displayed AC-WB-039 Gherkin and design on 2026-11-03: Codex owns context and MCP execution, Copilot supplies structured tool requests, existing workstation service saves proposals, Playwright verifies API/SQLite/native tool evidence and restart continuity. Existing AC-WB-036–038 approvals remain in effect. AC-WB-040 streaming authorization is recorded in the canonical SD. User explicitly replied 批准 to the displayed manual acceptance Gherkin and design on 2026-11-03; its two scenarios were allocated AC-WB-041/042 because canonical AC-WB-040 was already assigned. Playwright report, verbatim implementation feedback through real CLI, preserved history, and explicit human completion are approved. User then explicitly requested that historical reports expand to show their own Playwright report; SD 0.19 records that requested rendering refinement of the existing AC-WB-041 history contract."
   },
   "documentBinding": {
     "requirementId": "REQ-WB-001",
     "featurePath": "spec/REQ-WB-001/workbench/workbench.feature",
-    "featureSha256": "086f4d87c37a6f62a1043b9f56c445badb23b2c7562e97e1b05a28935d211834",
+    "featureSha256": "999aed1036975cf228be4cf195652250ddb6aaf782cc9db06a10fc4025adb6ca",
     "sdPath": "spec/REQ-WB-001/workbench/workbench.sd.md",
-    "sdSha256": "b6a388a6426c7571e7981344da26a21668488b497432f5270d328607d24d809f",
+    "sdSha256": "86a37d0a43209077945655bdefee56a161d9f270c4a5d27401aa7ecb20240c07",
     "adrDirectory": "doc"
   },
   "featureStatus": "confirmed",
   "featureApproval": {
-    "sha256": "086f4d87c37a6f62a1043b9f56c445badb23b2c7562e97e1b05a28935d211834",
-    "source": "User authorized AC-WB-036–038 implementation and Playwright verification on 2026-11-02. The failure scenario uses a distinct equivalent Given phrase to meet the existing unique source-step registration contract."
+    "sha256": "999aed1036975cf228be4cf195652250ddb6aaf782cc9db06a10fc4025adb6ca",
+    "source": "User explicitly replied 批准 on 2026-11-03 to the displayed AC-WB-039 scenario and design. Existing scenarios and their approvals are preserved. Canonical SD records AC-WB-040 streaming authorization. The user explicitly approved the displayed manual acceptance scenarios on 2026-11-03; these are AC-WB-041/042 after avoiding the existing AC-WB-040 allocation."
   }
 }

@@ -1,12 +1,19 @@
+import {ChatModelsDriver} from '../../../tests/chat-ui/chat-models-driver.ts';
+import {ChatStreamDriver} from '../../../tests/chat-ui/chat-stream-driver.ts';
 import {world,detail,createRoom,send} from './chat.steps.ts';
-import { Given, When, Then } from './testing/support/fixtures.ts';
+import {ChatToolsDriver} from '../../../tests/chat-ui/chat-tools-driver.ts';
+import { Given, When, Then, test } from './testing/support/fixtures.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
-import {chromium,type Browser,type Page} from '@playwright/test';
+import {pathToFileURL} from 'node:url';
+import {chromium,expect,type Browser,type Page} from '@playwright/test';
 import {createServer} from '../../../src/http/server.ts';
 import type { SQLInputValue } from 'node:sqlite';
+const chatToolWorlds=new WeakMap<Page,ChatToolsDriver>();
+const chatToolEvidence=new WeakMap<Page,Awaited<ReturnType<ChatToolsDriver['proposalEvidence']>>>();
+function chatTools(page:Page){const driver=chatToolWorlds.get(page);if(!driver)throw Error('Workstation chat tool fixture is not open');return driver;}
 import { FixtureDatabase, sha } from './testing/support/database.ts';
 import { SelectionProbe } from './testing/support/selection.ts';
 import {resolveManagedPage} from './testing/support/managed.ts';
@@ -2996,3 +3003,114 @@ Then(/^同一聊天室有進行中的回覆時不接受重複送出$/, async ({s
 
   });
 });
+
+Given(/^隔離工作站已有唯一識別的規格庫且真實 Codex 與 Copilot 可用$/,async({sut,page})=>{
+ await sut.step(425,'Given',async()=>{
+  const driver=await ChatToolsDriver.open(page);chatToolWorlds.set(page,driver);
+  sut.addCleanup(async()=>{try{await driver.attach(test.info());}finally{await driver.close();chatToolWorlds.delete(page);chatToolEvidence.delete(page);}});
+ });
+});
+When(/^使用者要求查詢規格庫並產生指定內容的需求提案$/,async({sut,page})=>{
+ await sut.step(426,'When',async()=>{await chatTools(page).generate();});
+});
+Then(/^Codex 透過 MCP 查詢規格庫並呼叫工作站既有需求提案服務$/,async({sut,page})=>{
+ const expect=sut.check;
+ await sut.step(427,'Then',async()=>{
+  const evidence=await chatTools(page).proposalEvidence();chatToolEvidence.set(page,evidence);
+  const calls=evidence.tools.filter(r=>r.payload.type==='function_call');
+  expect(calls.map(r=>r.payload.name)).toEqual(expect.arrayContaining(['workbench_list_repositories','workbench_generate_requirement']));
+  for(const call of calls)expect(evidence.tools.some(r=>r.payload.type==='function_call_output'&&r.payload.call_id===call.payload.call_id&&r.metadata?.mcp_attribution?.status==='complete')).toBe(true);
+ });
+});
+Then(/^提案可從工作站 API 與 SQLite 核對且不自行確認需求階段$/,async({sut,page})=>{
+ const expect=sut.check;
+ await sut.step(428,'Then',async()=>{
+  const driver=chatTools(page),evidence=await driver.proposalEvidence();
+  expect(evidence.proposals).toHaveLength(1);expect(evidence.rows).toHaveLength(1);expect(evidence.proposals[0].description).toBe(driver.description);expect(evidence.rows[0].description).toBe(driver.description);expect(evidence.rows[0].id).toBe(evidence.proposals[0].id);expect(evidence.authoring).toEqual(driver.baseline);
+ });
+});
+When(/^工作站重啟後使用者追問提案$/,async({sut,page})=>{
+ await sut.step(429,'When',async()=>{await chatTools(page).restartAndAsk();});
+});
+Then(/^同一 Codex thread 能取得保存的提案並回答$/,async({sut,page})=>{
+ const expect=sut.check;
+ await sut.step(430,'Then',async()=>{
+  const driver=chatTools(page),before=chatToolEvidence.get(page)!;const after=await driver.proposalEvidence();
+  expect(after.room.thread_id).toBe(before.room.thread_id);expect(after.proposals).toEqual(before.proposals);expect(after.authoring).toEqual(driver.baseline);
+  expect(after.tools.filter(r=>r.payload.type==='function_call'&&r.payload.name==='workbench_get_requirement_proposals').length).toBeGreaterThan(0);
+  await expect(page.getByTestId('chat-message-assistant').last()).toContainText(before.proposals[0].id);await expect(page.getByTestId('chat-message-assistant').last()).toContainText(driver.description);
+ });
+});
+
+
+const streamWorlds=new WeakMap<Page,ChatStreamDriver>();
+const streamWorld=(page:Page)=>{const value=streamWorlds.get(page);if(!value)throw Error('Streaming driver is not initialized');return value;};
+Given(/^使用者已開啟聊天室且真實 Codex 與 Copilot 可用$/,async({page,sut})=>{
+ await sut.step(434,'Given',async()=>{const driver=await ChatStreamDriver.open(page);streamWorlds.set(page,driver);sut.addCleanup(async()=>{try{await driver.attach(test.info());}finally{await driver.close();streamWorlds.delete(page);}});});
+});
+When(/^使用者送出需要多段文字的訊息$/,async({page,sut})=>{await sut.step(435,'When',async()=>{await streamWorld(page).send();});});
+Then(/^回覆完成前 SSE 已傳送多筆真實文字增量$/,async({page,sut})=>{await sut.step(436,'Then',async()=>{await streamWorld(page).early();expect(await page.evaluate(()=>window.chatStreamEvidence.filter(e=>e.type==='delta'&&e.delta.length>0).length)).toBeGreaterThan(1);});});
+Then(/^推論期間前端不輪詢聊天室清單或完整對話$/,async({page,sut})=>{await sut.step(437,'Then',async()=>{await streamWorld(page).complete();expect(streamWorld(page).inferenceRequests).toEqual([]);});});
+Then(/^完成文字與 SQLite 保存內容一致且不重複顯示$/,async({page,sut})=>{await sut.step(438,'Then',async()=>{await expect(page.getByTestId('chat-message-assistant').locator('.chat-message-content')).toHaveText(streamWorld(page).answer);});});
+When(/^使用者重新連線聊天室$/,async({page,sut})=>{await sut.step(439,'When',async()=>{await streamWorld(page).reconnect();});});
+Then(/^快照恢復已保存訊息且不重複顯示$/,async({page,sut})=>{await sut.step(440,'Then',async()=>{await expect(page.getByTestId('chat-message-assistant')).toHaveCount(1);});});
+Then(/^推論失敗不建立假的完成回覆$/,async({page,sut})=>{await sut.step(441,'Then',async()=>{await streamWorld(page).failure();await expect(page.getByTestId('chat-message-assistant')).toHaveCount(1);});});
+
+type AcceptanceWorld={fixture:any;before:any;message:string;submitted?:any;observedImplementation?:boolean};
+const acceptanceWorlds=new WeakMap<Page,AcceptanceWorld>();
+function acceptanceWorld(page:Page){const value=acceptanceWorlds.get(page);if(!value)throw Error('Acceptance fixture is not open');return value;}
+async function openAcceptance(page:Page,sut:import('./testing/support/workbench.ts').Workbench,passed:boolean){
+ const {acceptanceFixture}=await import(pathToFileURL(resolve('tests/workstation/acceptance-fixture.mjs')).href);
+ const fixture=await acceptanceFixture({passed});
+ acceptanceWorlds.set(page,{fixture,before:(await fixture.current()).workflow,message:'請讀取 workbench MCP 任務與必要產物，依已確認規格修正產品。將產品 label.txt 的按鈕文字改為「登入」，保留換行；只修改該產品檔案，不變更需求、設計、測試或工作站設定。'});
+ sut.addCleanup(async()=>{try{await test.info().attach('人工驗收實際狀態',{body:JSON.stringify({before:acceptanceWorld(page).before,after:(await fixture.current()).workflow},null,2),contentType:'application/json'});}finally{await fixture.close();acceptanceWorlds.delete(page);}});
+ await page.goto(`${fixture.origin}/?repo=${fixture.repositoryId}&view=features&feature=REQ-001%2Flogin&stage=VERIFICATION`);
+}
+Given(/^使用者已在需求驗收頁開啟 Playwright 報告$/,async({page,sut})=>{await sut.step(445,'Given',async()=>{await openAcceptance(page,sut,false);await expect(page.getByRole('heading',{name:'Playwright 報告',exact:true})).toBeVisible();});});
+When(/^使用者輸入驗收意見並按下 LLM 修改實作$/,async({page,sut})=>{await sut.step(446,'When',async()=>{const w=acceptanceWorld(page);await page.getByRole('textbox',{name:'驗收意見',exact:true}).fill(w.message);await page.getByRole('button',{name:'LLM 修改實作',exact:true}).click();await expect(page.locator('#implementation-panel')).toBeVisible();w.observedImplementation=await page.locator('#implementation-panel').isVisible();});});
+Then(/^意見保存為實作區的一段新互動並交給既有 LLM 實作流程$/,async({page,sut})=>{await sut.step(447,'Then',async()=>{const w=acceptanceWorld(page);await expect(page.locator('#interaction-list')).toContainText(w.message);w.submitted=(await w.fixture.app.service.detail(w.fixture.repositoryId)).operations.find((o:any)=>o.request.operation==='workflow.develop'&&o.request.input.acceptanceFeedback);expect(w.submitted.request.input.prompt).toBe(w.message);});});
+Then(/^頁面回到實作區且保留既有互動與歷史報告$/,async({page,sut})=>{await sut.step(448,'Then',async()=>{const w=acceptanceWorld(page);expect(w.observedImplementation).toBe(true);expect(w.fixture.priorInteractions.length).toBeGreaterThan(0);const history=w.fixture.app.service.interactions(w.fixture.repositoryId,{type:'IMPLEMENTATION'}).entries;for(const prior of w.fixture.priorInteractions)expect(history.some((e:any)=>e.id===prior.id&&e.message===prior.message)).toBe(true);expect((await w.fixture.current()).workflow.reports.some((r:any)=>r.runId===w.fixture.initial.result.runId)).toBe(true);});});
+Then(/^需求仍未完成且新報告需要重新驗收$/,async({page,sut})=>{await sut.step(449,'Then',async()=>{const w=acceptanceWorld(page),result=await w.fixture.app.service.wait(w.submitted.id,180000);expect(result.status).toBe('SUCCEEDED');expect(result.result.testOutcome).toBe('PASSED');const after=(await w.fixture.current()).workflow;expect(after.status).toBe('AWAITING_ACCEPTANCE');expect(after.acceptance).toBeNull();await expect(page.locator('#acceptance-status')).toHaveText('等待人工驗收');});});
+Given(/^當前版本的完整驗證已通過且報告有效$/,async({page,sut})=>{await sut.step(453,'Given',async()=>{await openAcceptance(page,sut,true);expect(acceptanceWorld(page).before.verification).toBe('VERIFIED');});});
+Then(/^需求等待人工驗收且不因測試通過自動完成$/,async({page,sut})=>{await sut.step(454,'Then',async()=>{expect(acceptanceWorld(page).before.status).toBe('AWAITING_ACCEPTANCE');await expect(page.locator('#acceptance-status')).toHaveText('等待人工驗收');});});
+When(/^使用者按下驗收通過$/,async({page,sut})=>{await sut.step(455,'When',async()=>{await page.getByRole('button',{name:'驗收通過',exact:true}).click();await expect(page.locator('#acceptance-status')).toHaveText('驗收通過，流程已完成');});});
+Then(/^保存使用者對本次報告與版本的確認並結束流程$/,async({page,sut})=>{await sut.step(456,'Then',async()=>{const w=acceptanceWorld(page),after=(await w.fixture.current()).workflow;expect(after.status).toBe('COMPLETE');expect(after.acceptance.runId).toBe(w.before.latestReport.runId);expect(after.acceptance.manifestDigest).toBe(w.before.latestReport.manifestDigest);});});
+Then(/^重新載入後仍顯示完成$/,async({page,sut})=>{await sut.step(457,'Then',async()=>{const w=acceptanceWorld(page),url=page.url();await w.fixture.restart();await page.goto(url);await expect(page.locator('#acceptance-status')).toHaveText('驗收通過，流程已完成');expect((await w.fixture.current()).workflow.status).toBe('COMPLETE');});});
+
+const catalogScenarios=new WeakMap<Page,AsyncGenerator<{phase:string},void,unknown>>();
+async function catalogCheckpoint(page:Page,phase:string){const scenario=catalogScenarios.get(page);if(!scenario)throw Error('Catalog scenario is not initialized');const actual=await scenario.next();if(actual.done)throw Error('Catalog scenario ended before '+phase);expect(actual.value.phase).toBe(phase);}
+Given('已開啟隔離的 Agent 與 Skill 工作台',async({page,sut})=>{
+ const {agentCatalogScenario}=await import('../../../tests/chat-ui/agent-catalog-driver.mjs');const scenario=agentCatalogScenario(page,test.info());catalogScenarios.set(page,scenario);
+ sut.addCleanup(async()=>{try{await scenario.return();}finally{catalogScenarios.delete(page);}});await catalogCheckpoint(page,'opened');
+});
+When('使用者新增 Agent 與含文字資源的 Skill 並設定任務預設',async({page})=>{await catalogCheckpoint(page,'saved');});
+When('重啟工作台並重新載入管理頁',async({page})=>{await catalogCheckpoint(page,'restarted');});
+Then('原有設定與 Skill 資源保留於 SQLite',async({page})=>{await expect(page.getByRole('button',{name:'編輯 需求生成 Agent',exact:true})).toBeVisible();});
+When('使用者在 LLM 生成 Gherkin 選擇 Agent 與 Skills 並預覽',async({page})=>{await catalogCheckpoint(page,'previewed');});
+When('確認後執行真實 CLI 生成',async({page})=>{await catalogCheckpoint(page,'generated');});
+Then('生成結果符合所選技能且作業保存不可變版本快照',async({page})=>{await expect(page.getByRole('textbox',{name:'Gherkin',exact:true})).toHaveValue(/Catalog-/);});
+Then('設定更新後拒絕舊預覽且不改變既有派工快照',async({page})=>{await catalogCheckpoint(page,'stale-rejected');});
+
+Then('切換 Agent 後仍保留所選 Prompt 與 Skills',async({page})=>{
+ const dialog=page.getByRole('dialog');await expect(dialog.getByRole('combobox',{name:'Agent',exact:true}).locator('option:checked')).toHaveText('另一執行器 · v1');await expect(dialog.getByRole('combobox',{name:'Prompt',exact:true}).locator('option:checked')).toHaveText('需求 Prompt · v1');await expect(dialog.getByRole('checkbox',{name:'命名技能 · v1',exact:true})).toBeChecked();
+});
+
+const designScenarios=new WeakMap<Page,AsyncGenerator<{phase:string},void,unknown>>();
+async function designCheckpoint(page:Page,phase:string){const scenario=designScenarios.get(page);if(!scenario)throw Error('Design scenario is not initialized');const result=await scenario.next();if(result.done)throw Error('Design scenario ended before '+phase);expect(result.value.phase).toBe(phase);}
+Given('已開啟可生成系統文件的隔離工作台',async({page,sut})=>{
+ const {designDecisionScenario}=await import('../../../tests/chat-ui/design-decisions-driver.mjs');const scenario=designDecisionScenario(page,test.info(),{real:true});designScenarios.set(page,scenario);sut.addCleanup(async()=>{try{await scenario.return();}finally{designScenarios.delete(page);}});await designCheckpoint(page,'opened');
+});
+When('使用者生成包含未決項目的系統文件',async({page})=>{await designCheckpoint(page,'generated');});
+Then('每個未決項目提供單選選項與其他自訂輸入',async({page})=>{const groups=page.locator('#design-questions fieldset');for(let i=0;i<await groups.count();i++)await expect(groups.nth(i).getByRole('radio',{name:'其他',exact:true})).toHaveCount(1);});
+Then('尚未回答時無法確認系統設計',async({page})=>{await designCheckpoint(page,'gated');});
+When('使用者選擇其他或既有選項並儲存系統決策',async({page})=>{await designCheckpoint(page,'answered');});
+Then('重新載入後仍保留使用者的決策',async({page})=>{await expect(page.locator('#design-questions fieldset').first().getByRole('radio',{name:'其他',exact:true})).toBeChecked();});
+When('使用者切換文件編輯預覽儲存並跨階段返回',async({page})=>{await designCheckpoint(page,'modes');});
+Then('文件回到預覽且保留已儲存內容並互斥顯示編輯與儲存',async({page})=>{await expect(page.locator('#design-preview')).toBeVisible();await expect(page.locator('#source-editor')).toBeHidden();await expect(page.locator('#design-edit-button')).toBeVisible();await expect(page.locator('#save-source')).toBeHidden();});
+
+const modelWorlds=new WeakMap<Page,ChatModelsDriver>();
+const modelWorld=(page:Page)=>{const value=modelWorlds.get(page);if(!value)throw Error('Model driver is not initialized');return value;};
+Given(/^對話已取得 Copilot CLI 回傳的模型清單$/,async({page,sut})=>{const expect=sut.check;await sut.step(502,'Given',async()=>{const driver=await ChatModelsDriver.open(page);modelWorlds.set(page,driver);sut.addCleanup(async()=>{try{await driver.attach(test.info());}finally{await driver.close();modelWorlds.delete(page);}});await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toBeEnabled();});});
+When(/^使用者從對話模型選單選擇模型$/,async({page,sut})=>{const expect=sut.check;await sut.step(503,'When',async()=>{await modelWorld(page).select();});});
+Then(/^模型選擇保存於 SQLite 且重新載入仍保留$/,async({page,sut})=>{const expect=sut.check;await sut.step(504,'Then',async()=>{await modelWorld(page).persisted();await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toHaveValue('fixture-b');});});
+Then(/^重新整理模型清單不更動目前選擇$/,async({page,sut})=>{const expect=sut.check;await sut.step(505,'Then',async()=>{await modelWorld(page).refresh();await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toHaveValue('fixture-b');});});

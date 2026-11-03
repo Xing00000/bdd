@@ -27,7 +27,7 @@ export function generate(){
  fs.unlinkSync(nativePath);
  const converted=convert(raw,cases),specPath='spec/REQ-WB-001/workbench/workbench.feature.spec.ts';
  fs.mkdirSync(path.dirname(specPath),{recursive:true});fs.writeFileSync(specPath,converted.output);
- const files=['package.json','package-lock.json','playwright.config.ts','playwright.chat.config.ts','bdd.config.ts','tsconfig.json','playwright.negative.config.ts','spec/REQ-WB-001/workbench/chat.steps.ts','tests/chat-ui/chat.spec.mjs',reviewPath];
+ const files=['package.json','package-lock.json','playwright.config.ts','playwright.chat.config.ts','bdd.config.ts','tsconfig.json','playwright.negative.config.ts','spec/REQ-WB-001/workbench/chat.steps.ts','tests/chat-ui/chat.spec.mjs','tests/chat-ui/chat-tools-driver.ts','tests/chat-ui/chat-stream-driver.ts','tests/chat-ui/chat-models-driver.ts','tests/helpers/copilot-model-peer.ts','tests/chat-ui/acceptance.spec.mjs','tests/workstation/acceptance-fixture.mjs',reviewPath];
  const scan=dir=>{for(const e of fs.readdirSync(dir,{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())scan(f);else files.push(f);}};files.push('spec/REQ-WB-001/workbench/workbench.steps.ts','tests/integration/bdd-tooling.test.mjs');scan('spec/REQ-WB-001/workbench/testing');scan('tools/bdd');
  const implementationHashes=Object.fromEntries(files.sort().map(f=>[f,hash(fs.readFileSync(f))]));
  const analysis=analyze();

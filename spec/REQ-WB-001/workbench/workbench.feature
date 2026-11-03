@@ -419,3 +419,87 @@ Feature: 多人共用的BDD軟體開發工作台
     Then SQLite 保留已送出的使用者訊息與失敗狀態
     And 對話視窗顯示錯誤且不建立假助手回覆
     And 同一聊天室有進行中的回覆時不接受重複送出
+
+  @AC-WB-039
+  Scenario: 聊天透過 Codex 呼叫真實工作站能力
+    Given 隔離工作站已有唯一識別的規格庫且真實 Codex 與 Copilot 可用
+    When 使用者要求查詢規格庫並產生指定內容的需求提案
+    Then Codex 透過 MCP 查詢規格庫並呼叫工作站既有需求提案服務
+    And 提案可從工作站 API 與 SQLite 核對且不自行確認需求階段
+    When 工作站重啟後使用者追問提案
+    Then 同一 Codex thread 能取得保存的提案並回答
+
+  @AC-WB-040
+  Scenario: 聊天文字即時串流且斷線後可恢復
+    Given 使用者已開啟聊天室且真實 Codex 與 Copilot 可用
+    When 使用者送出需要多段文字的訊息
+    Then 回覆完成前 SSE 已傳送多筆真實文字增量
+    And 推論期間前端不輪詢聊天室清單或完整對話
+    And 完成文字與 SQLite 保存內容一致且不重複顯示
+    When 使用者重新連線聊天室
+    Then 快照恢復已保存訊息且不重複顯示
+    And 推論失敗不建立假的完成回覆
+
+  @AC-WB-041
+  Scenario: 驗收意見交給 LLM 修改實作
+    Given 使用者已在需求驗收頁開啟 Playwright 報告
+    When 使用者輸入驗收意見並按下 LLM 修改實作
+    Then 意見保存為實作區的一段新互動並交給既有 LLM 實作流程
+    And 頁面回到實作區且保留既有互動與歷史報告
+    And 需求仍未完成且新報告需要重新驗收
+
+  @AC-WB-042
+  Scenario: 使用者確認驗收後結束需求流程
+    Given 當前版本的完整驗證已通過且報告有效
+    Then 需求等待人工驗收且不因測試通過自動完成
+    When 使用者按下驗收通過
+    Then 保存使用者對本次報告與版本的確認並結束流程
+    And 重新載入後仍顯示完成
+
+  @AC-WB-043
+  Scenario: 統一管理 Agent 與 Skills 並選擇生成組合
+    Given 已開啟隔離的 Agent 與 Skill 工作台
+    When 使用者新增 Agent 與含文字資源的 Skill 並設定任務預設
+    And 重啟工作台並重新載入管理頁
+    Then 原有設定與 Skill 資源保留於 SQLite
+    When 使用者在 LLM 生成 Gherkin 選擇 Agent 與 Skills 並預覽
+    And 確認後執行真實 CLI 生成
+    Then 生成結果符合所選技能且作業保存不可變版本快照
+    And 設定更新後拒絕舊預覽且不改變既有派工快照
+
+  @AC-WB-044
+  Scenario: Agent、Prompt 與 Skills 分別選擇及版本管理
+    Given 已開啟隔離的 Agent 與 Skill 工作台
+    When 使用者新增 Agent 與含文字資源的 Skill 並設定任務預設
+    And 重啟工作台並重新載入管理頁
+    When 使用者在 LLM 生成 Gherkin 選擇 Agent 與 Skills 並預覽
+    Then 切換 Agent 後仍保留所選 Prompt 與 Skills
+    When 確認後執行真實 CLI 生成
+    Then 生成結果符合所選技能且作業保存不可變版本快照
+    And 設定更新後拒絕舊預覽且不改變既有派工快照
+
+  @AC-WB-045
+  Scenario: 系統文件未決項目由使用者回答並保存為決策
+    Given 已開啟可生成系統文件的隔離工作台
+    When 使用者生成包含未決項目的系統文件
+    Then 每個未決項目提供單選選項與其他自訂輸入
+    And 尚未回答時無法確認系統設計
+    When 使用者選擇其他或既有選項並儲存系統決策
+    Then 重新載入後仍保留使用者的決策
+
+  @AC-WB-046
+  Scenario: 系統文件生成與儲存後預覽並在跨階段後重設
+    Given 已開啟可生成系統文件的隔離工作台
+    When 使用者生成包含未決項目的系統文件
+    Then 每個未決項目提供單選選項與其他自訂輸入
+    And 尚未回答時無法確認系統設計
+    When 使用者選擇其他或既有選項並儲存系統決策
+    And 使用者切換文件編輯預覽儲存並跨階段返回
+    Then 文件回到預覽且保留已儲存內容並互斥顯示編輯與儲存
+
+  @AC-WB-047
+  Scenario: 從對話取得並選擇 Copilot 模型
+    Given 對話已取得 Copilot CLI 回傳的模型清單
+    When 使用者從對話模型選單選擇模型
+    Then 模型選擇保存於 SQLite 且重新載入仍保留
+    And 重新整理模型清單不更動目前選擇
