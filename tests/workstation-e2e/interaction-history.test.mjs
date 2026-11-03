@@ -43,10 +43,12 @@ test('LLM requests retain stage-scoped collapsible logs while saves stay absent 
   await expect(first.locator('.interaction-message')).toHaveText('First LLM request');await expect(second.locator('.interaction-message')).toHaveText('Second LLM request');
   await first.locator('summary').click();await expect(first.locator('details')).toHaveJSProperty('open',true);
   await expect(first.locator('.interaction-log')).toContainText('[FAILED]');await first.locator('summary').click();
-  await page.getByRole('button',{name:'2 系統設計',exact:true}).click();await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
+  await page.getByRole('button',{name:'1 需求確認',exact:true}).click();await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
+  await page.getByRole('button',{name:'確認需求並繼續',exact:true}).click();await expect(page.locator('#phase-title')).toHaveText('設計');await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   await expect(page.locator('#interaction-list > article')).toHaveCount(0);
+  await page.locator('#design-edit-button').click();
   await page.locator('#source-editor').fill('# A design save is not an LLM interaction');
-  const beforeDesign=await page.locator('#notice').getAttribute('data-job-id');await page.locator('#save-source').click();
+  const beforeDesign=await page.locator('#notice').getAttribute('data-job-id');await page.locator('#design-controls #save-source').click();
   await page.waitForFunction(previous=>document.querySelector('#notice').dataset.jobId!==previous,beforeDesign);
   await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   await expect(page.locator('#interaction-list > article')).toHaveCount(0);

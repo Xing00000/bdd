@@ -18,6 +18,8 @@ jobs:
   workstation:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /tmp/bdd-workstation-browsers
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +38,12 @@ jobs:
         run: npm run check:repository 2>&1 | tee verification/repository.log
       - name: Check workstation syntax
         run: node scripts/check-workstation.mjs 2>&1 | tee verification/syntax.log
+      - name: Install and build locked workstation and PTY dependencies
+        run: |
+          npm ci 2>&1 | tee verification/install.log
+          npm run build 2>&1 | tee verification/build.log
+      - name: Install browser used by test-plan lifecycle checks
+        run: node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee verification/browser-install.log
       - name: Test actual Git, processes, CLI and HTTP
         run: node --test tests/workstation/*.test.mjs 2>&1 | tee verification/tests.log
       - name: Preserve exact source and verification receipts
@@ -47,10 +55,46 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-  browser-acceptance:
-    needs: workstation
+  ui-protocol:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /tmp/bdd-ui-protocol-browsers
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install and build UI runtime
+        run: |
+          mkdir -p verification
+          npm ci 2>&1 | tee verification/ui-protocol-install.log
+          npm run build 2>&1 | tee verification/ui-protocol-build.log
+      - name: Install Chromium for actual UI checks
+        run: node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee verification/ui-protocol-browser-install.log
+      - name: Run browser and HTTP protocol checks without external provider accounts
+        run: npm run test:ui:protocol 2>&1 | tee verification/ui-protocol-tests.log
+      - name: Preserve UI reports and failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-ui-protocol-${{ github.sha }}
+          path: |
+            verification/ui-protocol-*.log
+            test-results/chat/
+            playwright-report/bdd/
+          retention-days: 3
+          if-no-files-found: error
+
+  browser-acceptance:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [ui-and-pty, workflow, regression, live-provider]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,19 +103,35 @@ jobs:
         with:
           node-version: '24'
       - name: Install application and PTY runtime
-        run: npm ci
+        run: npm ci && npm run build
       - name: Real browser and repository management acceptance
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
-          WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e
+          WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e/${{ matrix.suite }}
+          WB_TEST_ARTIFACTS: ${{ runner.temp }}/workstation-e2e/${{ matrix.suite }}
         run: |
           mkdir -p "$WB_E2E_ARTIFACTS"
-          node --test --test-concurrency=1 tests/workstation-e2e/*.test.mjs 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
+          node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-install.log"
+          qa_test_files=()
+          for qa_test_file in tests/workstation-e2e/*.test.mjs; do
+            case "$qa_test_file" in
+              */browser.test.mjs) qa_test_suite=workflow ;;
+              */regression.test.mjs) qa_test_suite=regression ;;
+              */design-generation.test.mjs|*/gherkin-generation.test.mjs) qa_test_suite=live-provider ;;
+              *) qa_test_suite=ui-and-pty ;;
+            esac
+            if [[ "$qa_test_suite" == "${{ matrix.suite }}" ]]; then
+              qa_test_files+=("$qa_test_file")
+            fi
+          done
+          test "${#qa_test_files[@]}" -gt 0
+          printf '%s\n' "${qa_test_files[@]}" > "$WB_E2E_ARTIFACTS/test-files.txt"
+          PATH="$PWD/node_modules/.bin:$PATH" node --test --test-concurrency=1 "${qa_test_files[@]}" 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
       - name: Preserve browser evidence and dependency receipts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: workstation-browser-${{ github.sha }}
+          name: workstation-browser-${{ matrix.suite }}-${{ github.sha }}
           path: ${{ runner.temp }}/workstation-e2e/
           retention-days: 3
           if-no-files-found: error
@@ -92,8 +152,8 @@ jobs:
         run: |
           mkdir -p verification
           npm ci 2>&1 | tee verification/application-install.log
-      - name: Rebuild legacy discovery from a clean source checkout
-        run: npm run spec:list 2>&1 | tee verification/legacy-discovery.log
+      - name: Discover maintained workstation browser tests
+        run: npm run spec:list 2>&1 | tee verification/browser-discovery.log
       - name: Reject unused production declarations
         run: npm run check:unused 2>&1 | tee verification/application-unused.log
       - name: Type check application
@@ -119,6 +179,6 @@ jobs:
           name: workstation-application-${{ github.sha }}
           path: |
             verification/application-*.log
-            verification/legacy-discovery.log
+            verification/browser-discovery.log
           retention-days: 3
           if-no-files-found: error

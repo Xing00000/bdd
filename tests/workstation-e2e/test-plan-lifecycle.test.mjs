@@ -29,9 +29,9 @@ test('passed stages are read-only; returning from test plan clears its contents 
   const go=stage=>page.goto(`${origin}/repositories?repo=SPEC-ui&view=features&feature=REQ-001%2Freader&stage=${stage}`);
   await go('GHERKIN');await expect(page.locator('#requirement-gherkin')).toHaveAttribute('readonly','');
   await expect(page.locator('#save-requirement')).toBeHidden();
-  await go('SD');await expect(page.locator('#source-editor')).toBeEditable();
+  await go('SD');await expect(page.locator('#design-preview')).toBeVisible();await page.locator('#design-edit-button').click();await expect(page.locator('#source-editor')).toBeEditable();
   await expect(page.locator('#advance')).toHaveText('確認系統設計');
-  await expect(page.locator('#source-actions #save-source')).toBeVisible();await expect(page.locator('#source-actions #advance')).toBeVisible();
+  await expect(page.locator('#design-controls #save-source')).toBeVisible();await expect(page.locator('#source-actions #advance')).toBeVisible();
   const layout=await page.locator('#source-editor').evaluate(node=>({client:node.clientHeight,scroll:node.scrollHeight}));assert.ok(layout.client>=layout.scroll,'The document must expand to display all lines');
   const artifacts=process.env.WB_TEST_ARTIFACTS??path.join(os.tmpdir(),'bdd-test-plan-ui');await mkdir(artifacts,{recursive:true});
   await page.screenshot({path:path.join(artifacts,'design-expanded.png'),fullPage:true});
@@ -45,7 +45,7 @@ test('passed stages are read-only; returning from test plan clears its contents 
   await expect(page.locator('#complete-test-plan')).toHaveText('LLM 生成測試計劃');
   await expect(page.locator('#complete-test-plan')).toBeVisible();await expect(page.locator('#generate-test-plan')).toBeHidden();
   await page.locator('#restart-stage').click();
-  await expect(page.locator('#phase-title')).toHaveText('設計');await expect(page.locator('#source-editor')).toBeEditable();
+  await expect(page.locator('#phase-title')).toHaveText('設計');await page.locator('#design-edit-button').click();await expect(page.locator('#source-editor')).toBeEditable();
   assert.equal((await service.readFile('SPEC-ui','tests/REQ-001/reader/reader.steps.ts')).content,'');
   assert.equal((await service.readFile('SPEC-ui','tests/REQ-001/reader/reader.hooks.ts')).content,'');
   await go('TESTS');await expect(page.locator('#source-editor')).toHaveValue('');await expect(page.locator('#source-editor')).toHaveAttribute('readonly','');

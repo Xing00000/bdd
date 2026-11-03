@@ -681,7 +681,7 @@ on('#upload-requirement','click',()=>$('#requirement-file').click());
 on('#requirement-file','change',importDocument);
 on('#requirement-description','input',composerChanged);on('#requirement-gherkin','input',composerChanged);
 on('#generate-gherkin','click',generateGherkin);on('#save-requirement','click',saveRequirement);
-on('#feature-select','change',()=>navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'}));on('#save-source','click',saveSource);on('#advance','click',advance);
+on('#feature-select','change',async()=>{try{await navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'});}finally{$('#feature-select').value=state.featureKey??'';}});on('#save-source','click',saveSource);on('#advance','click',advance);
 on('#acceptance-opinion','input',()=>{acceptanceDrafts.set(acceptanceKey(),$('#acceptance-opinion').value);renderAcceptanceActions();});on('#request-implementation-changes','click',requestImplementationChanges);on('#accept-requirement','click',acceptRequirement);
 on('#source-select','change',async()=>{const value=$('#source-select').value;if(await guard())await openSource(value);});
 on('#generate-design','click',generateDesign);on('#generate-test-plan','click',generateTestPlan);on('#complete-test-plan','click',completeTestPlan);on('#restart-stage','click',restartStage);
@@ -811,7 +811,7 @@ const terminalView=operationTerminal({api,note,onInteractions:entries=>{for(cons
 const interactionLog=interactionHistory({api,labels,getType:currentHistoryType,getKey:currentHistoryKey,getRepositoryId:()=>state.repositoryId,onReset:()=>terminalView.leave()});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
-const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:renderNext});
+const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:()=>{resizeWorkflowEditor($('#source-editor'));renderNext();}});
 const catalogView=agentCatalogView({api,el,button,note,ask,onDirty:()=>{state.formDirty=true;},onSaved:()=>{state.formDirty=false;}});
 on('#open-agent-manager','click',()=>navigate({view:'agents',repositoryId:null,featureKey:null,projectId:null}));
 const chat=chatRoomsView({api,el,button,navigate:id=>navigate({view:'chat',chatId:id}),workspace:()=>navigate({view:'features'}),note});

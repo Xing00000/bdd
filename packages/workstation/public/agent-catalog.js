@@ -32,13 +32,15 @@ export function agentCatalogView({api,el,button,note,ask,onDirty,onSaved}){
   const heading=el('div',undefined,'page-heading');heading.append(el('h1','Agent、Prompt 與 Skill 管理'));root.append(heading,el('p','統一保存可重用的設定。每次儲存建立新版本，已派工的內容不受影響。','muted'));
   const toolbar=el('div',undefined,'toolbar'),list=el('div',undefined,'catalog-list'),editor=el('section',undefined,'panel catalog-editor'),layout=el('div',undefined,'catalog-layout');layout.append(list,editor);root.append(toolbar,layout);
   const run=fn=>async()=>{try{await fn();}catch(error){note(error.message,true);}};
-  let editingDirty=false,defaultsDirty=false;const syncDirty=()=>{if(editingDirty||defaultsDirty)onDirty();else onSaved();};editor.oninput=()=>{editingDirty=true;syncDirty();};editor.onchange=editor.oninput;
+  let editingDirty=false,defaultsDirty=false,editorVersion=0;const syncDirty=()=>{if(editingDirty||defaultsDirty)onDirty();else onSaved();};editor.oninput=()=>{editingDirty=true;syncDirty();};editor.onchange=editor.oninput;
   const edit=async(kind,item)=>{
    if(editingDirty&&!await ask('尚未儲存的設定','切換項目會捨棄編輯內容。','捨棄並切換'))return;
    editingDirty=false;syncDirty();
-   const revision=item?.revisions[0];editor.replaceChildren(el('h2',`${item?'編輯':'新增'} ${kind==='agents'?'Agent':kind==='prompts'?'Prompt':'Skill'}`));
+   const version=++editorVersion,current=()=>version===editorVersion&&editor.isConnected&&!root.hidden;
+   let revision=item?.revisions[0],saving=false;
+   const editorTitle=el('h2');editor.replaceChildren(editorTitle);
    const form=el('form'),name=input('名稱',item?.name??''),description=input('說明',item?.description??'','textarea');name.control.required=true;form.append(name.wrapper,description.wrapper);
-   let fields={},skills,body,purposes,files=[];
+   let fields={},body,purposes,files=[];
    if(kind==='agents'){
     const settings=revision?.settings??catalog.template;
     for(const [key,label,type] of [['command','CLI 執行檔','text'],['args','CLI 參數（每行一個）','textarea'],['maxAttempts','最大嘗試次數','number'],['timeoutMs','逾時毫秒','number']]){const field=input(label,key==='args'?settings.args.join('\n'):settings[key],type);fields[key]=field.control;form.append(field.wrapper);}
@@ -56,21 +58,83 @@ export function agentCatalogView({api,el,button,note,ask,onDirty,onSaved}){
     form.append(importSkill.wrapper,upload.wrapper,resourceList,el('p','資源支援 UTF-8 文字檔，以相對路徑保存；透過本次唯讀任務 MCP 提供給 Agent，不會自動執行。','muted'));
    }
    const actions=el('div',undefined,'inline-actions'),save=el('button','儲存新版本');save.type='submit';actions.append(save);
-   const submit=async archived=>{
-    const data={...(item?{id:item.id,expectedRevision:revision.id}:{}),name:name.control.value,description:description.control.value,archived};
+   const readDraft=()=>{
+    const data={name:name.control.value,description:description.control.value};
     if(kind==='agents'){data.settings=Object.fromEntries(Object.entries(fields).map(([key,n])=>[key,key==='args'?n.value.split('\n').filter(Boolean):['timeoutMs','maxAttempts'].includes(key)?Number(n.value):n.value]));}
-    else{data.content=body.control.value;data.purposes=[...purposes.querySelectorAll('input:checked')].map(n=>n.value);if(kind==='skills')data.resources=files;}
-    const saved=await api('/agent-catalog/'+kind,'POST',data);await load();editingDirty=false;syncDirty();drawList();await edit(kind,catalog[kind].find(x=>x.id===saved.id));note('已保存新版本');
+    else{data.content=body.control.value;data.purposes=[...purposes.querySelectorAll('input:checked')].map(n=>n.value);if(kind==='skills')data.resources=files.map(file=>({...file}));}
+    return data;
    };
-   if(item)actions.append(button(item.archived?'重新啟用':'封存',run(()=>submit(!item.archived))));
-   form.append(actions);form.onsubmit=event=>{event.preventDefault();save.disabled=true;void run(()=>submit(Boolean(item?.archived)))().finally(()=>save.disabled=false);};editor.append(form);
-   if(item){const history=el('details');history.append(el('summary','版本紀錄'));for(const old of item.revisions){const detail=el('details');detail.append(el('summary',`v${old.version} · ${old.created_at}`),el('pre',JSON.stringify(kind==='agents'?{settings:old.settings}:kind==='prompts'?{content:old.content,purposes:old.purposes}:{content:old.content,resources:old.resources},null,2)));history.append(detail);}editor.append(history);}
+   const submit=async archived=>{
+    if(saving||!current())return;
+    const submitted=readDraft(),signature=JSON.stringify(submitted);
+    saving=true;save.disabled=true;archive.disabled=true;
+    try{
+     const saved=await api('/agent-catalog/'+kind,'POST',{...(item?{id:item.id,expectedRevision:revision.id}:{}),...submitted,archived});
+     if(current()){
+      // Keep the live fields and continue from the exact version this request saved.
+      // A newer draft must not be replaced or linked to another editor's revision.
+      item=saved;revision=saved.revisions[0];editingDirty=JSON.stringify(readDraft())!==signature;syncDirty();renderMetadata();
+      note(editingDirty?'已保存提交的新版本；後續編輯尚未儲存。':'已保存新版本');
+     }
+     try{await load();if(list.isConnected&&!root.hidden)drawList();}
+     catch(error){if(current())note('新版本已保存；重新整理清單失敗：'+error.message,true);}
+    }finally{saving=false;save.disabled=false;archive.disabled=false;}
+   };
+   const archive=button('封存',run(()=>submit(!item.archived)));actions.append(archive);
+   const history=el('details');
+   const renderMetadata=()=>{
+    editorTitle.textContent=`${item?'編輯':'新增'} ${kind==='agents'?'Agent':kind==='prompts'?'Prompt':'Skill'}`;
+    archive.hidden=!item;archive.textContent=item?.archived?'重新啟用':'封存';history.hidden=!item;history.replaceChildren(el('summary','版本紀錄'));
+    for(const old of item?.revisions??[]){const detail=el('details');detail.append(el('summary',`v${old.version} · ${old.created_at}`),el('pre',JSON.stringify(kind==='agents'?{settings:old.settings}:kind==='prompts'?{content:old.content,purposes:old.purposes}:{content:old.content,resources:old.resources},null,2)));history.append(detail);}
+   };
+   form.append(actions);form.onsubmit=event=>{event.preventDefault();return run(()=>submit(Boolean(item?.archived)))();};editor.append(form,history);renderMetadata();
   };
   const drawList=()=>{list.replaceChildren();for(const [kind,label] of [['agents','Agents'],['prompts','Prompts'],['skills','Skills']]){const section=el('section',undefined,'panel');section.append(el('h2',label));for(const item of catalog[kind]){const row=el('div',undefined,'catalog-row');row.append(el('div',`${item.name} · v${item.revisions[0].version}${item.archived?' · 已封存':''}`),button('編輯 '+item.name,()=>edit(kind,item)));section.append(row);}if(!catalog[kind].length)section.append(el('p','尚無項目','muted'));list.append(section);}};
   toolbar.append(button('新增 Agent',()=>edit('agents')),button('新增 Prompt',()=>edit('prompts')),button('新增 Skill',()=>edit('skills')));drawList();editor.append(el('p','選擇一個項目編輯，或新增 Agent／Prompt／Skill。','muted'));
   const defaults=el('section',undefined,'panel'),repoLabel=el('label','規格庫任務預設'),repoSelect=el('select'),defaultsBody=el('div');repoSelect.setAttribute('aria-label','規格庫任務預設');repoSelect.append(new Option('選擇規格庫',''));for(const repo of repositories)repoSelect.append(new Option(repo.title,repo.id));repoLabel.append(repoSelect);defaults.append(el('h2','各任務的預設組合'),repoLabel,defaultsBody);root.append(defaults);
-  let defaultsRepository='';defaultsBody.onchange=()=>{defaultsDirty=true;syncDirty();};
-  repoSelect.onchange=run(async()=>{if(defaultsDirty&&!await ask('尚未儲存的任務預設','切換規格庫會捨棄尚未儲存的選擇。','捨棄並切換')){repoSelect.value=defaultsRepository;return;}defaultsRepository=repoSelect.value;defaultsDirty=false;syncDirty();defaultsBody.replaceChildren();if(!repoSelect.value)return;const repositoryId=repoSelect.value;for(const purpose of catalog.purposes){const selection=await selector(repositoryId,purpose),section=el('section',undefined,'catalog-default');section.append(el('h3',title[purpose]),selection.root,button('儲存 '+title[purpose]+' 預設',run(async()=>{await api(`/spec-repositories/${repositoryId}/agent-defaults`,'PUT',{purpose,...selection.value()});defaultsDirty=false;syncDirty();note('任務預設已保存');})));defaultsBody.append(section);}});
+  let defaultsRepository='',defaultsRequest=0;
+  const selections=new Map(),signature=selection=>JSON.stringify(selection.value());
+  const updateDefaultsDirty=()=>{
+   defaultsDirty=[...selections.values()].some(entry=>{
+    const value=signature(entry.selection);
+    return value!==entry.saved||(entry.pending!==null&&value!==entry.pending);
+   });
+   syncDirty();
+  };
+  repoSelect.onchange=run(async()=>{
+   const repositoryId=repoSelect.value;
+   if(defaultsDirty){
+    const discard=await ask('尚未儲存的任務預設','切換規格庫會捨棄尚未儲存的選擇。','捨棄並切換');
+    if(!discard){repoSelect.value=defaultsRepository;return;}
+   }
+   const request=++defaultsRequest;
+   defaultsRepository=repositoryId;selections.clear();defaultsDirty=false;syncDirty();defaultsBody.replaceChildren();
+   if(!repositoryId)return;
+   const current=()=>request===defaultsRequest&&defaultsBody.isConnected&&!root.hidden;
+   defaultsBody.setAttribute('aria-busy','true');
+   try{
+    for(const purpose of [...catalog.purposes]){
+     const selection=await selector(repositoryId,purpose);
+     if(!current())return;
+     const entry={selection,saved:signature(selection),pending:null},section=el('section',undefined,'catalog-default');
+     selections.set(purpose,entry);selection.root.onchange=updateDefaultsDirty;
+     const save=button('儲存 '+title[purpose]+' 預設',run(async()=>{
+      const value=selection.value();entry.pending=JSON.stringify(value);save.disabled=true;updateDefaultsDirty();
+      try{
+       await api(`/spec-repositories/${repositoryId}/agent-defaults`,'PUT',{purpose,...value});
+       if(!current())return;
+       entry.saved=JSON.stringify(value);note('任務預設已保存');
+      }finally{
+       entry.pending=null;save.disabled=false;if(current())updateDefaultsDirty();
+      }
+     }));
+     section.append(el('h3',title[purpose]),selection.root,save);defaultsBody.append(section);
+    }
+    // Loading repository defaults may create its seed Agent and Prompt records.
+    // Keep management controls in sync without requiring a second page visit.
+    drawList();
+   }finally{if(current())defaultsBody.setAttribute('aria-busy','false');}
+  });
  }
  return {selector,render};
 }

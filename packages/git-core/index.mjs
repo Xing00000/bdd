@@ -92,7 +92,11 @@ export function remoteUrl(value, { allowLocal = false, hosts = ['github.com'] } 
   return value;
 }
 export function processEnvironment(extra = {}, { git = false } = {}) {
-  const env = { PATH: process.env.PATH, LANG: 'C.UTF-8', CI: 'true', ...extra };
+  const temporary = {};
+  // Keep the host's writable temporary location when sanitizing worker environments.
+  // Execution-specific scratch directories in extra still take precedence.
+  for (const key of ['TMPDIR', 'TMP', 'TEMP']) if (process.env[key]) temporary[key] = process.env[key];
+  const env = { PATH: process.env.PATH, LANG: 'C.UTF-8', CI: 'true', ...temporary, ...extra };
   if (git) {
     for (const key of ['HOME', 'USERPROFILE', 'SSH_AUTH_SOCK', 'SYSTEMROOT']) if (process.env[key]) env[key] = process.env[key];
     Object.assign(env, { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull,

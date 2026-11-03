@@ -154,7 +154,7 @@ export async function registerRepositoryRoutes(app, options) {
   };
   for (const route of [...assets.keys(),'/repositories/markdown-it.js','/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: `${prefix}/mcp/progress`, handler });
-  app.route({ method: ['GET', 'POST','PUT'], url: `${prefix}/*`, handler });
+  app.route({ method: ['GET', 'POST', 'PUT', 'PATCH'], url: `${prefix}/*`, handler });
   app.addHook('onClose', async () => service.close());
   return service;
 }

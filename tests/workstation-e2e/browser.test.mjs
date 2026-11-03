@@ -113,8 +113,27 @@ const server=http.createServer((request,response)=>{
     await job(d.getByRole('button',{name:'安裝並繼續',exact:true}),'repository.tools.prepare');await expect(d).not.toBeVisible();
     if(withProduct)await tab('需求流程');await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();return new URL(page.url()).searchParams.get('repo');
   }
-  async function configureFixtureAgent(){await tab('設定');await page.getByLabel('CLI Agent 執行檔',{exact:true}).fill(process.execPath);await page.getByLabel('CLI Agent 參數',{exact:true}).fill(`${agentFile}\n{task}\n{prompt}`);await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.tools.prepare');await tab('需求流程');}
-  async function editSource(content){await ready();await page.getByRole('textbox',{name:'規格測試原始碼',exact:true}).fill(content);await job(page.getByRole('button',{name:'儲存',exact:true}),'repository.save');}
+  async function configureFixtureAgent(){
+    const repositoryId=new URL(page.url()).searchParams.get('repo'),repositoryTitle=await page.locator('#repository-title').textContent(),name=`UI Fixture ${repositoryId}`;
+    await click('Agent、Prompt 與 Skill 管理');await page.getByRole('button',{name:'新增 Agent',exact:true}).click();
+    const editor=page.locator('.catalog-editor');
+    await editor.getByRole('textbox',{name:'名稱',exact:true}).fill(name);
+    await editor.getByRole('textbox',{name:'CLI 執行檔',exact:true}).fill(process.execPath);
+    await editor.getByRole('textbox',{name:'CLI 參數（每行一個）',exact:true}).fill(`${agentFile}\n{task}\n{prompt}`);
+    await editor.getByRole('spinbutton',{name:'最大嘗試次數',exact:true}).fill('3');
+    await editor.getByRole('button',{name:'儲存新版本',exact:true}).click();
+    await expect(page.getByRole('button',{name:'編輯 '+name,exact:true})).toBeVisible();
+    await page.getByRole('combobox',{name:'規格庫任務預設',exact:true}).selectOption(repositoryId);await expect(page.locator('.catalog-default')).toHaveCount(4);
+    for(const purpose of ['Gherkin','系統設計','測試計劃','實作']){
+      const section=page.locator('.catalog-default').filter({has:page.getByRole('heading',{name:purpose,exact:true})});
+      await section.getByRole('combobox',{name:'Agent',exact:true}).selectOption({label:name+' · v1'});
+      const saved=page.waitForResponse(response=>response.url().endsWith(`/spec-repositories/${repositoryId}/agent-defaults`)&&response.request().method()==='PUT');
+      const submit=section.getByRole('button',{name:'儲存 '+purpose+' 預設',exact:true});await submit.click();
+      const response=await saved;assert.equal(response.ok(),true,await response.text());await expect(submit).toBeEnabled();
+    }
+    await click('開啟規格庫 '+repositoryTitle);
+  }
+  async function editSource(content){await ready();if(await page.locator('#design-edit-button').isVisible())await page.locator('#design-edit-button').click();await page.getByRole('textbox',{name:'規格測試原始碼',exact:true}).fill(content);await job(page.locator('#save-source'),'repository.save');}
   // Every workstation write below is an actual UI event. Git is used only to
   // assert persisted/remote facts, never to complete a missing UI workflow step.
   await page.goto(site);await expect(page.getByRole('heading',{name:'工作台',exact:true})).toBeVisible();
@@ -158,7 +177,6 @@ const server=http.createServer((request,response)=>{
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
   // Revisit settings without publishing any content; the automatically acquired checkout is unchanged.
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
-  await page.getByLabel('CLI Agent 執行檔',{exact:true}).fill(process.execPath);await page.getByLabel('CLI Agent 參數',{exact:true}).fill(`${agentFile}\n{task}\n{prompt}`);
   await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.tools.prepare');
   assert.equal(await exists(savedRoot),true);
   await tab('需求流程');await expect(page.locator('#phase-title')).toHaveText('需求');

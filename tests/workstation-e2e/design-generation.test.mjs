@@ -16,6 +16,7 @@ test('real CLI system design previews, generates into the editor and retains SD 
   await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${app.server.address().port}`;
   const browser=await chromium.launch();t.after(()=>browser.close());const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(`${origin}/?repo=${repositoryId}&view=features&feature=REQ-001%2Freader&stage=SD`);await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
+  await expect(page.locator('#design-preview')).toBeVisible();await page.locator('#design-edit-button').click();
   const editor=page.locator('#source-editor'),button=page.getByRole('button',{name:'LLM 生成系統文件',exact:true}),draft='# 原稿\n\n現有設計須保留人類審閱流程。\n';await editor.fill(draft);await button.click();
   const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();await expect(dialog.getByRole('textbox',{name:'派工 Prompt',exact:true})).toHaveValue(/workbench_get_task/);
   await dialog.getByRole('button',{name:'取消',exact:true}).click();assert.equal(app.service.interactions(repositoryId,{type:'SD'}).entries.length,0);await expect(editor).toHaveValue(draft);
@@ -24,6 +25,6 @@ test('real CLI system design previews, generates into the editor and retains SD 
   await expect(page.locator('#development-terminal .xterm')).toBeVisible({timeout:15000});await expect(page.locator('#content')).toHaveAttribute('aria-busy','false',{timeout:140000});
   const operation=(await app.service.detail(repositoryId)).operations.find(o=>o.request.operation==='workflow.design.generate');assert.equal(operation.status,'SUCCEEDED',JSON.stringify(operation.error));assert.equal(operation.request.input.previousDesign,draft);assert.equal(operation.request.input.prompt,prompt);
   const generated=await editor.inputValue();assert.match(generated,/^#\s+\S/m);assert.notEqual(generated,draft);assert.equal((await app.service.readFile(repositoryId,file.path)).content,file.content);await expect(page.locator('#editor-state')).toHaveText('尚未儲存');
-  await page.locator('#save-source').click();await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');assert.equal((await app.service.readFile(repositoryId,file.path)).content,generated);assert.equal((await app.service.detail(repositoryId)).spec.features[0].review.confirmed.sd,false);
+  await page.locator('#design-edit-button').click();await page.locator('#design-controls #save-source').click();await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');assert.equal((await app.service.readFile(repositoryId,file.path)).content,generated);assert.equal((await app.service.detail(repositoryId)).spec.features[0].review.confirmed.sd,false);
   await page.reload();await expect(editor).toHaveValue(generated);await expect(page.locator(`[data-interaction-id="${operation.id}"]`)).toBeVisible();await expect(page.locator('#development-terminal .xterm')).toBeVisible();assert.deepEqual(errors,[]);
 });
