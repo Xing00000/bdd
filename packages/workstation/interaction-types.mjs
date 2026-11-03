@@ -1,5 +1,5 @@
 import {interactionTypes} from '../contracts/schemas.mjs';
-import {invariant} from '../contracts/index.mjs';
+import {invariant,id} from '../contracts/index.mjs';
 
 const stages={gherkin:'GHERKIN',sd:'SD',tests:'TESTS'};
 const reviewType=value=>typeof value==='string'&&Object.hasOwn(stages,value)?stages[value]:'SYSTEM';
@@ -38,4 +38,16 @@ export function interactionType(request,parentType) {
   if(request.interactionType!==undefined){invariant(interactionTypes.includes(request.interactionType),'INVALID_INTERACTION_TYPE','Invalid interaction type');return request.interactionType;}
   if(request.operation==='workflow.restart')return reviewType(input.stage);
   return 'SYSTEM';
+}
+
+/** Stable owner: saved feature key or the isolated new-requirement editor key. */
+export function validateInteractionKey(key){
+  invariant(typeof key==='string'&&key.length<=180&&/^(?:new-[A-Za-z0-9-]+|[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)$/.test(key),'INVALID_INTERACTION_KEY','需求歷程識別無效。');
+  return key;
+}
+export function interactionKey(request,parentKey){
+  const input=request.input??{};
+  if(input.parentOperationId)return parentKey??null;
+  if(input.requirementId&&input.featureId)return `${id(input.requirementId)}/${id(input.featureId)}`;
+  return input.editorKey===undefined?null:validateInteractionKey(input.editorKey);
 }

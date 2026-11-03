@@ -6,7 +6,7 @@ import { existsSync, chmodSync } from 'node:fs';
 import { normalizeStoredRequest } from './migrate.mjs';
 import { invariant, identity, errorResult } from '../contracts/index.mjs';
 import {installProgressSchema,appendExecutionLog} from '../git-core/progress-store.mjs';
-import {interactionType,llmInteractionPredicate} from './interaction-types.mjs';
+import {interactionType,interactionKey,validateInteractionKey,llmInteractionPredicate} from './interaction-types.mjs';
 import {interactionTypes} from '../contracts/schemas.mjs';
 const messageFields=['prompt','description','message','content','title','name'];
 const interactionMessage=request=>messageFields.map(field=>request.input?.[field]).find(value=>typeof value==='string')??'';
@@ -105,10 +105,23 @@ export function openStore(home) {
   if(!db.prepare('PRAGMA table_info(operations)').all().some(column=>column.name==='interaction_type'))db.exec('ALTER TABLE operations ADD COLUMN interaction_type TEXT');
   const typeFor=request=>interactionType(request,request.input?.parentOperationId?db.prepare('SELECT interaction_type FROM operations WHERE id=?').get(request.input.parentOperationId)?.interaction_type:undefined);
   for(const row of db.prepare('SELECT id,request_json FROM operations WHERE interaction_type IS NULL ORDER BY rowid').iterate())db.prepare('UPDATE operations SET interaction_type=? WHERE id=?').run(typeFor(JSON.parse(row.request_json)),row.id);
+  if(!db.prepare('PRAGMA table_info(operations)').all().some(column=>column.name==='interaction_key'))db.exec('ALTER TABLE operations ADD COLUMN interaction_key TEXT');
+  for(const row of db.prepare(`SELECT id,request_json,result_json FROM operations WHERE interaction_key IS NULL AND ${llmInteractionPredicate()} ORDER BY rowid`).all())db.prepare('UPDATE operations SET interaction_key=? WHERE id=?').run(keyFor(JSON.parse(row.request_json),row.result_json?JSON.parse(row.result_json):null),row.id);
+  db.exec('CREATE INDEX IF NOT EXISTS interactions_by_feature ON operations(repository_id,interaction_key,interaction_type)');
   db.exec(`DROP INDEX IF EXISTS one_writer_per_repository; CREATE UNIQUE INDEX one_writer_per_repository ON operations(repository_id) WHERE status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate};`);
   db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
-  const decode = row => row ? { ...row,isLlmInteraction:Boolean(row.isLlmInteraction),interactionType:row.interaction_type, request: JSON.parse(row.request_json), result: row.result_json ? JSON.parse(row.result_json) : null, error: row.error_json ? JSON.parse(row.error_json) : null } : null;
+  function keyFor(request,result){
+    const parent=request.input?.parentOperationId?db.prepare('SELECT interaction_key FROM operations WHERE id=? AND repository_id=?').get(request.input.parentOperationId,request.repositoryId):null;
+    let key=interactionKey(request,parent?.interaction_key);
+    if(key?.startsWith('new-')){
+      const proposal=result?.proposalId?db.prepare('SELECT editor_key FROM requirement_proposals WHERE id=? AND repository_id=?').get(result.proposalId,request.repositoryId):null;
+      const saved=db.prepare("SELECT json_extract(history.result_json,'$.key') key FROM authoring_history history JOIN operations saved ON saved.id=history.operation_id AND saved.repository_id=history.repository_id AND saved.request_hash=history.request_hash WHERE history.repository_id=? AND json_extract(saved.request_json,'$.operation')='workflow.requirement.save' AND json_extract(saved.request_json,'$.input.editorKey')=? ORDER BY history.revision DESC LIMIT 1").get(request.repositoryId,key);
+      key=proposal?.editor_key??saved?.key??key;
+    }
+    return key;
+  }
+  const decode = row => row ? { ...row,isLlmInteraction:Boolean(row.isLlmInteraction),interactionType:row.interaction_type,interactionKey:row.interaction_key, request: JSON.parse(row.request_json), result: row.result_json ? JSON.parse(row.result_json) : null, error: row.error_json ? JSON.parse(row.error_json) : null } : null;
   const operationColumns=`*,${llmInteractionPredicate()} isLlmInteraction`;
   const get = operationId => decode(db.prepare(`SELECT ${operationColumns} FROM operations WHERE id=?`).get(operationId));
   const atomic=callback=>{const own=!db.isTransaction;if(own)db.exec('BEGIN IMMEDIATE');try{const result=callback();if(own)db.exec('COMMIT');return result;}catch(error){if(own)db.exec('ROLLBACK');throw error;}};
@@ -177,14 +190,15 @@ export function openStore(home) {
     setSyncReceipt(repositoryId, receipt) { db.prepare('UPDATE repository_preferences SET sync_json=? WHERE repository_id=?').run(JSON.stringify(receipt),repositoryId); },
     get,
     operations(repositoryId) { return db.prepare(`SELECT ${operationColumns} FROM operations WHERE repository_id=? ORDER BY created_at DESC LIMIT 100`).all(repositoryId).map(decode); },
-    interactions(repositoryId,{before,limit=20,type}={}) {
+    interactions(repositoryId,{before,limit=20,type,key}={}) {
       invariant(Number.isInteger(limit)&&limit>=1&&limit<=50&&(before===undefined||Number.isSafeInteger(before)&&before>0),'INVALID_HISTORY_CURSOR','Invalid history cursor');
       invariant(type===undefined||interactionTypes.includes(type),'INVALID_INTERACTION_TYPE','Invalid interaction type');
+      if(key!==undefined)validateInteractionKey(key);
       const message=`COALESCE(${messageFields.map(field=>`json_extract(request_json,'$.input.${field}')`).join(',')},'')`;
-      const rows=db.prepare(`SELECT rowid cursor,id,repository_id repositoryId,status,created_at createdAt,finished_at finishedAt,interaction_type interactionType,1 isLlmInteraction,
+      const rows=db.prepare(`SELECT rowid cursor,id,repository_id repositoryId,status,created_at createdAt,finished_at finishedAt,interaction_type interactionType,interaction_key interactionKey,1 isLlmInteraction,
         json_extract(request_json,'$.operation') operation,substr(${message},1,2000) message,length(${message})>2000 messageTruncated,
         json_extract(request_json,'$.input.requirementId') requirementId,json_extract(request_json,'$.input.featureId') featureId,json_extract(request_json,'$.input.parentOperationId') parentOperationId,
-        json_extract(error_json,'$.message') error FROM operations WHERE repository_id=? AND ${llmInteractionPredicate()} AND (? IS NULL OR rowid<?) AND (? IS NULL OR interaction_type=?) ORDER BY rowid DESC LIMIT ?`).all(repositoryId,before??null,before??null,type??null,type??null,limit+1);
+        json_extract(error_json,'$.message') error FROM operations WHERE repository_id=? AND ${llmInteractionPredicate()} AND (? IS NULL OR rowid<?) AND (? IS NULL OR interaction_type=?) AND (? IS NULL OR interaction_key=?) ORDER BY rowid DESC LIMIT ?`).all(repositoryId,before??null,before??null,type??null,type??null,key??null,key??null,limit+1);
       const hasMore=rows.length>limit;return {entries:rows.slice(0,limit),nextCursor:hasMore?rows[limit-1].cursor:null};
     },
     interaction(operationId){const operation=get(operationId);invariant(operation,'OPERATION_NOT_FOUND','Operation not found',404);return {id:operationId,message:interactionMessage(operation.request)};},
@@ -200,8 +214,8 @@ export function openStore(home) {
         const busy = requiresRepositoryLock(request) && db.prepare(`SELECT id FROM operations WHERE repository_id=? AND status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate}`).get(request.repositoryId);
         invariant(!busy, 'REPOSITORY_BUSY', `Spec repository has an active operation ${busy?.id ?? ''}`, 409);
         const type=interactionType(request,request.input?.parentOperationId?get(request.input.parentOperationId)?.interaction_type:undefined);
-        db.prepare("INSERT INTO operations(id,repository_id,request_hash,request_json,status,created_at,interaction_type) VALUES(?,?,?,?,'QUEUED',?,?)")
-          .run(request.operationId, request.repositoryId, hash, JSON.stringify(request), new Date().toISOString(),type);
+        db.prepare("INSERT INTO operations(id,repository_id,request_hash,request_json,status,created_at,interaction_type,interaction_key) VALUES(?,?,?,?,'QUEUED',?,?,?)")
+          .run(request.operationId, request.repositoryId, hash, JSON.stringify(request), new Date().toISOString(),type,keyFor(request));
         appendExecutionLog(db,request.operationId,`[QUEUED] ${request.operation}\n`);
         db.exec('COMMIT'); return get(request.operationId);
       } catch (error) { db.exec('ROLLBACK'); throw error; }

@@ -179,3 +179,9 @@ The acceptance view renders original reporter scenario/step data and attachment 
 邏輯刪除的 canonical owner 是 `spec/{requirementId}/{featureId}/feature.yaml` 的可選 `deletedAt` 時戳，先透過 SQLite authoring transaction 儲存。原文件、測試、審閱紀錄與報告保留；`scan()` 預設排除已刪除功能，`includeDeleted` 僅供識別碼保留、完整性檢查與歷史用途。`assertFeatureActive()` 阻擋已刪除功能的編輯、退回與確認，runner 亦拒絕執行。
 
 `workflow.delete` 要求人類確認的功能 key 與目前 authoring revision，並取得和開發、驗收相同的 repository writer lock；普通儲存仍可進行，revision CAS 防止誤刪新內容。刪除不移除原始檔案，也不提供自動還原。刪除交易透過現有 hash-verified toolkit upgrade 一併更新規格庫工具至 1.7.0，確保輸出後的 CLI 同樣理解刪除狀態；客製或被修改的工具必須先人工處理，不能靜默覆寫。
+
+## 互動歷程的需求歸屬
+
+`operations.interaction_key` 是互動歸屬的持久化 owner：已儲存需求使用 `{requirementId}/{featureId}`，未儲存需求使用其獨立的 `new-*` editor key。CLI 回覆只繼承同規格庫原作業的歸屬。首次儲存需求時，既有草稿互動與回覆在同一 authoring transaction 轉綁正式需求，不改寫不可變 request 或其 hash。
+
+開啟資料庫時，舊紀錄只按明確需求識別、原作業與保存收據／提案關聯補齊。無法證明歸屬的舊紀錄不會被指派給目前需求。歷程 API 在 SQL 依規格庫、需求 key、階段與 cursor 篩選；前端切換需求會清除舊卡片與終端，拒絕不同選取或較早查詢的回應。

@@ -70,7 +70,10 @@ export function draftMethods(db) {
         db.prepare(`INSERT INTO repository_preferences(repository_id,settings_json) VALUES(?,?) ON CONFLICT(repository_id)
           DO UPDATE SET settings_json=excluded.settings_json`).run(repositoryId,JSON.stringify(value));
         db.prepare('INSERT INTO authoring_history VALUES(?,?,?,?,?,?,?,?)').run(repositoryId,revision,operationId,identity(request),JSON.stringify([...files,...deleteFiles.map(f=>({...f,deleted:true}))]),JSON.stringify(value),JSON.stringify(receipt),at);
-        if(proposalKey && result.key) db.prepare('UPDATE requirement_proposals SET editor_key=? WHERE repository_id=? AND editor_key=?').run(result.key,repositoryId,proposalKey);
+        if(proposalKey && result.key){
+          db.prepare('UPDATE requirement_proposals SET editor_key=? WHERE repository_id=? AND editor_key=?').run(result.key,repositoryId,proposalKey);
+          db.prepare('UPDATE operations SET interaction_key=? WHERE repository_id=? AND interaction_key=?').run(result.key,repositoryId,proposalKey);
+        }
         db.exec('COMMIT'); return receipt;
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },

@@ -70,7 +70,7 @@ export async function dispatch(service, request) {
     if (method === 'GET') result = service.list();
     else if (method === 'POST') { result = service.register(input); status = 201; }
   } else if (parts[0] === 'spec-repositories' && parts.length === 2 && method === 'GET') result = await service.detail(id(parts[1]));
-  else if (parts[0] === 'spec-repositories' && parts[2] === 'interactions' && parts.length === 3 && method === 'GET') result = service.interactions(id(parts[1]),{before:url.searchParams.has('before')?Number(url.searchParams.get('before')):undefined,limit:url.searchParams.has('limit')?Number(url.searchParams.get('limit')):20,type:url.searchParams.get('type')??undefined});
+  else if (parts[0] === 'spec-repositories' && parts[2] === 'interactions' && parts.length === 3 && method === 'GET') result = service.interactions(id(parts[1]),{before:url.searchParams.has('before')?Number(url.searchParams.get('before')):undefined,limit:url.searchParams.has('limit')?Number(url.searchParams.get('limit')):20,type:url.searchParams.get('type')??undefined,key:url.searchParams.get('key')??undefined});
   else if (parts[0] === 'spec-repositories' && parts[2] === 'agent-preview' && parts.length === 3 && method === 'POST') result = await service.agentPreview(id(parts[1]),input);
   else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts.length === 3 && method === 'GET') result = await service.requirement(id(parts[1]), id(url.searchParams.get('requirementId')), id(url.searchParams.get('featureId')));
   else if (parts[0] === 'spec-repositories' && parts[2] === 'requirement' && parts[3] === 'generate' && parts.length === 4 && method === 'POST') result = service.generateRequirement(id(parts[1]), input);
