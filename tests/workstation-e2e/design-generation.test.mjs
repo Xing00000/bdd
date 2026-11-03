@@ -1,0 +1,29 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chromium,expect} from '@playwright/test';
+import {fixture,toolkitRoot,testBrowserRoot} from '../workstation/helpers.mjs';
+import {createStandaloneServer} from '../../packages/workstation/http.mjs';
+
+test('real CLI system design previews, generates into the editor and retains SD terminal history',{timeout:180000},async t=>{
+  const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,autoAcquire:false,allowLocal:true,enableExecution:true});t.after(()=>app.close());
+  const repositoryId='SPEC-design-ui',ids={requirementId:'REQ-001',featureId:'reader'};app.service.register({id:repositoryId,title:'Design UI',remoteUrl:f.remote});let sequence=0;
+  const job=async(operation,input)=>{const operationId=`OP-design-ui-${++sequence}`;app.service.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});const result=await app.service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));return result;};
+  await job('repository.setup',{reviewer:'UI verification',projects:[],agent:{timeoutMs:120000}});await job('workflow.create',{...ids,title:'Reader'});
+  const gherkinFile=await app.service.readFile(repositoryId,'spec/REQ-001/reader/reader.feature');
+  await job('repository.save',{kind:'source',path:gherkinFile.path,expectedHash:gherkinFile.sha256,content:'Feature: 閱讀文件\n  使用者可以閱讀已儲存文件。\n\n  @case:CASE-001\n  Scenario: 閱讀文件內容\n    Given 使用者已開啟文件清單\n    When 使用者選擇一份已儲存文件\n    Then 畫面顯示該文件內容\n'});
+  const feature=(await app.service.detail(repositoryId)).spec.features[0];await job('workflow.review',{...ids,stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
+  const file=await app.service.readFile(repositoryId,'spec/REQ-001/reader/reader.sd.md');
+  await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${app.server.address().port}`;
+  const browser=await chromium.launch();t.after(()=>browser.close());const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(`${origin}/?repo=${repositoryId}&view=features&feature=REQ-001%2Freader&stage=SD`);await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
+  const editor=page.locator('#source-editor'),button=page.getByRole('button',{name:'LLM 生成系統文件',exact:true}),draft='# 原稿\n\n現有設計須保留人類審閱流程。\n';await editor.fill(draft);await button.click();
+  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();await expect(dialog.getByRole('textbox',{name:'派工 Prompt',exact:true})).toHaveValue(/workbench_get_task/);
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();assert.equal(app.service.interactions(repositoryId,{type:'SD'}).entries.length,0);await expect(editor).toHaveValue(draft);
+  await button.click();const prompt='Generate a concise system design draft. Read workbench_get_task and workbench_read_artifact, then follow the task output path and rules. Preserve the original text. Briefly cover responsibilities, data flow, implementation and verification; use a few sentences per section, without reproducing source artifacts.';
+  await dialog.getByRole('textbox',{name:'派工 Prompt',exact:true}).fill(prompt);await dialog.getByRole('button',{name:'送出',exact:true}).click();
+  await expect(page.locator('#development-terminal .xterm')).toBeVisible({timeout:15000});await expect(page.locator('#content')).toHaveAttribute('aria-busy','false',{timeout:140000});
+  const operation=(await app.service.detail(repositoryId)).operations.find(o=>o.request.operation==='workflow.design.generate');assert.equal(operation.status,'SUCCEEDED',JSON.stringify(operation.error));assert.equal(operation.request.input.previousDesign,draft);assert.equal(operation.request.input.prompt,prompt);
+  const generated=await editor.inputValue();assert.match(generated,/^#\s+\S/m);assert.notEqual(generated,draft);assert.equal((await app.service.readFile(repositoryId,file.path)).content,file.content);await expect(page.locator('#editor-state')).toHaveText('尚未儲存');
+  await page.locator('#save-source').click();await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');assert.equal((await app.service.readFile(repositoryId,file.path)).content,generated);assert.equal((await app.service.detail(repositoryId)).spec.features[0].review.confirmed.sd,false);
+  await page.reload();await expect(editor).toHaveValue(generated);await expect(page.locator(`[data-interaction-id="${operation.id}"]`)).toBeVisible();await expect(page.locator('#development-terminal .xterm')).toBeVisible();assert.deepEqual(errors,[]);
+});

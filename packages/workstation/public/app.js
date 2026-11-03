@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded',()=>{ document.querySelector('#sett
 const stages = [
   ['GHERKIN','需求確認','需求'],['SD','系統設計','設計'],['TESTS','測試計劃','測試'],['IMPLEMENTATION','開發實作','開發'],['VERIFICATION','驗收','驗收']
 ];
-const labels = { 'workflow.gherkin.generate':'LLM 生成 Gherkin', 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
+const labels = { 'workflow.design.generate':'LLM 生成系統文件', 'workflow.gherkin.generate':'LLM 生成 Gherkin', 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
 Object.assign(labels,{'interaction.requirement.generate':'產生 Gherkin','interaction.document.import':'匯入文件'});
 labels['interaction.cli.input']='CLI 回覆';
 labels['interaction.cancel']='停止作業';
@@ -122,7 +122,7 @@ async function refresh() {
 const activeOperation = status => ['QUEUED','RUNNING','CANCELLING'].includes(status);
 let actionVersion=0;
 const beginAction=()=>++actionVersion;
-const cliOperations = new Set(['workflow.gherkin.generate','repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
+const cliOperations = new Set(['workflow.design.generate','workflow.gherkin.generate','repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
 function currentHistoryType(){return state.view==='features'?state.stage:({projects:'PROJECTS',reports:'REPORTS',versions:'VERSIONS',settings:'SETTINGS'}[state.view]??'SYSTEM');}
 let terminalSession = null, terminalTimer;
 function showOperation(op) {
@@ -342,6 +342,7 @@ function renderNext() {
   sourceActions.append($('#save-source'));
   (stage==='GHERKIN'?$('#requirement-buttons'):sourceActions).append(advance);
   $('#generate-test-plan').hidden=f?.authoringOnly||!f?.review.confirmed.sd||f.testPlan.ready||!['SD','TESTS'].includes(stage);
+  $('#generate-design').hidden=stage!=='SD'||!editable.sd||!f?.review.confirmed.gherkin;
   $('#complete-test-plan').hidden=f?.authoringOnly||stage!=='TESTS'||!editable.tests||!f?.testPlan.ready;
   $('#restart-stage').hidden=!f||!kind||stage==='GHERKIN'&&!f.review.records.gherkin;
   $('#restart-stage').textContent=editable[kind]&&stage!=='GHERKIN'?'退回上階段':'退回此階段修改';
@@ -457,6 +458,17 @@ async function generateTestPlan() {
   const f=feature();if(!f)return;
   const result=await flow('workflow.tests.generate',{requirementId:f.requirementId,featureId:f.id});
   if(result)await navigate({stage:result.nextStage},{protect:false});
+}
+async function generateDesign() {
+  const f=feature(),editor=state.editor;if(!f||!editor||state.stage!=='SD')return;
+  const source={previousDesign:$('#source-editor').value};
+  const approved=await previewAgent('design',source);if(!approved)return;
+  const repositoryId=state.repositoryId,epoch=state.epoch;
+  const result=await flow('workflow.design.generate',{requirementId:f.requirementId,featureId:f.id,...source,...approved},{refreshAfter:false});
+  if(!result||repositoryId!==state.repositoryId||epoch!==state.epoch||state.editor!==editor)return;
+  if(result.path!==editor.path)throw new Error('系統文件生成路徑不符，請查看執行紀錄。');
+  $('#source-editor').value=result.content;$('#editor-state').textContent='尚未儲存';resizeWorkflowEditor($('#source-editor'));
+  note('LLM 已生成系統文件，請審閱後儲存。');block();await interactionLog.load(repositoryId);
 }
 async function completeTestPlan() {
   if(state.editor&&($('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content))await saveSource();
@@ -601,7 +613,7 @@ on('#requirement-description','input',composerChanged);on('#requirement-gherkin'
 on('#generate-gherkin','click',generateGherkin);on('#save-requirement','click',saveRequirement);
 on('#feature-select','change',()=>navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'}));on('#save-source','click',saveSource);on('#advance','click',advance);on('#report-problem','click',reportProblem);
 on('#source-select','change',async()=>{const value=$('#source-select').value;if(await guard())await openSource(value);});
-on('#generate-test-plan','click',generateTestPlan);on('#complete-test-plan','click',completeTestPlan);on('#restart-stage','click',restartStage);
+on('#generate-design','click',generateDesign);on('#generate-test-plan','click',generateTestPlan);on('#complete-test-plan','click',completeTestPlan);on('#restart-stage','click',restartStage);
 on('#source-editor','input',()=>{resizeWorkflowEditor($('#source-editor'));$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});on('#project-editor','input',()=>{$('#product-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
 on('#hook-editor','input',()=>{resizeWorkflowEditor($('#hook-editor'));$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
 on('#save-project','click',saveProduct);on('#project-settings','click',()=>navigate({view:'settings'}));

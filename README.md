@@ -29,7 +29,9 @@ npm start
 
 修改需求描述不會覆蓋 Gherkin。重新生成前的原稿與 CLI 生成提案保存在 SQLite 生成歷史，可以還原。「儲存」以同一筆 SQLite 交易保存描述及手動編輯的完整 Gherkin；未完成或格式有錯的草稿也可先存，只有「確認需求並繼續」才阻擋不完整規格。
 
-支援 UTF-8 TXT、Markdown、Gherkin 與 DOCX（1 MiB 內），提取文字放入需求描述；目前不支援 PDF、掃描圖片或舊 DOC。CLI 產出會經官方 Cucumber parser 與格式檢查後保存為提案，仍需人類審閱及儲存。需求、測試計劃與開發階段共用同一種互動終端，每次派工與終端 Enter 都保留獨立的 SQLite 留言與 log；實際測試接線及完整 discovery 仍在測試階段驗證。
+支援 UTF-8 TXT、Markdown、Gherkin 與 DOCX（1 MiB 內），提取文字放入需求描述；目前不支援 PDF、掃描圖片或舊 DOC。CLI 產出會經官方 Cucumber parser 與格式檢查後保存為提案，仍需人類審閱及儲存。需求、系統設計、測試計劃與開發階段共用同一種互動終端，每次派工與終端 Enter 都保留獨立的 SQLite 留言與 log；實際測試接線及完整 discovery 仍在測試階段驗證。
+
+系統設計頁的「LLM 生成系統文件」同樣先預覽 Prompt，再派出 CLI。CLI 透過 MCP 讀取已確認需求與目前文件，生成後放入編輯區供審閱、儲存，不會自動確認設計；失敗時保留原稿。
 
 ## 日常操作
 
