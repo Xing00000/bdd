@@ -30,6 +30,7 @@ process.stdin.setEncoding('utf8');process.stdin.on('data',x=>console.log('INPUT:
 const result=spawnSync(process.execPath,[${JSON.stringify(path.join(toolkitRoot,'scripts/mcp-agent-task.mjs'))},process.argv[2]],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'workbench_get_task',arguments:{}}})+'\\n',encoding:'utf8'});
 if(result.status!==0)throw Error(result.stderr);
 const task=JSON.parse(result.stdout).result.structuredContent;
+if(task.purpose==='gherkin'){const {artifacts}=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const {generateRequirement}=await import('/Users/xing/Desktop/projects/bdd/packages/workstation/requirements.mjs');fs.writeFileSync(task.output,generateRequirement(artifacts['requirement-description.txt']).gherkin);console.log('CLI fixture generated Gherkin');process.exit(0);}
 if(task.feedback.some(item=>item.message.includes('feedback-pty-fixture'))){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');console.log('Agent saved agent-fixed.txt');}
 setTimeout(()=>process.exit(0),2500);
 `);
@@ -80,7 +81,7 @@ const server=http.createServer((request,response)=>{
   page.on('pageerror',e=>browserErrors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().startsWith(site))events.push({url:new URL(r.url()).pathname,body:r.postDataJSON()});});
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   const click=async name=>{await page.getByRole('button',{name,exact:true}).click();await ready();};
-  async function job(locator,name,outcome='SUCCEEDED') { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();if(name==='workflow.develop'){await expect(page.getByRole('dialog')).toContainText('預覽 CLI Prompt');await page.getByRole('dialog').getByRole('button',{name:'送出',exact:true}).click();}await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
+  async function job(locator,name,outcome='SUCCEEDED') { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();if(['workflow.develop','workflow.gherkin.generate'].includes(name)){await expect(page.getByRole('dialog')).toContainText('預覽 CLI Prompt');await page.getByRole('dialog').getByRole('button',{name:'送出',exact:true}).click();}await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
   async function repositoryMenu(){if(!await page.locator('#sidebar').isVisible())await page.locator('#menu-toggle').click();const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();return group;}
   async function tab(name){const group=await repositoryMenu();await group.getByRole('button',{name,exact:true}).click();await expect(page.locator(`.repo-nav.active + .repository-group [data-view="${({'需求流程':'features','專案':'projects','驗收紀錄':'reports','設定':'settings'})[name]}"]`)).toHaveAttribute('aria-current','page');await ready();}
   async function bind(title,url,withProduct=false) {
@@ -107,6 +108,7 @@ const server=http.createServer((request,response)=>{
     await job(d.getByRole('button',{name:'安裝並繼續',exact:true}),'repository.tools.prepare');await expect(d).not.toBeVisible();
     if(withProduct)await tab('需求流程');await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();return new URL(page.url()).searchParams.get('repo');
   }
+  async function configureFixtureAgent(){await tab('設定');await page.getByLabel('CLI Agent 執行檔',{exact:true}).fill(process.execPath);await page.getByLabel('CLI Agent 參數',{exact:true}).fill(`${agentFile}\n{task}\n{prompt}`);await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.tools.prepare');await tab('需求流程');}
   async function editSource(content){await ready();await page.getByRole('textbox',{name:'規格測試原始碼',exact:true}).fill(content);await job(page.getByRole('button',{name:'儲存',exact:true}),'repository.save');}
   // Every workstation write below is an actual UI event. Git is used only to
   // assert persisted/remote facts, never to complete a missing UI workflow step.
@@ -114,7 +116,9 @@ const server=http.createServer((request,response)=>{
   const alpha=await bind('Alpha 規格庫',remotes.alpha,true),beta=await bind('Beta 規格庫',remotes.beta);assert.notEqual(alpha,beta);
   for(const remote of [remotes.alpha,remotes.beta])assert.equal((await git.command(undefined,['--git-dir',remote,'show-ref'],{allowFailure:true})).exitCode,1,'Setup must not upload');
   await tab('專案');await expect(page.getByText('此規格庫尚未設定專案來源。',{exact:true})).toBeVisible();
+  await configureFixtureAgent();
   await click('開啟規格庫 Alpha 規格庫');
+  await configureFixtureAgent();
   const acquiredHead=(await git.inspect(path.join(home,'repositories',alpha,'repo'))).head;
   assert.equal(await page.getByRole('button',{name:/Commit|Push|Clone|安裝 Chromium|檢查測試接線|準備驗收候選/}).count(),0);
   await click('＋ 新增需求');let d=page.getByRole('dialog');
@@ -124,7 +128,7 @@ const server=http.createServer((request,response)=>{
   const upper=page.getByRole('textbox',{name:'需求描述',exact:true}),lower=page.getByRole('textbox',{name:'Gherkin',exact:true});
   const sourceDescription='真正產品登入\n當使用者點擊登入按鈕時，顯示已登入訊息';
   await upper.fill(sourceDescription);
-  await page.locator('#generate-gherkin').click();
+  await job(page.locator('#generate-gherkin'),'workflow.gherkin.generate');
   await expect(lower).toHaveValue(/Feature: 真正產品登入/);await ready();
   assert.ok(parse(await lower.inputValue()).feature.children[0].scenario,'Actual Cucumber parser accepts generated grammar');
   const manual=`Feature: Sign in to the actual product\n  # Regression: Then 請補充可驗收的結果 in a comment must not block human review.\n  @case:CASE-001\n  Scenario: Sign in using the page\n    Given the product is open\n    When I sign in\n    Then the product confirms I signed in\n`;
@@ -132,7 +136,7 @@ const server=http.createServer((request,response)=>{
   await upper.fill(sourceDescription+'\n上方修改不應蓋掉下方手動編輯');await expect(lower).toHaveValue(manual);
   await page.locator('#generate-gherkin').click();await expect(d).toContainText('重新產生');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(lower).toHaveValue(manual);
   const beforeGeneration=await page.locator('#requirement-panel').getAttribute('data-generation');
-  await page.locator('#generate-gherkin').click();await d.getByRole('button',{name:'保留原稿並產生',exact:true}).click();
+  await page.locator('#generate-gherkin').click();await d.getByRole('button',{name:'保留原稿並產生',exact:true}).click();await expect(d).toContainText('預覽 CLI Prompt');await d.getByRole('button',{name:'送出',exact:true}).click();
   await page.waitForFunction(id=>document.querySelector('#requirement-panel').dataset.generation!==id,beforeGeneration);await ready();
   await expect(lower).not.toHaveValue(manual);assert.ok(parse(await lower.inputValue()).feature);
   await page.getByText('先前的生成草稿',{exact:true}).click();
@@ -252,7 +256,7 @@ const server=http.createServer((request,response)=>{
   const doc=docxArchive('<w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:t>當輸入關鍵字時，顯示符合條件的資料</w:t></w:r></w:p></w:body></w:document>');
   await page.locator('#requirement-file').setInputFiles({name:'需求.docx',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',buffer:doc});
   await expect(upper).toHaveValue('獨立規格庫查詢\n\n當輸入關鍵字時，顯示符合條件的資料');await ready();await expect(lower).toHaveValue('');
-  await page.locator('#generate-gherkin').click();await expect(lower).toHaveValue(/Feature: 獨立規格庫查詢/);await ready();
+  await job(page.locator('#generate-gherkin'),'workflow.gherkin.generate');await expect(lower).toHaveValue(/Feature: 獨立規格庫查詢/);await ready();
   const betaGenerated=await lower.inputValue();assert.ok(parse(betaGenerated).feature.children[0].scenario);
   await page.locator('#requirement-file').setInputFiles({name:'more.md',mimeType:'text/markdown',buffer:Buffer.from('查不到時顯示空結果')});await expect(upper).toHaveValue(/查不到時顯示空結果/);await ready();await expect(lower).toHaveValue(betaGenerated);
   const importSource=await upper.inputValue();

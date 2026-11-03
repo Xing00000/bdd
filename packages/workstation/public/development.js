@@ -1,29 +1,9 @@
 /** Development view attaches to a real durable worker; page navigation never kills it. */
 export function developmentView({api,view,feature,refresh,navigate,ask,previewAgent,note,showOperation,onInteractions,beginAction,actionVersion,canRecover}) {
   const $=s=>document.querySelector(s);
-  let terminal=null,subscription=null,resizeObserver=null,timer=null,current=null,offset=0,loadPromise;
+  let timer=null,current=null,offset=0;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
-  async function terminalLibrary() {
-    if(window.Terminal)return;
-    if(!loadPromise)loadPromise=new Promise((resolve,reject)=>{
-      const link=document.createElement('link');link.rel='stylesheet';link.href='/repositories/xterm.css';document.head.append(link);
-      const script=document.createElement('script');script.src='/repositories/xterm.js';script.onload=resolve;script.onerror=()=>{loadPromise=null;reject(new Error('終端元件載入失敗。'));};document.head.append(script);
-    });
-    await loadPromise;
-  }
-  function leave() {
-    clearTimeout(timer);current=null;offset=0;subscription?.dispose();resizeObserver?.disconnect();terminal?.dispose();terminal=null;
-    $('#development-terminal').replaceChildren();$('#development-terminal').hidden=true;
-  }
-  async function openTerminal(session) {
-    if(terminal)return;
-    await terminalLibrary();if(current!==session)return;
-    const container=$('#development-terminal');container.hidden=false;
-    terminal=new window.Terminal({cols:100,rows:30,convertEol:false,scrollback:5000,fontSize:13,screenReaderMode:true});terminal.open(container);
-    const send=input=>api(`/operations/${session.id}/input`,'POST',input).then(value=>{if(current===session&&value.interactions?.length)onInteractions?.(value.interactions);}).catch(error=>{if(current===session&&active(session.status))note(error.message,true);});
-    subscription=terminal.onData(data=>{if(session.phase==='RUNNING')void send({data});});
-    resizeObserver=new ResizeObserver(()=>{if(!terminal||current!==session)return;const cols=Math.min(300,Math.max(20,Math.floor((container.clientWidth-24)/8)));terminal.resize(cols,30);if(session.phase==='RUNNING')void send({cols,rows:30});});resizeObserver.observe(container);
-  }
+  function leave() {clearTimeout(timer);current=null;offset=0;}
   async function poll(session) {
     if(current!==session)return;
     try {
@@ -31,7 +11,7 @@ export function developmentView({api,view,feature,refresh,navigate,ask,previewAg
       session.status=result.status;session.phase=result.phase;
       $('#development-status').textContent=({CANCELLED:'已停止',INTERRUPTED:'已中斷'}[result.status])??result.error?.message??({RUNNING:'開發中',PREPARING:'準備中',CHECKING:'BDD 檢查中',COMPLETED:'已通過',FAILED:'未通過'}[result.phase]??result.status);
       $('#develop').disabled=active(result.status)||feature()?.workflow?.status==='COMPLETE';$('#stop-development').hidden=!active(result.status);
-      if(result.output||result.phase==='RUNNING'){await openTerminal(session);if(current!==session)return;terminal?.write(result.output);offset=result.nextOffset;}
+      offset=result.nextOffset;
       if(active(result.status)||result.hasMore){timer=setTimeout(()=>void poll(session),350);return;}
       if(session.handled)return;session.handled=true;
       if(!session.autoAdvance||session.actionVersion!==actionVersion())return;

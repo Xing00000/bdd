@@ -1,11 +1,11 @@
 /** One durable submission and its execution transcript per card. */
-export function interactionHistory({api,labels,getType}) {
+export function interactionHistory({api,labels,getType,onReset}) {
   const section=document.querySelector('#interaction-history'),list=document.querySelector('#interaction-list'),more=document.querySelector('#interaction-more');
   const cards=new Map();let repositoryId=null,cursor=null,generation=0,type=null;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
   const element=(tag,text,cls)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;};
   function parkTerminal(){const terminal=document.querySelector('#operation-terminal-details');if(terminal){terminal.hidden=true;section.append(terminal);}for(const card of cards.values())card.log.hidden=false;}
-  function reset(id){generation++;parkTerminal();for(const card of cards.values())clearTimeout(card.timer);cards.clear();list.replaceChildren();repositoryId=id;type=getType();cursor=null;section.hidden=!id;more.hidden=true;}
+  function reset(id){generation++;onReset?.();parkTerminal();for(const card of cards.values())clearTimeout(card.timer);cards.clear();list.replaceChildren();repositoryId=id;type=getType();cursor=null;section.hidden=!id;more.hidden=true;}
   function ensure(entry) {
     let card=cards.get(entry.id);
     if(!card) {

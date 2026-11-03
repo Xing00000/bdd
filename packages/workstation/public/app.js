@@ -1,6 +1,7 @@
 import { developmentView } from './development.js';
 import {chatRoomsView} from './chat.js';
 import { interactionHistory } from './interaction-history.js';
+import {operationTerminal} from './operation-terminal.js';
 const $ = selector => document.querySelector(selector);
 const all = selector => [...document.querySelectorAll(selector)];
 const API = '/repository-api/v1';
@@ -8,7 +9,7 @@ document.addEventListener('DOMContentLoaded',()=>{ document.querySelector('#sett
 const stages = [
   ['GHERKIN','需求確認','需求'],['SD','系統設計','設計'],['TESTS','測試計劃','測試'],['IMPLEMENTATION','開發實作','開發'],['VERIFICATION','驗收','驗收']
 ];
-const labels = { 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
+const labels = { 'workflow.gherkin.generate':'LLM 生成 Gherkin', 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
 Object.assign(labels,{'interaction.requirement.generate':'產生 Gherkin','interaction.document.import':'匯入文件'});
 labels['interaction.cli.input']='CLI 回覆';
 labels['interaction.cancel']='停止作業';
@@ -54,18 +55,18 @@ function dialog(title,description,fields,submit,action) {
 }
 function ask(title,text,submit) { return new Promise(resolve=>{dialogResolve=resolve;dialog(title,text,[],submit,async()=>{});}); }
 let previewPending=false;
-async function previewAgent(purpose) {
+async function previewAgent(purpose,source={}) {
   if(previewPending)return null;
   previewPending=true;
   try {
-  const repositoryId=state.repositoryId,f=feature();if(!f)return null;
-  const preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose,requirementId:f.requirementId,featureId:f.id});
-  if(repositoryId!==state.repositoryId||f.key!==feature()?.key)return null;
+  const repositoryId=state.repositoryId,f=feature(),key=f?.key??null;if(!f&&purpose!=='gherkin')return null;
+  const preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose,...(f?{requirementId:f.requirementId,featureId:f.id}:{}),...source});
+  if(repositoryId!==state.repositoryId||key!==(feature()?.key??null))return null;
   return await new Promise(resolve=>{
     dialogResolve=resolve;
     dialog('預覽 CLI Prompt','可修改以下內容；按「送出」後才會派出 CLI。',[field('派工 Prompt','prompt',preview.prompt,{rows:12})],'送出',async form=>{
       const prompt=String(form.get('prompt'));if(!prompt.trim()||new TextEncoder().encode(prompt).length>65536)throw new Error('Prompt 不可為空且必須在 64 KiB 內。');
-      if(repositoryId!==state.repositoryId||f.key!==feature()?.key)throw new Error('所選功能已變更，請重新預覽。');
+      if(repositoryId!==state.repositoryId||key!==(feature()?.key??null))throw new Error('所選功能已變更，請重新預覽。');
       dialogResolve=null;resolve({prompt,promptDigest:preview.promptDigest});
     });
   });
@@ -121,13 +122,15 @@ async function refresh() {
 const activeOperation = status => ['QUEUED','RUNNING','CANCELLING'].includes(status);
 let actionVersion=0;
 const beginAction=()=>++actionVersion;
-const cliOperations = new Set(['repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
+const cliOperations = new Set(['workflow.gherkin.generate','repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
 function currentHistoryType(){return state.view==='features'?state.stage:({projects:'PROJECTS',reports:'REPORTS',versions:'VERSIONS',settings:'SETTINGS'}[state.view]??'SYSTEM');}
 let terminalSession = null, terminalTimer;
 function showOperation(op) {
   if (!op || op.request?.repositoryId !== state.repositoryId) return;
   if(!$('#operation-terminal-details').closest?.('#form-dialog')&&!interactionLog.attach(op))return;
   const details=$('#operation-terminal-details');details.hidden=false;details.dataset.operationId=op.id;
+  if(op.isLlmInteraction){clearTimeout(terminalTimer);terminalSession=null;$('#operation-terminal-text').hidden=true;void terminalView.open(op).catch(error=>note(error.message,true));return;}
+  terminalView.leave();
   if (terminalSession?.id === op.id) return;
   clearTimeout(terminalTimer);
   const session = terminalSession = {id:op.id, repositoryId:state.repositoryId,type:op.interactionType, offset:0};
@@ -151,7 +154,7 @@ function showOperation(op) {
   void poll();
 }
 async function selectOperation(detail,epoch) {
-  const operations=(detail.operations??[]).filter(op=>cliOperations.has(op.request?.operation)&&op.interactionType===currentHistoryType());
+  const operations=(detail.operations??[]).filter(op=>op.isLlmInteraction&&cliOperations.has(op.request?.operation)&&op.interactionType===currentHistoryType());
   const f=feature();
   const preferred=state.view==='features'&&state.stage==='IMPLEMENTATION'&&f && operations.find(op=>op.request.operation==='workflow.develop'&&`${op.request.input.requirementId}/${op.request.input.featureId}`===f.key);
   const ordered=[preferred,...operations.filter(op=>activeOperation(op.status)),...operations].filter(Boolean);
@@ -188,15 +191,16 @@ async function executeJob(name,input, {refreshAfter=true}={}) {
     $('#notice').dataset.operation=name;$('#notice').dataset.outcome=result?.status??'FAILED';$('#notice').dataset.jobId=result?.id??'';
   }
 }
-async function flow(name,input) {
-  try { return await executeJob(name,input); }
+async function flow(name,input,options={}) {
+  try { return await executeJob(name,input,options); }
   catch(error) {
     if(error.code!=='INSTALL_REQUIRED')throw error;
     const plan=error.details.install;
     const names=Object.entries(plan.packages).map(([name,v])=>`${name} ${v}`).join('\n');
-    const approved=await ask('安裝必要套件並繼續',`這個步驟需要以下套件與瀏覽器：\n${names}\n瀏覽器：${plan.browsers.join('、')}\n\n不執行套件安裝腳本，不要求系統管理員權限。完成後自動接續，不必另外按安裝或測試檢查。`,'安裝並繼續');
+    const message=plan.nativeBuild?`需要安裝 CLI 終端元件（包含原生模組編譯）：\n${names}\n完成後自動接續。`:`這個步驟需要以下套件與瀏覽器：\n${names}\n瀏覽器：${plan.browsers.join('、')}\n\n不執行套件安裝腳本，不要求系統管理員權限。完成後自動接續，不必另外按安裝或測試檢查。`;
+    const approved=await ask('安裝必要套件並繼續',message,'安裝並繼續');
     if(!approved){note('已取消安裝；已儲存內容保留，流程尚未推進。');return null;}
-    return executeJob(name,{...input,installConsent:plan.digest,...(plan.batchId?{batchId:plan.batchId}:{})});
+    return executeJob(name,{...input,installConsent:plan.digest,...(plan.batchId?{batchId:plan.batchId}:{})},options);
   }
 }
 function renderNavigation() {
@@ -399,16 +403,18 @@ async function generateGherkin() {
   const description=$('#requirement-description').value,previousGherkin=$('#requirement-gherkin').value;
   if(!description.trim())throw new Error('請先描述需求或上傳文件。');
   if(previousGherkin.trim()&&!await ask('重新產生 Gherkin 草稿？','原稿會保留在生成歷史。','保留原稿並產生'))return;
-  state.transient=true;block();$('#generate-gherkin').textContent='正在產生…';
+  const source={description,previousGherkin,editorKey:state.composer.key};
+  const approved=await previewAgent('gherkin',source);if(!approved)return;
+  $('#generate-gherkin').textContent='正在生成…';
   const repositoryId=state.repositoryId,epoch=state.epoch;
   try {
-    const result=await api(`/spec-repositories/${repositoryId}/requirement/generate`,'POST',{description,previousGherkin,editorKey:state.composer.key});
+    const result=await flow('workflow.gherkin.generate',{...source,...approved},{refreshAfter:false});if(!result)return;
     if(epoch!==state.epoch||repositoryId!==state.repositoryId)return;
     $('#requirement-gherkin').value=result.gherkin;
     renderRequirementHistory(await api(`/spec-repositories/${repositoryId}/requirement/proposals?editorKey=${encodeURIComponent(state.composer.key)}`));
     composerChanged();renderRequirementFeedback(result);
-    note('Gherkin 草稿已產生，請在下方直接編輯。');$('#requirement-panel').dataset.generation=result.proposalId;
-  }finally{state.transient=false;$('#generate-gherkin').textContent='產生 Gherkin 草稿';block();if(repositoryId===state.repositoryId)await interactionLog.load(repositoryId);}
+    note('LLM 已生成 Gherkin，請審閱後儲存。');$('#requirement-panel').dataset.generation=result.proposalId;
+  }finally{$('#generate-gherkin').textContent='LLM 生成 Gherkin';block();if(repositoryId===state.repositoryId)await interactionLog.load(repositoryId);}
   $('#requirement-gherkin').focus();
 }
 async function importDocument() {
@@ -420,7 +426,7 @@ async function importDocument() {
     for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
     const document=await api(`/spec-repositories/${state.repositoryId}/requirement/import`,'POST',{name:file.name,base64:btoa(binary)});
     const source=$('#requirement-description');source.value=source.value.trim()?source.value+'\n\n'+document.text:document.text;
-    $('#document-info').textContent=`已匯入 ${document.name}；只加入上方描述，下方尚未變更。`;composerChanged();note('文件已加入需求描述，點「產生 Gherkin 草稿」才會更新下方。');
+    $('#document-info').textContent=`已匯入 ${document.name}；已加入需求描述，Gherkin 尚未變更。`;composerChanged();note('文件已加入需求描述，點「LLM 生成 Gherkin」以產生草稿。');
   }finally{state.transient=false;block();if(repositoryId===state.repositoryId)await interactionLog.load(repositoryId);}
 }
 async function saveRequirement() {
@@ -718,7 +724,8 @@ $('#start-regression').addEventListener('click',()=>safe(()=>startRegression()))
 $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));
 
 const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));},beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
-const interactionLog=interactionHistory({api,labels,getType:currentHistoryType});
+const terminalView=operationTerminal({api,note,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));}});
+const interactionLog=interactionHistory({api,labels,getType:currentHistoryType,onReset:()=>terminalView.leave()});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
 const chat=chatRoomsView({api,el,button,navigate:id=>navigate({view:'chat',chatId:id}),workspace:()=>navigate({view:'features'}),note});

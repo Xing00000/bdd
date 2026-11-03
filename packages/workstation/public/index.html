@@ -9,19 +9,19 @@
 <section id="chat-view" aria-label="對話視窗" hidden></section><section id="home-view"><div class="page-heading"><div><p class="eyebrow">YOUR WORKBENCH</p><h1>工作台</h1></div><button id="bind-home" class="primary">＋ 綁定 Spec Repo</button></div><div id="repository-cards" class="card-grid"></div><section id="empty-state" class="empty-state"><h2>尚未綁定規格庫</h2><button id="bind-empty" class="primary">設定第一個 Spec Repo</button></section></section>
 <section id="repository-view" hidden aria-busy="false"><div class="page-heading"><div><p class="eyebrow">SPEC REPOSITORY</p><h1 id="repository-title"></h1></div><div><button id="sync" class="primary">遠端同步</button></div></div><div id="repository-error" class="error-box" role="alert" hidden></div>
 
-<section id="features-view" class="view"><div class="section-heading"><label class="inline-label">目前需求<select id="feature-select" aria-label="選擇目前需求"></select></label><button id="new-feature" class="primary">＋ 新增需求</button></div><p id="feature-empty" class="muted">直接描述需求或上傳文件，產生後在下方編輯 Gherkin。</p><div id="workflow" hidden><nav id="stage-nav" class="stage-nav" aria-label="功能開發階段"></nav><div class="phase-summary"><div><h2 id="phase-title"></h2></div><span id="feature-status" class="pill"></span></div>
+<section id="features-view" class="view"><div class="section-heading"><label class="inline-label">目前需求<select id="feature-select" aria-label="選擇目前需求"></select></label><button id="new-feature" class="primary">＋ 新增需求</button></div><p id="feature-empty" class="muted">在下方描述需求或上傳文件，點「LLM 生成 Gherkin」後於上方審閱與編輯。</p><div id="workflow" hidden><nav id="stage-nav" class="stage-nav" aria-label="功能開發階段"></nav><div class="phase-summary"><div><h2 id="phase-title"></h2></div><span id="feature-status" class="pill"></span></div>
 <section id="requirement-panel" class="requirement-editor" aria-label="需求與 Gherkin 編輯">
-  <section class="panel requirement-source">
-    <div class="section-heading"><label for="requirement-description">需求描述</label><button id="upload-requirement" type="button">上傳文件</button></div>
-    <input id="requirement-file" type="file" accept=".txt,.md,.markdown,.feature,.docx" hidden>
-    <textarea id="requirement-description" aria-label="需求描述" rows="5" placeholder="描述你要開發的功能、使用情境與預期結果，也可以上傳文件。"></textarea>
-    <div class="requirement-source-footer"><span id="document-info" class="muted">TXT、Markdown、Gherkin、DOCX · 最大 1 MiB</span><button id="generate-gherkin" class="primary" type="button">產生 Gherkin 格式</button></div>
-  </section>
   <section class="panel requirement-primary">
     <div class="section-heading"><label for="requirement-gherkin">Gherkin</label><span id="requirement-state" class="muted" aria-live="polite">尚未儲存</span></div>
     <textarea id="requirement-gherkin" class="code-editor" aria-label="Gherkin" spellcheck="false" rows="16" placeholder="Feature: 功能名稱&#10;&#10;  Scenario: 使用情境&#10;    Given 前置條件&#10;    When 使用者操作&#10;    Then 預期結果"></textarea>
     <div class="requirement-actions"><p id="requirement-feedback" class="muted" role="status"></p><div id="requirement-buttons" class="inline-actions"><button id="save-requirement" type="button">儲存</button><button id="advance" class="primary" type="button"></button></div></div>
     <details id="requirement-history" hidden><summary>先前的生成草稿</summary><div id="requirement-history-items"></div></details>
+  </section>
+  <section class="panel requirement-source">
+    <div class="section-heading"><label for="requirement-description">需求描述</label><button id="upload-requirement" type="button">上傳文件</button></div>
+    <input id="requirement-file" type="file" accept=".txt,.md,.markdown,.feature,.docx" hidden>
+    <textarea id="requirement-description" aria-label="需求描述" rows="5" placeholder="描述你要開發的功能、使用情境與預期結果，也可以上傳文件。"></textarea>
+    <div class="requirement-source-footer"><span id="document-info" class="muted">TXT、Markdown、Gherkin、DOCX · 最大 1 MiB</span><button id="generate-gherkin" class="primary" type="button">LLM 生成 Gherkin</button></div>
   </section>
 </section><section id="source-panel" class="panel editor-panel"><div class="editor-toolbar"><label id="source-picker">檔案（進階編輯）<select id="source-select" aria-label="文件"></select></label><span id="editor-state" class="muted">已儲存</span><button id="save-source" class="primary">儲存</button></div><p id="source-path" class="file-path mono"></p><textarea id="source-editor" class="code-editor" aria-label="規格測試原始碼" spellcheck="false"></textarea><div id="hook-panel" hidden><p id="hook-path" class="file-path mono"></p><textarea id="hook-editor" class="code-editor" aria-label="Hooks 原始碼" spellcheck="false"></textarea></div><div id="source-actions" class="source-actions"></div></section>
 <div class="source-actions"><button id="restart-stage" type="button" hidden>退回上階段</button><button id="generate-test-plan" type="button" hidden>產生測試計劃骨架</button><button id="complete-test-plan" class="primary" type="button" hidden>LLM 生成測試計劃</button></div>

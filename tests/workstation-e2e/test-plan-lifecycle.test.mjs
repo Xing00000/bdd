@@ -82,7 +82,7 @@ test('settings prepares packages, design confirmation codegens, and only the sep
   const dialog=page.getByRole('dialog');await expect(dialog).toContainText('安裝必要套件並繼續');
   await dialog.getByRole('button',{name:'安裝並繼續',exact:true}).click();
   await expect(page.locator('#notice')).toHaveAttribute('data-operation','repository.tools.prepare',{timeout:120000});
-  await expect(page.locator('#notice')).toHaveAttribute('data-outcome','SUCCEEDED',{timeout:120000});
+  await expect.poll(async()=>{const id=await page.locator('#notice').getAttribute('data-job-id'),op=service.operation(id);return {status:op.status,error:op.error};},{timeout:120000}).toEqual({status:'SUCCEEDED',error:null});
   await readFile(path.join(f.home,'repositories/SPEC-split/test-tools/node_modules/playwright-bdd/package.json'));
   await page.goto(`${origin}/?repo=SPEC-split&view=features&feature=REQ-001%2Fsum&stage=SD`);
   await page.locator('#advance').click();

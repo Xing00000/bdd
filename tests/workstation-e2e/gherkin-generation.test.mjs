@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chromium,expect} from '@playwright/test';
+import {fixture,toolkitRoot,testBrowserRoot} from '../workstation/helpers.mjs';
+import {createStandaloneServer} from '../../packages/workstation/http.mjs';
+
+test('real CLI Gherkin generation previews before dispatch and shares the stage terminal and durable history',{timeout:180000},async t=>{
+  const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,autoAcquire:false,allowLocal:true,enableExecution:true});t.after(()=>app.close());
+  const repositoryId='SPEC-gherkin-ui';app.service.register({id:repositoryId,title:'Gherkin UI',remoteUrl:f.remote});
+  app.service.enqueue({schemaVersion:1,operationId:'OP-configure',repositoryId,operation:'repository.setup',input:{reviewer:'UI verification',projects:[],agent:{timeoutMs:120000}}});
+  const configured=await app.service.wait('OP-configure');assert.equal(configured.status,'SUCCEEDED',JSON.stringify(configured.error));
+  await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${app.server.address().port}`;
+  const browser=await chromium.launch();t.after(()=>browser.close());const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],legacyCalls=[];
+  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/requirement/generate'))legacyCalls.push(r.url());});
+  await page.goto(`${origin}/?repo=${repositoryId}&view=features`);await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
+  const description=page.getByRole('textbox',{name:'需求描述',exact:true}),gherkin=page.getByRole('textbox',{name:'Gherkin',exact:true});
+  const source=await description.boundingBox(),primary=await gherkin.boundingBox();assert.ok(source.y>=primary.y+primary.height,'Requirement description must follow the Gherkin editor');
+  await description.fill('請建立 Feature 名稱為「購物車」的需求。使用者可以將商品加入購物車，並確認商品已加入。');
+  const generate=page.getByRole('button',{name:'LLM 生成 Gherkin',exact:true});await generate.click();
+  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();assert.equal(app.service.interactions(repositoryId,{type:'GHERKIN'}).entries.length,0);
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();assert.equal(app.service.interactions(repositoryId,{type:'GHERKIN'}).entries.length,0);
+  await generate.click();const prompt='Generate the requested Gherkin. Read workbench_get_task and workbench_read_artifact. Follow the task output path and rules.';
+  await dialog.getByRole('textbox',{name:'派工 Prompt',exact:true}).fill(prompt);await dialog.getByRole('button',{name:'送出',exact:true}).click();
+  await expect(page.locator('#interaction-list > article')).toHaveCount(1);await expect(page.locator('#development-terminal .xterm')).toBeVisible({timeout:15000});
+  await expect(page.locator('#content')).toHaveAttribute('aria-busy','false',{timeout:140000});
+  const operations=(await app.service.detail(repositoryId)).operations,operation=operations.find(o=>o.request.operation==='workflow.gherkin.generate');
+  assert.equal(operation.status,'SUCCEEDED',JSON.stringify(operation.error));assert.equal(operation.request.input.prompt,prompt);
+  await expect(gherkin).toHaveValue(/Feature:\s*購物車/);await expect(gherkin).toHaveValue(/@case:[A-Za-z0-9_-]+/);assert.equal(legacyCalls.length,0);assert.deepEqual(errors,[]);
+  const text=await gherkin.inputValue();assert.equal(app.service.requirementProposals(repositoryId,operation.request.input.editorKey)[0].generatedGherkin,text);
+  await expect(page.locator('#interaction-list')).toContainText(prompt);
+  await page.reload();await expect(page.locator(`[data-interaction-id="${operation.id}"]`)).toBeVisible();await expect(page.locator('#development-terminal .xterm')).toBeVisible();
+});
