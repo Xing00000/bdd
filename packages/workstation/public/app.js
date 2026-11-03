@@ -811,7 +811,7 @@ const terminalView=operationTerminal({api,note,onInteractions:entries=>{for(cons
 const interactionLog=interactionHistory({api,labels,getType:currentHistoryType,getKey:currentHistoryKey,getRepositoryId:()=>state.repositoryId,onReset:()=>terminalView.leave()});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
-const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:renderNext});
+const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:()=>{resizeWorkflowEditor($('#source-editor'));renderNext();}});
 const catalogView=agentCatalogView({api,el,button,note,ask,onDirty:()=>{state.formDirty=true;},onSaved:()=>{state.formDirty=false;}});
 on('#open-agent-manager','click',()=>navigate({view:'agents',repositoryId:null,featureKey:null,projectId:null}));
 const chat=chatRoomsView({api,el,button,navigate:id=>navigate({view:'chat',chatId:id}),workspace:()=>navigate({view:'features'}),note});

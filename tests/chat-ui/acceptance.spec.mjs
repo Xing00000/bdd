@@ -8,7 +8,7 @@ import config from '../../playwright.chat.config.ts';
 function workstation(passed){return [async({},use)=>{const fixture=await acceptanceFixture({passed});try{await use(fixture);}finally{await fixture.close();}},{timeout:config.timeout}];}
 const test=base.extend({passingWorkstation:workstation(true),changesWorkstation:workstation(false)});
 
-test('AC-WB-042 UIUX：真實 Playwright 報告等待人工驗收，通過後完成並保存',async({page,passingWorkstation:f},info)=>{
+test('AC-WB-042 UIUX：真實 Playwright 報告等待人工驗收，通過後完成並保存',{tag:'@protocol'},async({page,passingWorkstation:f},info)=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  try{
   await page.goto(`${f.origin}/?repo=${f.repositoryId}&view=features&feature=REQ-001%2Flogin&stage=VERIFICATION`);
@@ -47,7 +47,7 @@ test('AC-WB-041 UIUX：驗收意見進入真實 Codex 實作互動，修改後�
 });
 
 
-test('AC-WB-041 UIUX：歷史清單各自展開真實 Playwright 報告，保留目前報告',async({page,passingWorkstation:f},info)=>{
+test('AC-WB-041 UIUX：歷史清單各自展開真實 Playwright 報告，保留目前報告',{tag:'@protocol'},async({page,passingWorkstation:f},info)=>{
  const second=await f.job('workflow.verify',f.ids);expect(second.status,JSON.stringify(second.error)).toBe('SUCCEEDED');expect(second.result.testOutcome).toBe('PASSED');
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(`${f.origin}/?repo=${f.repositoryId}&view=features&feature=REQ-001%2Flogin&stage=VERIFICATION`);

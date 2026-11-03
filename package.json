@@ -18,6 +18,7 @@
     "test": "playwright test",
     "test:app": "node tools/test.mjs",
     "test:e2e": "playwright test",
+    "test:ui:protocol": "playwright test --grep @protocol",
     "spec:generate": "node tools/bdd/generate.mjs",
     "spec:verify": "node tools/bdd/verify.mjs",
     "spec:list": "playwright test --list --reporter=list",

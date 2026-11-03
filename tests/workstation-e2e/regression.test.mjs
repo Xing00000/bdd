@@ -62,6 +62,11 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   async function job(locator,name,outcome='SUCCEEDED') { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
   async function tab(name){if(!await page.locator('#sidebar').isVisible())await page.locator('#menu-toggle').click();const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();await group.getByRole('button',{name,exact:true}).click();await ready();}
+  // Report history remains a supported read-only deep link, without a sidebar entry.
+  async function reportHistory(){
+    await expect(page.locator('#repository-nav [data-view="reports"]')).toHaveCount(0);
+    const url=new URL(page.url());url.searchParams.set('view','reports');await page.goto(url.href);await ready();await expect(page.locator('#reports-view')).toBeVisible();
+  }
   await page.goto(origin);await page.locator('#bind-sidebar').click();const dialog=page.getByRole('dialog');
   await dialog.getByLabel('Spec Repo Git 網址',{exact:true}).fill(remote);await dialog.getByLabel('顯示名稱（選填，自動從網址帶入）',{exact:true}).fill('既有規格與回歸');await dialog.getByLabel('需求確認者',{exact:true}).fill('UI reviewer');
   await dialog.getByRole('textbox',{name:'Spec Repo 本地目錄',exact:true}).fill(selectedLocalPath);
@@ -74,7 +79,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   await expect(page.locator('#binding-status')).toContainText(selectedLocalPath);
   assert.equal(await exists(path.join(home,'repositories',repositoryId,'repo')),false,'The selected directory is the only editing checkout');
   assert.equal((await git.modules(checkout))[0].actual,p1,'Binding restores the recorded product version, not newer main');
-  await tab('驗收紀錄');await expect(page.locator('#run-list')).toContainText('RUN-history');
+  await reportHistory();await expect(page.locator('#run-list')).toContainText('RUN-history');
   await tab('需求流程');await page.locator('#feature-select').selectOption('REQ-102/title');await ready();
   await page.getByRole('button',{name:'5 驗收',exact:true}).click();await ready();
   await expect(page.locator('#feature-report-list .feature-report')).toHaveCount(1);await expect(page.locator('#feature-report-list')).toContainText('reports/REQ-102/title/RUN-history/manifest.json');

@@ -6,7 +6,7 @@ test('AC-WB-043 Agent／Skill 統一管理、預覽選擇與真實 Gherkin 派�
  expect(phases).toEqual(['opened','saved','restarted','previewed','generated','stale-rejected']);
 });
 
-test('AC-WB-043 管理編輯保護、資源驗證與窄視窗',async({page},info)=>{
+test('AC-WB-043 管理編輯保護、資源驗證與窄視窗',{tag:'@protocol'},async({page},info)=>{
  const {mkdtemp}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),path=await import('node:path'),{createStandaloneServer}=await import('../../packages/workstation/http.mjs');
  const app=await createStandaloneServer({home:await mkdtemp(path.join(tmpdir(),'bdd-catalog-edit-')),toolkitRoot:process.cwd(),enableExecution:false});await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
  try{

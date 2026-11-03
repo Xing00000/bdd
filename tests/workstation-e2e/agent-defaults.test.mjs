@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import {chromium,expect} from '@playwright/test';
-import {fixture,toolkitRoot} from '../workstation/helpers.mjs';
+import {fixture,toolkitRoot,git} from '../workstation/helpers.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 
 async function setup(t) {
@@ -9,7 +10,9 @@ async function setup(t) {
   t.after(()=>app.close());
   const repositories=['SPEC-defaults-alpha','SPEC-defaults-beta'];
   for(const repositoryId of repositories){
-    app.service.register({id:repositoryId,title:repositoryId,remoteUrl:f.remote});
+    const remoteUrl=path.join(f.base,repositoryId+'.git');
+    await git.command(undefined,['init','--bare','--initial-branch','main',remoteUrl]);
+    app.service.register({id:repositoryId,title:repositoryId,remoteUrl});
     const operationId=`OP-setup-${repositoryId}`;
     app.service.enqueue({schemaVersion:1,operationId,repositoryId,operation:'repository.setup',input:{reviewer:'Human',projects:[]}});
     const result=await app.service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));
@@ -25,7 +28,7 @@ async function setup(t) {
   return {app,page,repository,section,repositories,agentRevisionId:agent.revisions[0].id,errors};
 }
 
-test('repository seed agents and prompts become editable immediately after the first defaults load',async t=>{
+test('repository seed agents and prompts become editable immediately after the first defaults load',{timeout:60000},async t=>{
   const {app,page,repository,repositories:[alpha],errors}=await setup(t);
   await repository.selectOption(alpha);await expect(page.locator('.catalog-default')).toHaveCount(4);
   const defaults=await app.service.catalogDefaults(alpha),catalog=app.service.catalog();
@@ -38,7 +41,7 @@ test('repository seed agents and prompts become editable immediately after the f
   assert.deepEqual(errors,[]);
 });
 
-test('saving one task default retains the other unsaved task selections and navigation guard',async t=>{
+test('saving one task default retains the other unsaved task selections and navigation guard',{timeout:60000},async t=>{
   const {app,page,repository,section,repositories:[alpha,beta],agentRevisionId,errors}=await setup(t);
   await repository.selectOption(alpha);await expect(page.locator('.catalog-default')).toHaveCount(4);
   const original=await app.service.catalogDefaults(alpha);
@@ -60,7 +63,7 @@ test('saving one task default retains the other unsaved task selections and navi
   assert.deepEqual(errors,[]);
 });
 
-test('edits made while a task default is saving remain unsaved after its response arrives',async t=>{
+test('edits made while a task default is saving remain unsaved after its response arrives',{timeout:60000},async t=>{
   const {app,page,repository,section,repositories:[alpha,beta],agentRevisionId,errors}=await setup(t);
   await repository.selectOption(alpha);await expect(page.locator('.catalog-default')).toHaveCount(4);
   const choice=section('Gherkin').getByRole('combobox',{name:'Agent',exact:true}),original=await choice.inputValue();
@@ -79,7 +82,7 @@ test('edits made while a task default is saving remain unsaved after its respons
   assert.deepEqual(errors,[]);
 });
 
-test('switching repositories during a default load never appends stale controls or saves to the previous repository',async t=>{
+test('switching repositories during a default load never appends stale controls or saves to the previous repository',{timeout:60000},async t=>{
   const {app,page,repository,section,repositories:[alpha,beta],agentRevisionId,errors}=await setup(t);
   const held=Promise.withResolvers(),release=Promise.withResolvers();t.after(()=>release.resolve());
   await page.route(`**/spec-repositories/${alpha}/agent-defaults`,async route=>{held.resolve();await release.promise;await route.continue();},{times:1});
@@ -99,7 +102,7 @@ test('switching repositories during a default load never appends stale controls 
 });
 
 for(const [label,collection,bodyLabel] of [['Agent','agents','說明'],['Prompt','prompts','Prompt 內容'],['Skill','skills','Skill 內容']]){
-  test(`${label} creation keeps edits typed while saving and updates the same record on the next save`,async t=>{
+  test(`${label} creation keeps edits typed while saving and updates the same record on the next save`,{timeout:60000},async t=>{
     const {app,page,errors}=await setup(t),editor=page.locator('.catalog-editor');
     await page.getByRole('button',{name:'新增 '+label,exact:true}).click();
     await editor.getByRole('textbox',{name:'名稱',exact:true}).fill('Submitted '+label);

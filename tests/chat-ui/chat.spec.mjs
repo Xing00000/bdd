@@ -11,7 +11,7 @@ import {access} from 'node:fs/promises';
 import {ChatToolsDriver} from './chat-tools-driver.ts';
 
 const prefix='/repository-api/v1';
-base('single UI: the compatibility API never serves the retired Vue application',async()=>{
+base('single UI: the compatibility API never serves the retired Vue application',{tag:'@protocol'},async()=>{
  const {createServer:createCompatibilityApi}=await import('../../dist/src/http/server.js');
  const home=await mkdtemp(path.join(tmpdir(),'bdd-single-ui-'));
  const api=await createCompatibilityApi({root:process.cwd(),metadataFile:path.join(home,'metadata.sqlite'),dataRoot:path.join(home,'data'),baseUrl:'http://127.0.0.1:1'});
@@ -108,7 +108,7 @@ base('AC-WB-040 正式入口：真實文字增量透過 SSE 到達且不輪詢�
  finally{try{await driver.attach(info);}finally{await driver.close();}}
 });
 
-base('AC-WB-047 UIUX：取得模型清單、選擇並保存，重新整理維持選擇（協定測試）',async({page},info)=>{
+base('AC-WB-047 UIUX：取得模型清單、選擇並保存，重新整理維持選擇（協定測試）',{tag:'@protocol'},async({page},info)=>{
  const driver=await ChatModelsDriver.open(page);
  try{
   expect(driver.catalog.models.map(m=>m.id)).toEqual(['fixture-a','fixture-b']);
@@ -125,7 +125,7 @@ test('對話模型清單：真實 Copilot CLI 的可用與空清單狀態',async
  await info.attach('真實 Copilot CLI 模型清單（含實際空清單）',{body:JSON.stringify(catalog,null,2),contentType:'application/json'});expect(w.errors).toEqual([]);
 });
 
-base('AC-WB-047 UIUX：重疊保存模型與進階設定不互相覆蓋',async({page},info)=>{
+base('AC-WB-047 UIUX：重疊保存模型與進階設定不互相覆蓋',{tag:'@protocol'},async({page},info)=>{
  const driver=await ChatModelsDriver.open(page),gate=Promise.withResolvers(),held=Promise.withResolvers(),patches=[];
  try{
   await page.getByText('對話設定',{exact:true}).click();const timeoutMs=driver.before.timeoutMs+1;await page.getByRole('textbox',{name:'對話 逾時',exact:true}).fill(String(timeoutMs));

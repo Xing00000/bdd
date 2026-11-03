@@ -68,9 +68,12 @@ npm run check:workstation
 npm run test:seed
 npm run test:workstation
 npm run test:workstation:e2e
+npm run test:ui:protocol
 ```
 
 `test:seed` 驗證首次初始化、缺少任務預設的補齊、重複執行不增加資料、舊版 Prompt 遷移、使用者自訂值保留，以及 CLI／Agent／Skill／Prompt 的關聯完整性。使用 Node.js 24 並先執行 `npm ci`，不需要瀏覽器或外部 LLM 登入。
+
+`test:ui:protocol` 執行 7 項使用本機 fixture 的協定驗證（6 項真實 Chromium UI、1 項 API），須先執行 `npm ci`、`npm run build` 與 `npx playwright install chromium`，不需外部帳號。`npm test` 仍執行全部 16 項測試，包含需要真實 Codex／Copilot 登入的案例。
 
 `npm run spec:list` 只列出目前工作台的瀏覽器測試，不生成舊版規格或修改人工審核紀錄。舊版 `spec:generate`、`spec:verify` 與 `test:tooling` 仍保留原有來源審核檢查。
 

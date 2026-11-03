@@ -55,6 +55,39 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+  ui-protocol:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /tmp/bdd-ui-protocol-browsers
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install and build UI runtime
+        run: |
+          mkdir -p verification
+          npm ci 2>&1 | tee verification/ui-protocol-install.log
+          npm run build 2>&1 | tee verification/ui-protocol-build.log
+      - name: Install Chromium for actual UI checks
+        run: node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee verification/ui-protocol-browser-install.log
+      - name: Run browser and HTTP protocol checks without external provider accounts
+        run: npm run test:ui:protocol 2>&1 | tee verification/ui-protocol-tests.log
+      - name: Preserve UI reports and failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-ui-protocol-${{ github.sha }}
+          path: |
+            verification/ui-protocol-*.log
+            test-results/chat/
+            playwright-report/bdd/
+          retention-days: 3
+          if-no-files-found: error
+
   browser-acceptance:
     needs: workstation
     runs-on: ubuntu-22.04
