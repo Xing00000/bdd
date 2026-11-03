@@ -12,6 +12,15 @@ const snapshot={revision:1,settings:{agent:validateAgentSettings()},files:[
   {target:'spec',path:'spec/REQ-one/login/login.feature',content:'Feature: Approved login'},
   {target:'spec',path:'spec/REQ-other/other/other.feature',content:'unrelated private content'}
 ]};
+test('design MCP only exposes products linked to the selected feature and the current unsaved design',async t=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'design-task-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const files=[...snapshot.files,{target:'spec',path:'tests/_shared/bdd.ts',content:'unrelated test infrastructure'},{target:'project:reader',path:'src/main.ts',content:'selected product'},{target:'project:other',path:'src/main.ts',content:'unrelated product'}];
+  const file=await writeAgentTask(directory,{...snapshot,files},{...selection,purpose:'design',workspace:directory,projectIds:['reader'],source:{previousDesign:'# Unsaved design'}});
+  const bundle=JSON.parse(await readFile(file,'utf8'));
+  assert.equal(bundle.artifacts['projects/reader/src/main.ts'],'selected product');assert.equal(bundle.artifacts['projects/other/src/main.ts'],undefined);
+  assert.equal(bundle.artifacts['spec/REQ-one/login/login.sd.md'],'# Unsaved design');assert.equal(bundle.artifacts['spec/REQ-other/other/other.feature'],undefined);
+  assert.equal(bundle.artifacts['tests/_shared/bdd.ts'],undefined);
+});
 test('task MCP negotiates the installed Codex protocol and returns a supported version for another proposal',()=>{
   const initialize=protocolVersion=>taskRpc({task:{},artifacts:{}},{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion}});
   assert.equal(initialize('2025-06-18').result.protocolVersion,'2025-06-18');

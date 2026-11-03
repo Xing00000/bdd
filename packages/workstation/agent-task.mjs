@@ -15,10 +15,10 @@ export function gherkinInput(input){
 
 export function previewAgentPrompt(snapshot, repositoryId, root, input) {
   const {purpose,requirementId,featureId}=input;
-  invariant(['development','testPlan','gherkin'].includes(purpose),'INVALID_AGENT','未知 Agent 任務。');
-  const source=purpose==='gherkin'?gherkinInput(input):undefined;
+  invariant(['development','testPlan','gherkin','design'].includes(purpose),'INVALID_AGENT','未知 Agent 任務。');
+  const source=purpose==='gherkin'?gherkinInput(input):purpose==='design'?{previousDesign:requirementText(input.previousDesign??'','系統文件')}:undefined;
   const key=source?.editorKey??`${id(requirementId)}/${id(featureId)}`;
-  if(!source)invariant(snapshot.files.some(f=>f.target==='spec'&&f.path===`spec/${key}/${featureId}.feature`),'FEATURE_NOT_FOUND','找不到需求。',404);
+  if(purpose!=='gherkin')invariant(snapshot.files.some(f=>f.target==='spec'&&f.path===`spec/${key}/${featureId}.feature`),'FEATURE_NOT_FOUND','找不到需求。',404);
   const agent=validateAgentSettings(snapshot.settings.agent);
   const values={requirementId:requirementId??'',featureId:featureId??'',spec:root,projects:'See workbench MCP task',feedback:'See workbench MCP task',previousFailure:'See workbench MCP task'};
   return {prompt:renderAgentPrompt(agent,values,purpose),promptDigest:identity({repositoryId,root,revision:snapshot.revision,agent,key,purpose,...(source?{source}:{})})};
@@ -33,7 +33,7 @@ export function approvedAgentPrompt(snapshot, context, purpose) {
   return input.prompt;
 }
 
-export async function writeAgentTask(directory, snapshot, {purpose,requirementId,featureId,workspace,products,feedback,previousFailure='',source}) {
+export async function writeAgentTask(directory, snapshot, {purpose,requirementId,featureId,workspace,products,feedback,previousFailure='',source,projectIds=[]}) {
   if(purpose==='gherkin'){
     const output=path.join(workspace,gherkinOutputFile);
     const task={purpose,key:source.editorKey,workspace,writable:[output],output,rules:'Read the requirement description and previous Gherkin using workbench_read_artifact. Write one complete UTF-8 Gherkin feature to output. Use English Gherkin keywords, Traditional Chinese domain language, a short Feature description and minimal complete user flows. Give each Scenario a unique stable @case:<id> tag. Preserve existing case tags when revising existing scenarios. Do not modify any other files. Do not claim tests passed.'};
@@ -44,6 +44,14 @@ export async function writeAgentTask(directory, snapshot, {purpose,requirementId
   const artifacts=Object.fromEntries(snapshot.files.filter(f=>f.target==='spec'&&(
     f.path.startsWith(`spec/${key}/`)||f.path.startsWith(prefix)||f.path.startsWith('tests/_shared/')||f.path.startsWith(`tests/${requirementId}/_shared/`)
   )).map(f=>[f.path,f.content]));
+  if(purpose==='design'){
+    const output=path.join(workspace,`${featureId}.sd.md`);
+    for(const artifact of Object.keys(artifacts))if(!artifact.startsWith(`spec/${key}/`))delete artifacts[artifact];
+    artifacts[`spec/${key}/${featureId}.sd.md`]=source.previousDesign;
+    for(const file of snapshot.files.filter(f=>projectIds.some(projectId=>f.target===`project:${projectId}`)))artifacts[`projects/${file.target.slice('project:'.length)}/${file.path}`]=file.content;
+    const task={purpose,key,workspace,output,writable:[output],rules:'Use approved Gherkin and the previous design from workbench_read_artifact. Write the complete system design as Traditional Chinese Markdown to output. Explain responsibilities, data flow, implementation and verification for the approved scenarios. Cite actual available source paths; mark missing or unverified facts explicitly instead of inventing APIs, paths or results. Preserve unrelated design content. Do not change approved behavior, other files, approvals or tests. This is a draft for human review.'};
+    await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task,artifacts}),{mode:0o600});return file;
+  }
   const task={purpose,key,workspace,products,writable:purpose==='testPlan'?[path.join(workspace,prefix)]:products,
     rules:purpose==='testPlan'
       ?'Gherkin and design are approved. Complete tests with real assertions and AfterStep screenshots. Approved artifacts and products are read-only. No skipped or placeholder steps.'
