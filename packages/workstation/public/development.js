@@ -3,7 +3,10 @@ export function developmentView({api,view,feature,refresh,navigate,ask,previewAg
   const $=s=>document.querySelector(s);
   let timer=null,current=null,offset=0;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
-  function leave() {clearTimeout(timer);current=null;offset=0;}
+  const selected=(repositoryId,key)=>view().repositoryId===repositoryId&&feature()?.key===key;
+  function leave() {
+    clearTimeout(timer);current=null;offset=0;
+  }
   async function poll(session) {
     if(current!==session)return;
     try {
@@ -19,7 +22,12 @@ export function developmentView({api,view,feature,refresh,navigate,ask,previewAg
       if(result.error?.code==='INSTALL_REQUIRED'&&session.autoAdvance) {
         const plan=result.error.details.install;
         const text=plan.purpose==='terminal'?'安裝 PTY 終端元件（包含原生模組編譯）。':`安裝 ${Object.keys(plan.packages).join('、')} 與 ${plan.browsers.join('、')}。`;
-        if(await ask('安裝必要套件並繼續',text,'安裝並繼續'))await start({installConsent:plan.digest});
+        if(await ask('安裝必要套件並繼續',text,'安裝並繼續')){
+          if(current!==session||session.actionVersion!==actionVersion()||session.key!==`${view().repositoryId}/${feature()?.key}`)return;
+          let submitted;
+          if(session.submitted){const repositoryId=view().repositoryId,f=feature(),preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose:'development',requirementId:f.requirementId,featureId:f.id,agentSelection:session.submitted.agentSelection});if(!selected(repositoryId,f.key)||current!==session||session.actionVersion!==actionVersion())return;submitted={prompt:session.submitted.prompt,promptDigest:preview.promptDigest,agentSelection:preview.agentSelection};}
+          await start({installConsent:plan.digest},submitted);
+        }
         return;
       }
       if(result.error)note(result.error.message,true);
@@ -39,18 +47,20 @@ export function developmentView({api,view,feature,refresh,navigate,ask,previewAg
     leave();$('#develop').disabled=f.workflow?.status==='COMPLETE';$('#stop-development').hidden=true;$('#development-status').textContent=f.workflow?.status==='COMPLETE'?'本階段已完成，唯讀':'';
     if(operation){current={key,id:operation.id,status:operation.status,autoAdvance:active(operation.status)&&canRecover(),actionVersion:actionVersion()};void poll(current);}
   }
-  async function start(extra={}) {
-    const s=view(),f=feature();if(!f)return;
+  async function start(extra={},submitted) {
+    const repositoryId=view().repositoryId,f=feature();if(!f)return;const key=f.key;
     if(f.workflow?.status==='COMPLETE')throw new Error('本階段已完成，請先從驗收回報問題。');
     if(current&&active(current.status))return;
-    const approved=await previewAgent('development');if(!approved)return;
+    const approved=submitted??await previewAgent('development');if(!approved)return;
+    if(!selected(repositoryId,key))return;
     const version=beginAction();
     $('#develop').disabled=true;
     try {
-      const result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId:s.repositoryId,operation:'workflow.develop',input:{requirementId:f.requirementId,featureId:f.id,...extra,...approved}});
-      showOperation({...result,request:{repositoryId:s.repositoryId,operation:'workflow.develop'}});
-      leave();current={key:`${s.repositoryId}/${f.key}`,id:result.id,status:result.status,autoAdvance:true,actionVersion:version};void poll(current);
-    } catch(error){$('#develop').disabled=false;throw error;}
+      const result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:'workflow.develop',input:{requirementId:f.requirementId,featureId:f.id,...extra,...approved}});
+      if(!selected(repositoryId,key)||version!==actionVersion())return result;
+      showOperation({...result,request:{...result.request,repositoryId,operation:'workflow.develop'}});
+      leave();current={key:`${repositoryId}/${key}`,id:result.id,status:result.status,autoAdvance:true,actionVersion:version,submitted};void poll(current);return result;
+    } catch(error){if(selected(repositoryId,key)&&version===actionVersion())$('#develop').disabled=false;throw error;}
   }
   async function stop(){if(current&&active(current.status)){const result=await api(`/operations/${current.id}/cancel`,'POST',{});if(result.interaction)onInteractions?.([result.interaction]);}}
   window.addEventListener('pagehide',leave);

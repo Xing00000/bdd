@@ -1,3 +1,5 @@
+import {systemDesignView} from './design-view.js';
+import {agentCatalogView} from './agent-catalog.js';
 import { developmentView } from './development.js';
 import {chatRoomsView} from './chat.js';
 import { interactionHistory } from './interaction-history.js';
@@ -14,6 +16,8 @@ Object.assign(labels,{'interaction.requirement.generate':'產生 Gherkin','inter
 labels['interaction.cli.input']='CLI 回覆';
 labels['interaction.cancel']='停止作業';
 const state = { repositories:[], repositoryId:null, detail:null, view:'features', stage:'GHERKIN', featureKey:null, projectId:null, editor:null, composer:null, composerRequest:0, transient:false, product:null, busy:false, loading:false, epoch:0, sourceRequest:0, productRequest:0, reportRequest:0, formDirty:false, capabilities:null, scope:null };
+const acceptanceDrafts=new Map();let acceptanceBusy=false;
+const acceptanceKey=()=>`${state.repositoryId}/${state.featureKey}`;
 function el(tag,text,cls) { const n=document.createElement(tag); if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n; }
 function button(text, action, cls) { const n=el('button',text,cls);n.type='button';n.onclick=()=>safe(action);return n; }
 function badge(text) { return el('span',text,`pill ${['VERIFIED','PASSED','已同步','已儲存'].includes(text)?'good':['FAILED','NOT_VERIFIED'].includes(text)?'bad':'warning'}`); }
@@ -60,14 +64,18 @@ async function previewAgent(purpose,source={}) {
   previewPending=true;
   try {
   const repositoryId=state.repositoryId,f=feature(),key=f?.key??null;if(!f&&purpose!=='gherkin')return null;
-  const preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose,...(f?{requirementId:f.requirementId,featureId:f.id}:{}),...source});
+  const selection=await catalogView.selector(repositoryId,purpose);
+  let preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose,...(f?{requirementId:f.requirementId,featureId:f.id}:{}),...source,agentSelection:selection.value()});
   if(repositoryId!==state.repositoryId||key!==(feature()?.key??null))return null;
   return await new Promise(resolve=>{
     dialogResolve=resolve;
-    dialog('預覽 CLI Prompt','可修改以下內容；按「送出」後才會派出 CLI。',[field('派工 Prompt','prompt',preview.prompt,{rows:12})],'送出',async form=>{
+    const promptField=field('派工 Prompt','prompt',preview.prompt,{rows:12}),refreshPreview=button('更新預覽',async()=>{try{preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose,...(f?{requirementId:f.requirementId,featureId:f.id}:{}),...source,agentSelection:selection.value()});promptField.querySelector('textarea').value=preview.prompt;$('#dialog-error').textContent='';}catch(error){$('#dialog-error').textContent=error.message;}});
+    selection.root.onchange=()=>{$('#dialog-error').textContent='選擇已變更，請按更新預覽。';};
+    dialog('預覽 CLI Prompt','選擇本次 Agent 與 Skills；修改選擇後請更新預覽。',[selection.root,refreshPreview,promptField],'送出',async form=>{
+      if(JSON.stringify(selection.value())!==JSON.stringify(preview.agentSelection))throw new Error('選擇已變更，請先更新預覽。');
       const prompt=String(form.get('prompt'));if(!prompt.trim()||new TextEncoder().encode(prompt).length>65536)throw new Error('Prompt 不可為空且必須在 64 KiB 內。');
       if(repositoryId!==state.repositoryId||key!==(feature()?.key??null))throw new Error('所選功能已變更，請重新預覽。');
-      dialogResolve=null;resolve({prompt,promptDigest:preview.promptDigest});
+      dialogResolve=null;resolve({prompt,promptDigest:preview.promptDigest,agentSelection:preview.agentSelection});
     });
   });
   } finally {previewPending=false;}
@@ -81,12 +89,13 @@ async function navigate(patch,{protect=true,replace=false}={}) {
     ||(Object.hasOwn(patch,'featureKey')&&patch.featureKey!==state.featureKey)) {
     note('');
   }
-  development.leave();
+  development.leave();designView.reset();
   if(['repositoryId','featureKey','view','stage'].some(field=>Object.hasOwn(patch,field)&&patch[field]!==state[field])){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);}
   Object.assign(state,patch);state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
   for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
   $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';
   const url=new URL(location.href);url.pathname='/';url.search='';
+  if(state.view==='agents')url.searchParams.set('view','agents');
   if(state.view==='chat'){url.searchParams.set('view','chat');url.searchParams.set('chat',state.chatId);}
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);}
   history[replace?'replaceState':'pushState']({},'',url);if(mobileNavigation.matches){$('#sidebar').classList.remove('open');updateNavigationToggle();}await refresh();
@@ -97,7 +106,9 @@ async function refresh() {
   try {
     const repositories=await api('/spec-repositories');if(epoch!==state.epoch)return;state.repositories=repositories;
     const detail=state.repositoryId?await api(`/spec-repositories/${state.repositoryId}`):null;if(epoch!==state.epoch)return;state.detail=detail;
-    renderNavigation();$('#chat-view').hidden=state.view!=='chat';$('#content').classList.toggle('chat-active',state.view==='chat');
+    renderNavigation();$('#agent-manager-view').hidden=state.view!=='agents';
+    if(state.view==='agents'){$('#home-view').hidden=true;$('#repository-view').hidden=true;$('#chat-view').hidden=true;$('#interaction-history').hidden=true;$('#content').classList.remove('chat-active');await catalogView.render(repositories);return;}
+    $('#chat-view').hidden=state.view!=='chat';$('#content').classList.toggle('chat-active',state.view==='chat');
     if(state.view==='chat'){ $('#home-view').hidden=true;$('#repository-view').hidden=true;$('#interaction-history').hidden=true;$('#breadcrumbs').textContent='工作台 / 對話';await chat.open(state.chatId);return;}
     $('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
     await chat.refreshList().catch(error=>note(error.message,true));
@@ -207,7 +218,7 @@ async function flow(name,input,options={}) {
 }
 function renderNavigation() {
   const opened=new Set(all('#repository-nav details[open]').map(n=>n.dataset.repositoryId));
-  $('#repository-nav').replaceChildren();for(const r of state.repositories){const n=button('',()=>navigate({repositoryId:r.id,featureKey:null,projectId:null,view:'features',stage:'GHERKIN'}),'repo-nav');n.setAttribute('aria-label',`開啟規格庫 ${r.title}`);n.append(el('strong',r.title),el('small',r.remoteUrl));n.classList.toggle('active',r.id===state.repositoryId);$('#repository-nav').append(n);const menu=el('nav',undefined,'repository-menu');menu.setAttribute('aria-label',`${r.title} 功能`);for(const [view,label] of [['features','需求流程'],['projects','專案'],['reports','驗收紀錄'],['versions','版本與回歸'],['settings','設定']]){const item=button(label,()=>navigate(r.id===state.repositoryId?{view}:{repositoryId:r.id,view,featureKey:null,projectId:null,stage:'GHERKIN'}));item.dataset.view=view;item.dataset.repositoryId=r.id;menu.append(item);}const group=detailGroup('設定與功能',[menu],opened.has(r.id),'repository-group');group.dataset.repositoryId=r.id;$('#repository-nav').append(group);}
+  $('#repository-nav').replaceChildren();for(const r of state.repositories){const n=button('',()=>navigate({repositoryId:r.id,featureKey:null,projectId:null,view:'features',stage:'GHERKIN'}),'repo-nav');n.setAttribute('aria-label',`開啟規格庫 ${r.title}`);n.append(el('strong',r.title),el('small',r.remoteUrl));n.classList.toggle('active',r.id===state.repositoryId);$('#repository-nav').append(n);const menu=el('nav',undefined,'repository-menu');menu.setAttribute('aria-label',`${r.title} 功能`);for(const [view,label] of [['features','需求流程'],['projects','專案'],['versions','版本與回歸'],['settings','設定']]){const item=button(label,()=>navigate(r.id===state.repositoryId?{view}:{repositoryId:r.id,view,featureKey:null,projectId:null,stage:'GHERKIN'}));item.dataset.view=view;item.dataset.repositoryId=r.id;menu.append(item);}const group=detailGroup('設定與功能',[menu],opened.has(r.id),'repository-group');group.dataset.repositoryId=r.id;$('#repository-nav').append(group);}
 }
 function renderHome() {
   $('#breadcrumbs').textContent='工作台';$('#repository-cards').replaceChildren();$('#empty-state').hidden=state.repositories.length>0;
@@ -274,9 +285,6 @@ function renderSettings() {
   const d=state.detail,c=d.spec?.config;$('#settings-reviewer').value=d.preferences?.reviewer??localStorage.getItem('bdd-reviewer')??'';$('#settings-remote').textContent=d.remoteUrl;$('#settings-local-path').value=d.localPath??d.connection?.localPath??'';$('#settings-products').replaceChildren();
   for(const p of d.modules??[])addSettingsProduct(p);if(!d.modules?.length)addSettingsProduct();
   $('#settings-global-timeout').value=d.preferences?.globalTimeoutMs??c?.execution?.globalTimeoutMs??'';
-  const agent=d.preferences.agent;
-  for(const key of ['command','prompt','testPlanPrompt','skills','maxAttempts','timeoutMs'])$('#settings-agent-'+key).value=agent[key];
-  $('#settings-agent-args').value=agent.args.join('\n');
   updateServices();$('#settings-service').value=c?.execution.service?.projectId??'';$('#settings-url').value=c?.execution.environment?.WB_TARGET_BASE_URL??'';$('#settings-health').value=c?.execution.service?.healthUrl??'';$('#settings-program').value=c?.execution.service?.command[0]??'node';$('#settings-args').value=c?.execution.service?.command.slice(1).join('\n')??'';
   $('#operation-list').replaceChildren();for(const op of d.operations??[]){const item=el('details');item.append(el('summary',`${labels[op.request.operation]??'系統操作'} · ${op.status}`));if(op.error)item.append(el('p',op.error.message??'這次操作未完成，已保留內容。','muted'));const technical=detailGroup('檢視技術細節',[el('pre',JSON.stringify({id:op.id,result:op.result,error:op.error},null,2))]);item.append(technical);if(cliOperations.has(op.request.operation))item.append(button('查看執行過程',()=>showOperation(op)));$('#operation-list').append(item);}
 }
@@ -291,7 +299,7 @@ function addSettingsProduct(p={}) {
 function updateServices() { const select=$('#settings-service'),previous=select.value;select.replaceChildren(new Option('暫不設定',''));all('#settings-products .product-repo-input').forEach(row=>{const id=row.querySelector('[name=productId]').value.trim()||guessName(row.querySelector('[name=productUrl]').value);if(id)select.append(new Option(id,id));});select.value=previous; }
 async function saveSettings() {
   const localPath=$('#settings-local-path').value.trim(),expectedLocalPath=state.detail.localPath;
-  const form=new FormData($('#settings-form')),input={reviewer:$('#settings-reviewer').value,projects:formProducts(form),expectedSettings:state.detail.settingsToken,agent:{...state.detail.preferences?.agent,command:$('#settings-agent-command').value.trim()||'codex',args:$('#settings-agent-args').value.split('\n').filter(Boolean),prompt:$('#settings-agent-prompt').value,testPlanPrompt:$('#settings-agent-testPlanPrompt').value,skills:$('#settings-agent-skills').value,maxAttempts:Number($('#settings-agent-maxAttempts').value),timeoutMs:Number($('#settings-agent-timeoutMs').value)}};
+  const form=new FormData($('#settings-form')),input={reviewer:$('#settings-reviewer').value,projects:formProducts(form),expectedSettings:state.detail.settingsToken};
   input.globalTimeoutMs=$('#settings-global-timeout').value===''?null:Number($('#settings-global-timeout').value);
   if($('#settings-service').value){const baseUrl=$('#settings-url').value;input.execution={projectId:$('#settings-service').value,baseUrl,healthUrl:$('#settings-health').value||new URL('/health',baseUrl).href,command:[$('#settings-program').value,...$('#settings-args').value.split('\n').map(x=>x.trim()).filter(Boolean)]};}
   await executeJob('repository.setup',input,{refreshAfter:false});localStorage.setItem('bdd-reviewer',input.reviewer);
@@ -327,8 +335,8 @@ async function renderWorkflow(epoch) {
     await openComposer(null,epoch);renderNext();return;
   }
   if(!stages.some(x=>x[0]===state.stage)||f.authoringOnly&&!['GHERKIN','SD'].includes(state.stage))state.stage='GHERKIN';$('#stage-nav').replaceChildren();
-  stages.filter(x=>!f.authoringOnly||['GHERKIN','SD'].includes(x[0])).forEach(([key,title],i)=>{const n=button('',()=>navigate({stage:key}));n.setAttribute('aria-label',`${i+1} ${title}`);n.setAttribute('aria-current',key===state.stage?'step':'false');const done=i<3?f.review.confirmed[['gherkin','sd','tests'][i]]:i===3?f.workflow.verification==='VERIFIED':i===4&&f.verification.status==='VERIFIED';n.classList.toggle('complete',Boolean(done));n.append(el('span',done?'✓':String(i+1),'step-number'),el('span',title));$('#stage-nav').append(n);});
-  const phase=stages.find(x=>x[0]===state.stage);$('#phase-title').textContent=phase[2];$('#feature-status').replaceWith(Object.assign(badge(f.verification.status==='VERIFIED'?'VERIFIED':f.review.stage),{id:'feature-status'}));
+  stages.filter(x=>!f.authoringOnly||['GHERKIN','SD'].includes(x[0])).forEach(([key,title],i)=>{const n=button('',()=>navigate({stage:key}));n.setAttribute('aria-label',`${i+1} ${title}`);n.setAttribute('aria-current',key===state.stage?'step':'false');const done=i<3?f.review.confirmed[['gherkin','sd','tests'][i]]:i===3?f.workflow.verification==='VERIFIED':i===4&&f.workflow.status==='COMPLETE';n.classList.toggle('complete',Boolean(done));n.append(el('span',done?'✓':String(i+1),'step-number'),el('span',title));$('#stage-nav').append(n);});
+  const phase=stages.find(x=>x[0]===state.stage);$('#phase-title').textContent=phase[2];$('#feature-status').replaceWith(Object.assign(badge(f.workflow.status==='COMPLETE'?'已完成':f.workflow.status==='AWAITING_ACCEPTANCE'?'等待人工驗收':f.review.stage),{id:'feature-status'}));
   const editing=['SD','TESTS'].includes(state.stage);$('#requirement-panel').hidden=state.stage!=='GHERKIN';$('#source-panel').hidden=!editing;$('#implementation-panel').hidden=state.stage!=='IMPLEMENTATION';$('#verification-panel').hidden=state.stage!=='VERIFICATION';
   $('#source-picker').hidden=state.stage==='TESTS';$('#hook-panel').hidden=state.stage!=='TESTS';
   const sources=state.stage==='GHERKIN'?[`spec/${f.key}/${f.id}.feature`]:state.stage==='SD'?[`spec/${f.key}/${f.id}.sd.md`]:[`tests/${f.key}/${f.id}.steps.ts`,`tests/${f.key}/${f.id}.hooks.ts`];
@@ -348,9 +356,9 @@ function renderNext() {
   const editable=f?.review.editable??{gherkin:true,sd:false,tests:false},kind={GHERKIN:'gherkin',SD:'sd',TESTS:'tests'}[stage];
   advance.hidden=!kind||!editable[kind]||stage==='TESTS'&&!f?.testPlan.ready||f?.authoringOnly&&stage==='SD';
   $('#save-requirement').hidden=!editable.gherkin;
-  $('#save-source').hidden=!editable[kind];
+  $('#save-source').hidden=!editable[kind]||stage==='SD'&&!designView.editing();
   const sourceActions=['SD','TESTS'].includes(stage)?$('#source-actions'):$('#source-panel .editor-toolbar');
-  sourceActions.append($('#save-source'));
+  (stage==='SD'?$('#design-controls'):sourceActions).append($('#save-source'));
   (stage==='GHERKIN'?$('#requirement-buttons'):sourceActions).append(advance);
   $('#generate-test-plan').hidden=f?.authoringOnly||!f?.review.confirmed.sd||f.testPlan.ready||!['SD','TESTS'].includes(stage);
   $('#generate-design').hidden=stage!=='SD'||!editable.sd||!f?.review.confirmed.gherkin;
@@ -358,7 +366,7 @@ function renderNext() {
   $('#restart-stage').hidden=!f||!kind||stage==='GHERKIN'&&!f.review.records.gherkin;
   $('#restart-stage').textContent=editable[kind]&&stage!=='GHERKIN'?'退回上階段':'退回此階段修改';
   advance.textContent={GHERKIN:'確認需求並繼續',SD:'確認系統設計',TESTS:'確認測試並繼續'}[stage]??'';
-  advance.disabled=stage==='GHERKIN'&&!$('#requirement-gherkin').value.trim();
+  advance.disabled=stage==='GHERKIN'&&!$('#requirement-gherkin').value.trim()||stage==='SD'&&!designView.ready();
   advance.title='';
 }
 async function openSource(relative) {
@@ -366,7 +374,7 @@ async function openSource(relative) {
   const repositoryId=state.repositoryId,request=++state.sourceRequest;$('#source-editor').readOnly=true;
   const file=await api(`/spec-repositories/${repositoryId}/file?path=${encodeURIComponent(relative)}`);if(request!==state.sourceRequest||repositoryId!==state.repositoryId)return;
   state.editor={...file,repositoryId};$('#source-editor').value=file.content;$('#source-path').textContent=relative;$('#editor-state').textContent='已儲存';
-  resizeWorkflowEditor($('#source-editor'));block();
+  designView.load({isDesign:state.stage==='SD',canEdit:feature()?.review.editable.sd??false});resizeWorkflowEditor($('#source-editor'));block();
 }
 async function openComposer(f,epoch) {
   const repositoryId=state.repositoryId,request=++state.composerRequest;
@@ -461,6 +469,7 @@ async function advance() {
   const f=feature(), stage=state.stage;
   if(!['GHERKIN','SD','TESTS'].includes(stage))return;
   const name={GHERKIN:'gherkin',SD:'sd',TESTS:'tests'}[stage];
+  if(stage==='SD'&&!designView.ready())throw new Error('請先回答所有系統決策再確認系統設計。');
   if(stage==='SD')await navigate({stage:'TESTS'},{protect:false});
   const result=await flow('workflow.review',{requirementId:f.requirementId,featureId:f.id,stage:name,expectedDigest:f.review.hashes[name]});
   if(result)await navigate({stage:result.nextStage},{protect:false});
@@ -479,7 +488,8 @@ async function generateDesign() {
   if(!result||repositoryId!==state.repositoryId||epoch!==state.epoch||state.editor!==editor)return;
   if(result.path!==editor.path)throw new Error('系統文件生成路徑不符，請查看執行紀錄。');
   $('#source-editor').value=result.content;$('#editor-state').textContent='尚未儲存';resizeWorkflowEditor($('#source-editor'));
-  note('LLM 已生成系統文件，請審閱後儲存。');block();await interactionLog.load(repositoryId);
+  designView.generated();renderNext();
+  note('LLM 已生成系統文件，請回答未決項目並儲存。');block();await interactionLog.load(repositoryId);
 }
 async function completeTestPlan() {
   if(state.editor&&($('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content))await saveSource();
@@ -528,6 +538,28 @@ async function openProduct(relative) {
 }
 async function saveProduct() { const e=state.product;if(!e)return;const content=$('#project-editor').value;const result=await executeJob('repository.save',{kind:'project',projectId:e.projectId,path:e.path,content,expectedHash:e.sha256},{refreshAfter:false});state.product={...e,content,sha256:result.sha256};await refresh(); }
 function artifact(runId,file,key){return `${API}/spec-repositories/${state.repositoryId}/runs/${runId}/artifact?path=${encodeURIComponent(file)}${key?'&reportKey='+encodeURIComponent(key):''}`;}
+function nativeReportUrl(repositoryId,runId,key){return `${API}/spec-repositories/${repositoryId}/runs/${runId}/report/${key?'by-key/'+encodeURIComponent(key)+'/':''}native/index.html`;}
+function nativeReportFrame(repositoryId,runId,key){
+  const frame=document.createElement('iframe');frame.title='Playwright 測試報告';frame.sandbox='allow-scripts';frame.src=nativeReportUrl(repositoryId,runId,key);frame.className='native-report';return frame;
+}
+function expandableNativeReport(report){
+  const repositoryId=state.repositoryId,manifestUrl=artifact(report.runId,'manifest.json',report.reportKey),details=el('details'),body=el('div');
+  details.className='historical-native-report';details.append(el('summary','Playwright 報告'),body);
+  let loaded=false,loading=false;
+  details.addEventListener('toggle',async()=>{
+    if(!details.open||loaded||loading)return;
+    loading=true;body.setAttribute('aria-busy','true');body.replaceChildren(el('p','正在核對並讀取這次 Playwright 報告…','muted'));
+    try{
+      const response=await fetch(manifestUrl),manifest=await response.json();
+      if(!response.ok)throw new Error(manifest.message);
+      if(manifest.artifacts.some(a=>a.path==='native/index.html'))body.replaceChildren(nativeReportFrame(repositoryId,report.runId,report.reportKey));
+      else body.replaceChildren(el('p','這次執行未產生 Playwright HTML 報告。','empty-state'));
+      loaded=true;
+    }catch(error){body.replaceChildren(el('p','報告無法讀取：'+error.message,'error'));}
+    finally{loading=false;body.setAttribute('aria-busy','false');}
+  });
+  return details;
+}
 function renderReports() {
   const list=$('#run-list');list.replaceChildren();const d=state.detail;
   if(Number.isInteger(d.connection?.nextHistoryOffset))list.append(button('載入更早的測試紀錄',()=>executeJob('repository.history.more',{})));
@@ -546,27 +578,47 @@ function reportCard(report,featureKey,inline=false) {
   if(report.finishedAt)c.append(el('time',new Date(report.finishedAt).toLocaleString()));
   const details=el('details');details.append(el('summary','版本與來源'),el('p',report.runId,'mono'),el('p',report.path,'mono report-path'),el('p',`受測版本：${report.testedSpecCommit??'未記錄'}`,'mono report-path'),el('p',report.origin==='SPEC_REPO'?(report.ref?.startsWith('refs/remotes/')?'已同步至遠端':'規格庫報告'):report.publication?.status==='PUBLISHED'?'已同步至遠端':'本機報告'),badge(report.verification));c.append(details);
   if(report.invalidReason)c.append(el('p','證據錯誤：'+report.invalidReason,'error'));
-  else if(report.state==='SEALED')c.append(button('檢視證據',()=>showReport(report.runId,report.reportKey,inline?'feature-report-view':'report-view',inline?featureKey:null)));
+  else if(report.state==='SEALED')c.append(expandableNativeReport(report),button('檢視證據',()=>showReport(report.runId,report.reportKey,inline?'feature-report-view':'report-view',inline?featureKey:null)));
   return c;
 }
 async function renderFeatureReports() {
   const f=feature(),d=state.detail,panel=$('#feature-report-list');panel.replaceChildren();
   $('#feature-report-scope').textContent=f.title;
   const reports=f.workflow?.reports??[];
-  $('#report-problem').disabled=!reports.some(r=>r.state==='SEALED'&&!r.invalidReason);
+  $('#acceptance-opinion').value=acceptanceDrafts.get(acceptanceKey())??f.workflow?.acceptance?.message??'';
+  delete $('#feature-report-view').dataset.runId;
   if(!reports.length)panel.append(el('p','尚無測試報告。','empty-state'));
   for(const r of reports)panel.append(reportCard(r,f.key,true));
   if(Number.isInteger(d.connection?.nextHistoryOffset))panel.append(button('更早紀錄',()=>executeJob('repository.history.more',{})));
-  const latest=reports.find(r=>r.state==='SEALED'&&!r.invalidReason);
+  const latest=reports.find(r=>r.runId===f.workflow?.latestReport?.runId&&r.state==='SEALED'&&!r.invalidReason)??reports.find(r=>r.state==='SEALED'&&!r.invalidReason);
   if(latest)await showReport(latest.runId,latest.reportKey,'feature-report-view',f.key);
+  else {$('#feature-report-view').hidden=false;$('#feature-report-view').replaceChildren(el('p','尚無 Playwright 報告。','empty-state'));}
+  renderAcceptanceActions();
 }
-async function reportProblem() {
-  const f=feature(),repositoryId=state.repositoryId,runId=$('#feature-report-view').dataset.runId??f.workflow?.reports?.[0]?.runId;
-  dialog('問題回報','',[field('問題描述','message','',{rows:5})],'送回開發',async form=>{
-    if(repositoryId!==state.repositoryId||f.key!==state.featureKey)throw new Error('需求已切換。');
-    await executeJob('workflow.feedback',{requirementId:f.requirementId,featureId:f.id,runId,message:form.get('message')},{refreshAfter:false});
-    await navigate({stage:'IMPLEMENTATION'},{protect:false});
-  });
+function selectedAcceptanceReport(){const panel=$('#feature-report-view');return feature()?.workflow?.reports?.find(r=>r.runId===panel.dataset.runId&&(r.reportKey??'')===(panel.dataset.reportKey??''));}
+function renderAcceptanceActions(){
+  const workflow=feature()?.workflow,report=selectedAcceptanceReport(),complete=workflow?.status==='COMPLETE';
+  $('#acceptance-status').textContent=complete?'驗收通過，流程已完成':workflow?.status==='AWAITING_ACCEPTANCE'?'等待人工驗收':workflow?.needsChanges?'待修改後重新驗收':'';
+  $('#acceptance-opinion').readOnly=acceptanceBusy||complete;
+  $('#request-implementation-changes').disabled=acceptanceBusy||complete||!report||!$('#acceptance-opinion').value.trim();
+  $('#accept-requirement').disabled=acceptanceBusy||workflow?.status!=='AWAITING_ACCEPTANCE'||!report||report.runId!==workflow.latestReport?.runId||report.manifestDigest!==workflow.latestReport?.manifestDigest;
+}
+async function requestImplementationChanges(){
+  const f=feature(),repositoryId=state.repositoryId,report=selectedAcceptanceReport(),message=$('#acceptance-opinion').value;
+  if(acceptanceBusy||!f||!report||!message.trim())return;
+  acceptanceBusy=true;renderAcceptanceActions();
+  try{
+    const preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose:'development',requirementId:f.requirementId,featureId:f.id});
+    if(repositoryId!==state.repositoryId||f.key!==state.featureKey)throw new Error('需求已切換，意見尚未派出。');
+    const result=await development.start({acceptanceFeedback:{runId:report.runId,expectedManifestDigest:report.manifestDigest,message}},{prompt:message,promptDigest:preview.promptDigest,agentSelection:preview.agentSelection});
+    if(result){acceptanceDrafts.delete(`${repositoryId}/${f.key}`);if(repositoryId===state.repositoryId&&f.key===state.featureKey)await navigate({stage:'IMPLEMENTATION'},{protect:false});}
+  }finally{acceptanceBusy=false;renderAcceptanceActions();}
+}
+async function acceptRequirement(){
+  const f=feature(),report=selectedAcceptanceReport();if(acceptanceBusy||!f||!report)return;
+  acceptanceBusy=true;renderAcceptanceActions();
+  try{await executeJob('workflow.accept',{requirementId:f.requirementId,featureId:f.id,runId:report.runId,reportKey:report.reportKey,expectedManifestDigest:report.manifestDigest,message:$('#acceptance-opinion').value});note('驗收通過，需求流程已完成。');}
+  finally{acceptanceBusy=false;renderAcceptanceActions();}
 }
 async function showReport(runId,key,panelId='report-view',expectedFeature=null) {
   const repositoryId=state.repositoryId,token=++state.reportRequest,panel=$('#'+panelId);
@@ -575,6 +627,13 @@ async function showReport(runId,key,panelId='report-view',expectedFeature=null) 
     const r=await fetch(artifact(runId,'manifest.json',key)),m=await r.json();if(!r.ok)throw new Error(m.message);
     if(token!==state.reportRequest||repositoryId!==state.repositoryId||expectedFeature&&expectedFeature!==state.featureKey)return;
     if(expectedFeature&&`${m.requirementId}/${m.featureId}`!==expectedFeature)throw new Error('報告不屬於目前需求，未顯示其他功能的證據。');
+    if(panelId==='feature-report-view'){
+      panel.replaceChildren();
+      if(m.artifacts.some(a=>a.path==='native/index.html')){
+        panel.append(nativeReportFrame(repositoryId,runId,key));
+      }else panel.append(el('p','這次執行未產生 Playwright HTML 報告。','empty-state'));
+      panel.append(el('p',`${m.testOutcome} · ${m.verification}`,'muted'));panel.dataset.runId=runId;panel.dataset.reportKey=key??'';renderAcceptanceActions();return;
+    }
     panel.replaceChildren(el('h2',`${m.requirementId} / ${m.featureId}`),badge(m.testOutcome),document.createTextNode(' '),badge(m.verification),el('p',runId,'mono muted'));
     panel.append(el('p',`受測版本：${m.testedSpecCommit}`,'mono report-path'));
     if(m.failure)panel.append(el('p',m.failure.message,'error'));
@@ -598,7 +657,7 @@ async function showReport(runId,key,panelId='report-view',expectedFeature=null) 
     panel.append(gallery);
     if(m.artifacts.some(a=>a.path==='native/index.html')) {
       const native=el('details');native.append(el('summary','Playwright HTML 報告'));
-      native.addEventListener('toggle',()=>{if(!native.open||native.querySelector('iframe'))return;const frame=document.createElement('iframe');frame.title='Playwright 測試報告';frame.sandbox='allow-scripts';frame.src=API+`/spec-repositories/${repositoryId}/runs/${runId}/report/native/index.html`;frame.className='native-report';native.append(frame);});panel.append(native);
+      native.addEventListener('toggle',()=>{if(!native.open||native.querySelector('iframe'))return;native.append(nativeReportFrame(repositoryId,runId,key));});panel.append(native);
     }
     const links=el('div',undefined,'toolbar');for(const a of m.artifacts.filter(x=>/\.(html|json|zip)$/.test(x.path))){const link=el('a',a.path);link.href=artifact(runId,a.path,key);link.download=a.path.split('/').at(-1);links.append(link);}panel.append(links);
     const details=el('details');details.append(el('summary','技術診斷與版本來源'),el('pre',JSON.stringify(m,null,2)));panel.append(details);panel.dataset.runId=runId;
@@ -608,7 +667,7 @@ async function showReport(runId,key,panelId='report-view',expectedFeature=null) 
 
 function on(selector,event,fn) { $(selector).addEventListener(event,e=>{if(event==='submit')e.preventDefault();safe(()=>fn(e));}); }
 for(const s of ['#bind-home','#bind-empty','#bind-sidebar'])on(s,'click',bindRepository);
-all('[data-home]').forEach(n=>n.onclick=e=>{e.preventDefault();safe(()=>navigate({repositoryId:null,featureKey:null,projectId:null}));});all('[data-view]').forEach(n=>n.onclick=()=>safe(()=>navigate({view:n.dataset.view})));
+all('[data-home]').forEach(n=>n.onclick=e=>{e.preventDefault();safe(()=>navigate({repositoryId:null,view:'features',featureKey:null,projectId:null}));});all('[data-view]').forEach(n=>n.onclick=()=>safe(()=>navigate({view:n.dataset.view})));
 const mobileNavigation=matchMedia('(max-width: 760px)');
 function updateNavigationToggle(){const expanded=mobileNavigation.matches?$('#sidebar').classList.contains('open'):!$('.shell').classList.contains('sidebar-collapsed');$('#menu-toggle').setAttribute('aria-expanded',String(expanded));$('#menu-toggle').setAttribute('aria-label',expanded?'收合導覽':'展開導覽');}
 on('#menu-toggle','click',()=>{if(mobileNavigation.matches)$('#sidebar').classList.toggle('open');else $('.shell').classList.toggle('sidebar-collapsed');updateNavigationToggle();});
@@ -622,10 +681,11 @@ on('#upload-requirement','click',()=>$('#requirement-file').click());
 on('#requirement-file','change',importDocument);
 on('#requirement-description','input',composerChanged);on('#requirement-gherkin','input',composerChanged);
 on('#generate-gherkin','click',generateGherkin);on('#save-requirement','click',saveRequirement);
-on('#feature-select','change',()=>navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'}));on('#save-source','click',saveSource);on('#advance','click',advance);on('#report-problem','click',reportProblem);
+on('#feature-select','change',()=>navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'}));on('#save-source','click',saveSource);on('#advance','click',advance);
+on('#acceptance-opinion','input',()=>{acceptanceDrafts.set(acceptanceKey(),$('#acceptance-opinion').value);renderAcceptanceActions();});on('#request-implementation-changes','click',requestImplementationChanges);on('#accept-requirement','click',acceptRequirement);
 on('#source-select','change',async()=>{const value=$('#source-select').value;if(await guard())await openSource(value);});
 on('#generate-design','click',generateDesign);on('#generate-test-plan','click',generateTestPlan);on('#complete-test-plan','click',completeTestPlan);on('#restart-stage','click',restartStage);
-on('#source-editor','input',()=>{resizeWorkflowEditor($('#source-editor'));$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});on('#project-editor','input',()=>{$('#product-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
+on('#source-editor','input',()=>{resizeWorkflowEditor($('#source-editor'));$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';renderNext();block();});on('#project-editor','input',()=>{$('#product-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
 on('#hook-editor','input',()=>{resizeWorkflowEditor($('#hook-editor'));$('#editor-state').textContent=dirty()?'尚未儲存':'已儲存';block();});
 on('#save-project','click',saveProduct);on('#project-settings','click',()=>navigate({view:'settings'}));
 on('#settings-add-product','click',()=>{addSettingsProduct();state.formDirty=true;});on('#settings-form','input',()=>{state.formDirty=true;block();});on('#settings-form','submit',saveSettings);
@@ -751,6 +811,9 @@ const terminalView=operationTerminal({api,note,onInteractions:entries=>{for(cons
 const interactionLog=interactionHistory({api,labels,getType:currentHistoryType,getKey:currentHistoryKey,getRepositoryId:()=>state.repositoryId,onReset:()=>terminalView.leave()});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
+const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:renderNext});
+const catalogView=agentCatalogView({api,el,button,note,ask,onDirty:()=>{state.formDirty=true;},onSaved:()=>{state.formDirty=false;}});
+on('#open-agent-manager','click',()=>navigate({view:'agents',repositoryId:null,featureKey:null,projectId:null}));
 const chat=chatRoomsView({api,el,button,navigate:id=>navigate({view:'chat',chatId:id}),workspace:()=>navigate({view:'features'}),note});
 // Initialize the route only after every view state and handler exists.
 await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'測試執行已停用';await route();});
