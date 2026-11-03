@@ -1,11 +1,12 @@
 /** One durable submission and its execution transcript per card. */
-export function interactionHistory({api,labels,getType,onReset}) {
+export function interactionHistory({api,labels,getType,getKey=()=>null,getRepositoryId,onReset}) {
   const section=document.querySelector('#interaction-history'),list=document.querySelector('#interaction-list'),more=document.querySelector('#interaction-more');
-  const cards=new Map();let repositoryId=null,cursor=null,generation=0,type=null;
+  const cards=new Map();let repositoryId=null,cursor=null,generation=0,type=null,key=null;
   const active=status=>['QUEUED','RUNNING','CANCELLING'].includes(status);
   const element=(tag,text,cls)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;};
   function parkTerminal(){const terminal=document.querySelector('#operation-terminal-details');if(terminal){terminal.hidden=true;section.append(terminal);}for(const card of cards.values())card.log.hidden=false;}
-  function reset(id){generation++;onReset?.();parkTerminal();for(const card of cards.values())clearTimeout(card.timer);cards.clear();list.replaceChildren();repositoryId=id;type=getType();cursor=null;section.hidden=!id;more.hidden=true;}
+  function reset(id){generation++;onReset?.();parkTerminal();for(const card of cards.values())clearTimeout(card.timer);cards.clear();list.replaceChildren();repositoryId=id;type=getType();key=getKey();cursor=null;section.hidden=!id;more.hidden=true;}
+  const matches=op=>op.isLlmInteraction&&op.interactionType===getType()&&(op.interactionKey??null)===getKey()&&op.request?.repositoryId===(getRepositoryId?.()??repositoryId);
   function ensure(entry) {
     let card=cards.get(entry.id);
     if(!card) {
@@ -37,11 +38,11 @@ export function interactionHistory({api,labels,getType,onReset}) {
     finally{card.loading=false;}
   }
   async function load(id,{older=false}={}) {
-    if(!id){reset(null);return;}if(repositoryId!==id||type!==getType())reset(id);
-    const query=new URLSearchParams({type});if(older&&cursor)query.set('before',cursor);
+    if(!id){reset(null);return;}if(repositoryId!==id||type!==getType()||key!==getKey())reset(id);
+    const query=new URLSearchParams({type});if(key!==null)query.set('key',key);if(older&&cursor)query.set('before',cursor);
     const epoch=generation,value=await api(`/spec-repositories/${id}/interactions?${query}`);
-    if(epoch!==generation)return;
-    const entries=value.entries;
+    if(epoch!==generation||type!==getType()||key!==getKey()||id!==(getRepositoryId?.()??repositoryId))return;
+    const entries=value.entries.filter(entry=>(entry.interactionKey??null)===key);
     for(const entry of entries){const card=ensure(entry);if(!card.article.isConnected)list.append(card.article);if(active(entry.status)&&!card.timer)void poll(card);}
     // SQL cursors establish submission order, independently of response timing.
     [...cards.values()].sort((a,b)=>(b.entry.cursor??Number.MAX_SAFE_INTEGER)-(a.entry.cursor??Number.MAX_SAFE_INTEGER)).forEach((card,index)=>{if(list.children[index]!==card.article)list.insertBefore(card.article,list.children[index]??null);});
@@ -49,14 +50,14 @@ export function interactionHistory({api,labels,getType,onReset}) {
     section.hidden=false;
   }
   async function accepted(op) {
-    if(!op.isLlmInteraction||op.interactionType!==getType())return;
-    if(repositoryId!==op.request?.repositoryId||type!==getType())reset(op.request.repositoryId);
+    if(!matches(op))return;
+    if(repositoryId!==op.request?.repositoryId||type!==getType()||key!==getKey())reset(op.request.repositoryId);
     const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});list.prepend(card.article);card.details.open=true;
     await load(repositoryId);
   }
   function attach(op) {
-    if(!op.isLlmInteraction||op.interactionType!==getType())return false;
-    if(repositoryId!==op.request.repositoryId||type!==getType())reset(op.request.repositoryId);
+    if(!matches(op))return false;
+    if(repositoryId!==op.request.repositoryId||type!==getType()||key!==getKey())reset(op.request.repositoryId);
     const card=ensure({id:op.id,operation:op.request.operation,status:op.status,createdAt:op.created_at});if(!card.article.isConnected)list.prepend(card.article);
     if(document.querySelector('#operation-terminal-details').parentElement===card.body)return true;
     parkTerminal();card.log.hidden=true;card.body.prepend(document.querySelector('#operation-terminal-details'));card.details.open=true;section.hidden=false;return true;

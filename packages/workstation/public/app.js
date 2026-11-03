@@ -82,6 +82,7 @@ async function navigate(patch,{protect=true,replace=false}={}) {
     note('');
   }
   development.leave();
+  if(['repositoryId','featureKey','view','stage'].some(field=>Object.hasOwn(patch,field)&&patch[field]!==state[field])){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);}
   Object.assign(state,patch);state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
   for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
   $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';
@@ -124,6 +125,7 @@ let actionVersion=0;
 const beginAction=()=>++actionVersion;
 const cliOperations = new Set(['workflow.design.generate','workflow.gherkin.generate','repository.tools.prepare','repository.acquire','repository.location','repository.prepare','repository.sync','repository.history.more','workflow.review','workflow.tests.generate','workflow.tests.complete','workflow.verify','workflow.develop','regression.start','repository.dependencies.install','repository.browsers.install','spec.tests.check']);
 function currentHistoryType(){return state.view==='features'?state.stage:({projects:'PROJECTS',reports:'REPORTS',versions:'VERSIONS',settings:'SETTINGS'}[state.view]??'SYSTEM');}
+function currentHistoryKey(){return state.view==='features'?(feature()?.key??state.composer?.key??null):null;}
 let terminalSession = null, terminalTimer;
 function showOperation(op) {
   if (!op || op.request?.repositoryId !== state.repositoryId) return;
@@ -154,7 +156,7 @@ function showOperation(op) {
   void poll();
 }
 async function selectOperation(detail,epoch) {
-  const operations=(detail.operations??[]).filter(op=>op.isLlmInteraction&&cliOperations.has(op.request?.operation)&&op.interactionType===currentHistoryType());
+  const operations=(detail.operations??[]).filter(op=>op.isLlmInteraction&&cliOperations.has(op.request?.operation)&&op.interactionType===currentHistoryType()&&(op.interactionKey??null)===currentHistoryKey());
   const f=feature();
   const preferred=state.view==='features'&&state.stage==='IMPLEMENTATION'&&f && operations.find(op=>op.request.operation==='workflow.develop'&&`${op.request.input.requirementId}/${op.request.input.featureId}`===f.key);
   const ordered=[preferred,...operations.filter(op=>activeOperation(op.status)),...operations].filter(Boolean);
@@ -746,7 +748,7 @@ $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=re
 
 const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));},beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
 const terminalView=operationTerminal({api,note,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));}});
-const interactionLog=interactionHistory({api,labels,getType:currentHistoryType,onReset:()=>terminalView.leave()});
+const interactionLog=interactionHistory({api,labels,getType:currentHistoryType,getKey:currentHistoryKey,getRepositoryId:()=>state.repositoryId,onReset:()=>terminalView.leave()});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
 const chat=chatRoomsView({api,el,button,navigate:id=>navigate({view:'chat',chatId:id}),workspace:()=>navigate({view:'features'}),note});
