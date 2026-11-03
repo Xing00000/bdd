@@ -1,3 +1,4 @@
+import {openChatStream} from './chat-stream.ts';
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import path from 'node:path';
@@ -70,8 +71,11 @@ export async function createServer(options:ServerOptions) {
   const workflowSettings=createWorkflowSettingsService(core.store,llmSettings);
   const chatRuntime=await createCodexChatRuntime(path.join(dataRoot,'chat'));
   const chat=await createChatService(core.store,chatRuntime,defaultChatSettings());
+  app.get<{Querystring:{roomId?:string}}>('/chat-events',async(request,reply)=>{checkOrigin(request);await openChatStream(chat,reply.raw,request.query.roomId);reply.hijack();});
   app.get('/chat-settings',()=>chat.settings());
+  app.get('/chat-models',()=>chat.models());
   app.put('/chat-settings',request=>chat.saveSettings(request.body));
+  app.patch('/chat-settings',request=>chat.patchSettings(request.body));
   app.get('/chat-rooms',()=>chat.list());
   app.post('/chat-rooms',async(request,reply)=>reply.code(201).send(await chat.create(request.body)));
   app.get<{Params:{id:string}}>('/chat-rooms/:id',request=>chat.detail(request.params.id));

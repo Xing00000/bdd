@@ -9,3 +9,7 @@ execFileSync(process.execPath, [path.join(root,'node_modules/typescript/bin/tsc'
 const sqliteOutput=path.join(root,'dist/src/adapters/sqlite');
 await mkdir(sqliteOutput,{recursive:true});
 await copyFile(path.join(root,'src/adapters/sqlite/seed.sql'),path.join(sqliteOutput,'seed.sql'));
+// Runtime tool discovery shares the canonical MCP negotiation implementation.
+const protocolOutput=path.join(root,'dist/packages/workstation');
+await mkdir(protocolOutput,{recursive:true});
+await copyFile(path.join(root,'packages/workstation/mcp-protocol.mjs'),path.join(protocolOutput,'mcp-protocol.mjs'));
