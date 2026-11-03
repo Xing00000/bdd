@@ -30,7 +30,7 @@ process.stdin.setEncoding('utf8');process.stdin.on('data',x=>console.log('INPUT:
 const result=spawnSync(process.execPath,[${JSON.stringify(path.join(toolkitRoot,'scripts/mcp-agent-task.mjs'))},process.argv[2]],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'workbench_get_task',arguments:{}}})+'\\n',encoding:'utf8'});
 if(result.status!==0)throw Error(result.stderr);
 const task=JSON.parse(result.stdout).result.structuredContent;
-if(task.purpose==='gherkin'){const {artifacts}=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const {generateRequirement}=await import('/Users/xing/Desktop/projects/bdd/packages/workstation/requirements.mjs');fs.writeFileSync(task.output,generateRequirement(artifacts['requirement-description.txt']).gherkin);console.log('CLI fixture generated Gherkin');process.exit(0);}
+if(task.purpose==='gherkin'){const {artifacts}=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const {generateRequirement}=await import(${JSON.stringify(path.join(toolkitRoot,'packages/workstation/requirements.mjs'))});fs.writeFileSync(task.output,generateRequirement(artifacts['requirement-description.txt']).gherkin);console.log('CLI fixture generated Gherkin');process.exit(0);}
 if(task.feedback.some(item=>item.message.includes('feedback-pty-fixture'))){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');console.log('Agent saved agent-fixed.txt');}
 setTimeout(()=>process.exit(0),2500);
 `);
