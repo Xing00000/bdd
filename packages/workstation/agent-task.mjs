@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { id, identity, invariant } from '../contracts/index.mjs';
-import { validateAgentSettings, renderAgentPrompt } from './agent-settings.mjs';
+import { validateAgentSettings, renderAgentPrompt,renderPromptTemplate,validateAgentRuntimeSettings,agentLimits } from './agent-settings.mjs';
 import {negotiateProtocolVersion} from './mcp-protocol.mjs';
 import {requirementText} from './requirements.mjs';
 
@@ -19,26 +19,33 @@ export function previewAgentPrompt(snapshot, repositoryId, root, input) {
   const source=purpose==='gherkin'?gherkinInput(input):purpose==='design'?{previousDesign:requirementText(input.previousDesign??'','系統文件')}:undefined;
   const key=source?.editorKey??`${id(requirementId)}/${id(featureId)}`;
   if(purpose!=='gherkin')invariant(snapshot.files.some(f=>f.target==='spec'&&f.path===`spec/${key}/${featureId}.feature`),'FEATURE_NOT_FOUND','找不到需求。',404);
-  const agent=validateAgentSettings(snapshot.settings.agent);
+  const separate=input.agentSnapshot?.prompt;
+  const agent=separate?validateAgentRuntimeSettings(input.agentSnapshot.settings):validateAgentSettings(input.agentSnapshot?.settings??snapshot.settings.agent);
   const values={requirementId:requirementId??'',featureId:featureId??'',spec:root,projects:'See workbench MCP task',feedback:'See workbench MCP task',previousFailure:'See workbench MCP task'};
-  return {prompt:renderAgentPrompt(agent,values,purpose),promptDigest:identity({repositoryId,root,revision:snapshot.revision,agent,key,purpose,...(source?{source}:{})})};
+  const skills=(input.agentSnapshot?.skills??[]).map(s=>`# Skill: ${s.name} (v${s.version})\n${s.content}${s.resources.length?'\n技能資源由 workbench_read_artifact 提供，相對基底：skills/'+s.id+'；檔案：'+s.resources.map(f=>f.path).join('、'):''}`).join('\n\n');
+  const prompt=separate?renderPromptTemplate(separate.content,values)+(skills?'\n\n'+skills:''):renderAgentPrompt(agent,values,purpose);invariant(Buffer.byteLength(prompt)<=agentLimits.promptBytes,'AGENT_PROMPT_TOO_LARGE','所選內容超過 64 KiB 派工限制，請將長文放入 Skill 資源檔');
+  return {prompt,promptDigest:identity({repositoryId,root,revision:snapshot.revision,agent,agentSelection:input.agentSnapshot?.digest??null,key,purpose,...(source?{source}:{})})};
 }
 
 export function approvedAgentPrompt(snapshot, context, purpose) {
   const input=context.request.input;
   const preview=previewAgentPrompt(snapshot,context.request.repositoryId,context.root,{...input,purpose});
-  invariant(typeof input.prompt==='string'&&input.prompt.trim()&&Buffer.byteLength(input.prompt)<=64*1024&&!input.prompt.includes('\0'),'PROMPT_REQUIRED','請先預覽 Prompt，再送出派工。',409);
+  invariant(typeof input.prompt==='string'&&input.prompt.trim()&&Buffer.byteLength(input.prompt)<=agentLimits.promptBytes&&!input.prompt.includes('\0'),'PROMPT_REQUIRED','請先預覽 Prompt，再送出派工。',409);
   invariant(input.promptDigest===preview.promptDigest,'PROMPT_CHANGED','內容或設定已更新，請重新預覽 Prompt。',409);
-  assertTaskTransport(validateAgentSettings(snapshot.settings.agent));
+  assertTaskTransport(selectedAgent(snapshot,context));
   return input.prompt;
 }
+
+export function selectedAgent(snapshot,context){const frozen=context.request.input.agentSnapshot;return frozen?.prompt?validateAgentRuntimeSettings(frozen.settings):validateAgentSettings(frozen?.settings??snapshot.settings.agent);}
+export function selectedTaskSnapshot(snapshot,context){return {...snapshot,catalogSkills:context.request.input.agentSnapshot?.skills??[]};}
+function skillArtifacts(snapshot){return Object.fromEntries((snapshot.catalogSkills??[]).flatMap(skill=>[[`skills/${skill.id}/SKILL.md`,skill.content],...skill.resources.map(file=>[`skills/${skill.id}/${file.path}`,file.content])]));}
 
 export async function writeAgentTask(directory, snapshot, {purpose,requirementId,featureId,workspace,products,feedback,previousFailure='',source,projectIds=[]}) {
   if(purpose==='gherkin'){
     const output=path.join(workspace,gherkinOutputFile);
     const task={purpose,key:source.editorKey,workspace,writable:[output],output,rules:'Read the requirement description and previous Gherkin using workbench_read_artifact. Write one complete UTF-8 Gherkin feature to output. Use English Gherkin keywords, Traditional Chinese domain language, a short Feature description and minimal complete user flows. Give each Scenario a unique stable @case:<id> tag. Preserve existing case tags when revising existing scenarios. Do not modify any other files. Do not claim tests passed.'};
     const artifacts={'requirement-description.txt':source.description,'previous.feature':source.previousGherkin};
-    await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task,artifacts}),{mode:0o600});return file;
+    await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task:{...task,skills:(snapshot.catalogSkills??[]).map(s=>({name:s.name,version:s.version,base:`skills/${s.id}`}))},artifacts:{...artifacts,...skillArtifacts(snapshot)}}),{mode:0o600});return file;
   }
   const key=`${id(requirementId)}/${id(featureId)}`,prefix=`tests/${key}/`;
   const artifacts=Object.fromEntries(snapshot.files.filter(f=>f.target==='spec'&&(
@@ -49,8 +56,8 @@ export async function writeAgentTask(directory, snapshot, {purpose,requirementId
     for(const artifact of Object.keys(artifacts))if(!artifact.startsWith(`spec/${key}/`))delete artifacts[artifact];
     artifacts[`spec/${key}/${featureId}.sd.md`]=source.previousDesign;
     for(const file of snapshot.files.filter(f=>projectIds.some(projectId=>f.target===`project:${projectId}`)))artifacts[`projects/${file.target.slice('project:'.length)}/${file.path}`]=file.content;
-    const task={purpose,key,workspace,output,writable:[output],rules:'Use approved Gherkin and the previous design from workbench_read_artifact. Write the complete system design as Traditional Chinese Markdown to output. Explain responsibilities, data flow, implementation and verification for the approved scenarios. Cite actual available source paths; mark missing or unverified facts explicitly instead of inventing APIs, paths or results. Preserve unrelated design content. Do not change approved behavior, other files, approvals or tests. This is a draft for human review.'};
-    await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task,artifacts}),{mode:0o600});return file;
+    const task={purpose,key,workspace,output,writable:[output],decisionContract:{schemaVersion:1,format:'Exactly one fenced workbench-decisions JSON block in the Markdown; its data is {schemaVersion:1,items:[{id,question,context,options:[{id,label,description}],answer:null}]}. Use stable IDs. Each unresolved architectural or implementation contract must be a concrete question with at least one meaningful proposed option and explanation. Do not include an other option: the workstation always adds it with a custom input. All new answers must be null; never choose for the user. Preserve prior questions and human answers. If no questions remain, include items:[]. Proposed options are not claims of implemented behavior.'},rules:'Use approved Gherkin and the previous design from workbench_read_artifact. Write the complete system design as Traditional Chinese Markdown to output. Explain responsibilities, data flow, implementation and verification for the approved scenarios. Cite actual available source paths; mark missing or unverified facts explicitly instead of inventing APIs, paths or results. Preserve unrelated design content. Do not change approved behavior, other files, approvals or tests. This is a draft for human review.'};
+    await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task:{...task,skills:(snapshot.catalogSkills??[]).map(s=>({name:s.name,version:s.version,base:`skills/${s.id}`}))},artifacts:{...artifacts,...skillArtifacts(snapshot)}}),{mode:0o600});return file;
   }
   const task={purpose,key,workspace,products,writable:purpose==='testPlan'?[path.join(workspace,prefix)]:products,
     rules:purpose==='testPlan'
@@ -60,7 +67,7 @@ export async function writeAgentTask(directory, snapshot, {purpose,requirementId
     feedback,previousFailure};
   await mkdir(directory,{recursive:true,mode:0o700});
   const file=path.join(directory,'task.json');
-  await writeFile(file,JSON.stringify({task,artifacts}),{mode:0o600});
+  await writeFile(file,JSON.stringify({task:{...task,skills:(snapshot.catalogSkills??[]).map(s=>({name:s.name,version:s.version,base:`skills/${s.id}`}))},artifacts:{...artifacts,...skillArtifacts(snapshot)}}),{mode:0o600});
   return file;
 }
 

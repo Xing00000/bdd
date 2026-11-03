@@ -1,3 +1,4 @@
+import {agentOperations} from './agent-catalog.mjs';
 import { validateLocation, managedLocation, checkRepositoryIdentity, remoteIdentity } from './locations.mjs';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -60,15 +61,32 @@ export async function createWorkstation(configuration) {
     async chat(){
       invariant(!closing,'WORKSTATION_CLOSING','Workstation is closing',503);
       if(chatService)return chatService;
-      if(!chatOpening)chatOpening=openChat(store,options.home).then(value=>chatService=value).finally(()=>{chatOpening=undefined;});
+      if(!chatOpening)chatOpening=openChat(store,options.home,service).then(value=>chatService=value).finally(()=>{chatOpening=undefined;});
       return chatOpening;
+    },
+    catalog(){return store.agentCatalog();},
+    saveAgent(input){return store.saveCatalogAgent(input);},
+    saveSkill(input){return store.saveCatalogSkill(input);},
+    savePrompt(input){return store.saveCatalogPrompt(input);},
+    async catalogDefaults(repositoryId){const root=await repositoryPath(options.home,repositoryId,store),snapshot=await ensureDraft({root,options,store,repositoryId});store.ensureAgentDefaults(repositoryId,snapshot.settings.agent);return store.agentDefaults(repositoryId);},
+    async saveCatalogDefault(repositoryId,input){await this.catalogDefaults(repositoryId);return store.saveAgentDefault(repositoryId,input);},
+    async prepareAgentRequest(request){
+      invariant(!Object.hasOwn(request.input??{},'agentSnapshot'),'INVALID_AGENT_SNAPSHOT','執行快照只能由工作台建立');
+      const purpose=agentOperations[request.operation];if(!purpose||!request.input.agentSelection)return request;
+      const root=await repositoryPath(options.home,request.repositoryId,store),snapshot=await ensureDraft({root,options,store,repositoryId:request.repositoryId});
+      const agentSnapshot=store.resolveAgent(request.repositoryId,purpose,request.input.agentSelection);
+      const prepared={...request,input:{...request.input,agentSnapshot}};
+      const {approvedAgentPrompt}=await import('./agent-task.mjs');approvedAgentPrompt(snapshot,{root,request:prepared},purpose);return prepared;
     },
     async agentPreview(repositoryId,input) {
       store.repository(id(repositoryId));
       const root=await repositoryPath(options.home,repositoryId,store);
       const snapshot=await ensureDraft({root,options,store,repositoryId});
       const {previewAgentPrompt}=await import('./agent-task.mjs');
-      return previewAgentPrompt(snapshot,repositoryId,root,input);
+      invariant(!Object.hasOwn(input,'agentSnapshot'),'INVALID_AGENT_SNAPSHOT','預覽快照只能由工作台建立');
+      store.ensureAgentDefaults(repositoryId,snapshot.settings.agent);
+      const agentSnapshot=store.resolveAgent(repositoryId,input.purpose,input.agentSelection);
+      return {...previewAgentPrompt(snapshot,repositoryId,root,{...input,agentSnapshot}),agentSelection:{agentRevisionId:agentSnapshot.agentRevisionId,promptRevisionId:agentSnapshot.promptRevisionId,skillRevisionIds:agentSnapshot.skillRevisionIds},agentSummary:{name:agentSnapshot.agentName,version:agentSnapshot.agentVersion,prompt:{name:agentSnapshot.prompt.name,version:agentSnapshot.prompt.version},skills:agentSnapshot.skills.map(s=>({name:s.name,version:s.version}))}};
     },
     async mcpProgress(request) { const { handleProgress } = await import('./mcp-progress.mjs'); return handleProgress(store, options.home, request); },
     async terminal(operationId, offset=0) {
@@ -193,6 +211,12 @@ export async function createWorkstation(configuration) {
     enqueue(request) {
       invariant(!closing, 'WORKSTATION_CLOSING', 'Workstation is shutting down', 503);
       validateRequest(request); store.repository(request.repositoryId);
+      if(agentOperations[request.operation]&&store.agentDefaults(request.repositoryId).length)invariant(request.input.agentSelection,'AGENT_SELECTION_REQUIRED','請先選擇並預覽 Agent 與 Skills',409);
+      if(agentOperations[request.operation]&&request.input.agentSelection){
+        const resolved=store.resolveAgent(request.repositoryId,agentOperations[request.operation],request.input.agentSelection);
+        invariant(!request.input.agentSnapshot||request.input.agentSnapshot.digest===resolved.digest,'AGENT_PREVIEW_REQUIRED','請先預覽所選 Agent 與 Skills',409);
+        request={...request,input:{...request.input,agentSnapshot:resolved}};
+      }
       const operation = store.enqueue(request); launch(operation.id); return operation;
     },
     operation(operationId) { const value = store.get(id(operationId)); invariant(value, 'OPERATION_NOT_FOUND', 'Operation not found', 404); return value; },

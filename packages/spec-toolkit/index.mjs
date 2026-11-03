@@ -1,3 +1,4 @@
+import {assertDesignDecisionsResolved,parseDesignDecisions} from './design-decisions.mjs';
 import { readdir, readFile, mkdir, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +37,7 @@ export async function configuration(root) {
   return config;
 }
 export const TOOLKIT_VERSION = '1.7.0';
-export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'git-core/progress.mjs', 'git-core/progress-store.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/tags.mjs', 'spec-toolkit/dependencies.mjs', 'spec-toolkit/cli.mjs']);
+export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'git-core/progress.mjs', 'git-core/progress-store.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/design-decisions.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/tags.mjs', 'spec-toolkit/dependencies.mjs', 'spec-toolkit/cli.mjs']);
 export async function toolkitSnapshot(toolkitRoot) {
   const files = await Promise.all(TOOLKIT_FILES.map(async relative => ({ path: relative, content: await readFile(path.join(toolkitRoot, relative)) })));
   return { files, manifest: { schemaVersion: 1, version: TOOLKIT_VERSION, files: files.map(x => ({ path: x.path, sha256: digest(x.content) })) } };
@@ -207,6 +208,7 @@ export async function reviewState(root, requirementId, featureId) {
   return { stage, confirmed, hashes, records, editable: {gherkin:!records.gherkin,sd:!records.sd,tests:confirmed.sd&&!records.tests} };
 }
 export async function confirm(root, input) {
+  if(input.stage==='sd')assertDesignDecisionsResolved(await readFile(await safePath(root,`spec/${id(input.requirementId)}/${id(input.featureId)}/${input.featureId}.sd.md`,{missing:false}),'utf8'));
   if (input.stage === 'tests') {
     const feature = await readJson(await safePath(root, `spec/${input.requirementId}/${input.featureId}/feature.yaml`, { missing: false }));
     invariant(!feature.authoringOnly, 'TEST_RUNNER_NOT_CONFIGURED', '此規格尚未接線工作台測試執行器。', 409);
@@ -231,11 +233,12 @@ export async function confirm(root, input) {
 }
 export async function saveFile(root, input) {
   invariant(typeof input.content === 'string' && Buffer.byteLength(input.content) <= 2 * 1024 * 1024, 'INVALID_CONTENT', 'File content must be at most 2 MiB');
-  invariant((/^(spec|tests)\//.test(input.path) || ['workbench.yaml', 'bdd.config.ts', 'playwright.config.ts', 'package.json', 'package-lock.json'].includes(input.path)) && !/(^|\/)(review|workflow|feedback)\.json$/.test(input.path), 'FILE_NOT_EDITABLE', 'Edit spec/tests sources; use explicit review operations for confirmations', 403);
+  invariant((/^(spec|tests)\//.test(input.path) || ['workbench.yaml', 'bdd.config.ts', 'playwright.config.ts', 'package.json', 'package-lock.json'].includes(input.path)) && !/(^|\/)(review|workflow|feedback|acceptance)\.json$/.test(input.path), 'FILE_NOT_EDITABLE', 'Edit spec/tests sources; use explicit review operations for confirmations', 403);
   const file = await safePath(root, input.path);
   const current = await exists(file) ? digest(await readFile(file)) : null;
   invariant(Object.hasOwn(input, 'expectedHash') && current === input.expectedHash, 'CONTENT_CHANGED', 'File changed since it was opened', 409);
   await assertFileEditable(root, input.path);
+  if(input.path.endsWith('.sd.md'))parseDesignDecisions(input.content);
   await atomicWrite(file, input.content); return { path: input.path, sha256: digest(input.content), committed: false };
 }
 

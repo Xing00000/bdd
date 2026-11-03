@@ -1,3 +1,4 @@
+import {selectedAgent,selectedTaskSnapshot} from './agent-task.mjs';
 /** Real local CLI agent PTY. A zero agent exit is never an acceptance result. */
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -9,7 +10,7 @@ import { constants } from 'node:fs';
 import { WorkstationError, id, invariant, safePath, exists, digest, identity, writeJson } from '../contracts/index.mjs';
 import { execute, processEnvironment, trackChild, terminateSpawnedPty } from '../git-core/index.mjs';
 import { scan, reviewState } from '../spec-toolkit/index.mjs';
-import { ensureDraft, inDraftView } from './authoring.mjs';
+import { ensureDraft, inDraftView, editDraft } from './authoring.mjs';
 import { prepareProjection } from './projection.mjs';
 import { ensureInstallation, savePaths } from './flows.mjs';
 import { sourcePath } from './repository-actions.mjs';
@@ -116,9 +117,16 @@ export async function runDevelopment(context,verify) {
   let snapshot=await ensureDraft({...context,repositoryId:request.repositoryId});
   await inDraftView(snapshot,async view=>invariant(Object.values((await reviewState(view,input.requirementId,input.featureId)).confirmed).every(Boolean),'REVIEWS_REQUIRED','請先確認需求、設計與測試。',409));
   const workflow=(await workflowStatus({...context,repositoryId:request.repositoryId},key)).workflows[0];
-  invariant(workflow.status!=='COMPLETE','STAGE_READ_ONLY','本階段已完成；請先從驗收回報問題，再進入開發。',409);
+  invariant(workflow.status!=='COMPLETE','STAGE_READ_ONLY','本階段已完成人工驗收。',409);
   const prompt=approvedAgentPrompt(snapshot,context,'development');
-  const agent=validateAgentSettings(snapshot.settings.agent),command=await agentExecutable(agent.command),pty=await terminalRuntime(context);
+  const agent=selectedAgent(snapshot,context);
+  if(input.acceptanceFeedback){
+    const feedback=input.acceptanceFeedback;
+    invariant(feedback.message===input.prompt&&typeof feedback.expectedManifestDigest==='string','FEEDBACK_PROMPT_CHANGED','派工文字必須保留原始驗收意見與報告識別。',409);
+    await editDraft({...context,request:{...request,operation:'workflow.feedback',input:{requirementId:input.requirementId,featureId:input.featureId,message:feedback.message,runId:feedback.runId,expectedManifestDigest:feedback.expectedManifestDigest,expectedRevision:snapshot.revision}}});
+    snapshot=store.draft(request.repositoryId);
+  }
+  const command=await agentExecutable(agent.command),pty=await terminalRuntime(context);
   await prepareProjection(context);
   const feature=(await scan(root)).features.find(f=>f.key===key);
   invariant(feature,'FEATURE_NOT_FOUND','找不到需求。',404);
@@ -136,7 +144,7 @@ export async function runDevelopment(context,verify) {
       invariant(selected.length===related.length&&modules.every(m=>m.actual&&!m.dirty),'UNSAVED_PRODUCT','產品有外部未儲存的變更；原稿已保留。',409);
       const reviewed=await reviewState(root,input.requirementId,input.featureId);
       invariant(Object.values(reviewed.confirmed).every(Boolean),'REVIEWS_REQUIRED','規格已變更，請重新確認。',409);
-      const task=await writeAgentTask(path.join(directory,`attempt-${attempt}`),snapshot,{purpose:'development',requirementId:input.requirementId,featureId:input.featureId,workspace:root,
+      const task=await writeAgentTask(path.join(directory,`attempt-${attempt}`),selectedTaskSnapshot(snapshot,context),{purpose:'development',requirementId:input.requirementId,featureId:input.featureId,workspace:root,
         products:selected.map(p=>path.join(root,p.path)),feedback:feedback.items,previousFailure});
       await writeFile(path.join(directory,'prompt.txt'),prompt,{mode:0o600});
       const cwd=selected.length===1?path.join(root,selected[0].path):root;

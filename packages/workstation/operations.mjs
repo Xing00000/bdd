@@ -1,3 +1,4 @@
+import {agentOperations} from './agent-catalog.mjs';
 import { repositoryPath, changeLocation } from './locations.mjs';
 export { repositoryPath } from './locations.mjs';
 import { acquireRepository, moreReportHistory } from './catalog.mjs';
@@ -25,6 +26,8 @@ import { generateTestPlan } from './test-plan.mjs';
 import {generateDesign} from './design-generation.mjs';
 import {generateGherkin} from './gherkin-generation.mjs';
 import { generateTestSkeleton } from './test-plan-codegen.mjs';
+import {readAcceptance} from './acceptance.mjs';
+import {readFeedback} from './feedback.mjs';
 import { prepareRepositoryTools } from './repository-tools.mjs';
 
 export const operationNames = Object.freeze([
@@ -52,6 +55,7 @@ export function validateRequest(request) {
 }
 export async function executeOperation(options, store, request) {
   validateRequest(request);
+  if(agentOperations[request.operation]&&request.input.agentSelection&&!request.input.agentSnapshot)request={...request,input:{...request.input,agentSnapshot:store.resolveAgent(request.repositoryId,agentOperations[request.operation],request.input.agentSelection)}};
   const { home, toolkitRoot, allowLocal = false, hosts = ['github.com'], enableExecution = false } = options;
   const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id, store);
   const git = createGit({ allowLocal, hosts }), input = request.input;
@@ -220,7 +224,7 @@ export async function repositoryDetail(options, workspace) {
   let spec, specError;
   try {
     spec = await scan(root);
-    spec.features = await Promise.all(spec.features.map(async feature => ({ ...feature, review: await reviewState(root, feature.requirementId, feature.id) })));
+    spec.features = await Promise.all(spec.features.map(async feature => ({ ...feature, review: await reviewState(root, feature.requirementId, feature.id),feedback:await readFeedback(root,feature.key),acceptance:await readAcceptance(root,feature.requirementId,feature.id) })));
   } catch (error) { specError = { code: error.code, message: error.message }; }
   let modules = [], moduleError;
   try { modules = await git.modules(root); } catch (error) { moduleError = { code: error.code, message: error.message }; }

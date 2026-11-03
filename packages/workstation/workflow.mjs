@@ -1,4 +1,5 @@
 import { readFeedback } from './feedback.mjs';
+import {readAcceptance} from './acceptance.mjs';
 import { digest, identity, invariant } from '../contracts/index.mjs';
 import { ensureDraft, inDraftView, sourceFiles } from './authoring.mjs';
 import { scan, reviewState } from '../spec-toolkit/index.mjs';
@@ -14,6 +15,7 @@ export async function workflowStatus(context, selection) {
       if (selection && f.key !== selection && f.requirementId !== selection) continue;
       f.review = await reviewState(root, f.requirementId, f.id);
       f.feedback = await readFeedback(root,f.key);
+      f.acceptance=await readAcceptance(root,f.requirementId,f.id);
       const value = workflowState(f, modules, context.store.runs(repositoryId), context.store.reports(repositoryId), data.config.specRepositoryId);
       value.portableState = await recordedWorkflow(root, f, value); value.title = f.title;
       workflows.push(value);

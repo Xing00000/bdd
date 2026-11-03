@@ -1,5 +1,7 @@
+import {selectedAgent,selectedTaskSnapshot} from './agent-task.mjs';
 /** Generate a plan from the confirmed SQLite revision; checkout and products are context only. */
 import path from 'node:path';
+import {stripVTControlCharacters} from 'node:util';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, atomicWrite, writeJson, walk, exists } from '../contracts/index.mjs';
 import { execute, processEnvironment } from '../git-core/index.mjs';
@@ -34,7 +36,7 @@ export async function generateTestPlan(context) {
   invariant(input.expectedDigest===current.hashes.tests,'CONTENT_CHANGED','測試計劃已變更，請先重新讀取再交由 LLM 補齊。',409);
   invariant(options.enableExecution,'EXECUTION_DISABLED','主機尚未啟用測試計劃生成；系統設計已保存。',403);
   const prompt=approvedAgentPrompt(snapshot,context,'testPlan');
-  const agent=validateAgentSettings(snapshot.settings.agent),command=await agentExecutable(agent.command);
+  const agent=selectedAgent(snapshot,context),command=await agentExecutable(agent.command);
   const parent=await safePath(options.home,`test-plans/${request.operationId}`);await mkdir(parent,{recursive:true});
   const root=await mkdtemp(path.join(parent,'attempt-'));
   try {
@@ -73,12 +75,13 @@ async function generateInView(context,snapshot,feature,root,prefix,receiptId,age
     invariant(result.exitCode===0&&!result.timedOut&&!result.overflow,'TEST_PLAN_WORKSPACE_FAILED',(result.stderr||result.stdout).slice(-4000));
   }
   const before=await sourceFiles(root),projectHashes=await contextHashes(root);
-  const task=await writeAgentTask(parent,snapshot,{purpose:'testPlan',requirementId:input.requirementId,featureId:input.featureId,workspace:root,products:projects,feedback:[]});
+  const task=await writeAgentTask(parent,selectedTaskSnapshot(snapshot,context),{purpose:'testPlan',requirementId:input.requirementId,featureId:input.featureId,workspace:root,products:projects,feedback:[]});
   await atomicWrite(path.join(root,'.runtime/test-plan-prompt.txt'),prompt);
   const args=agentArguments(agent,{prompt,spec:root,project:root,task});
   const result=await runInteractiveAgent(context,command,args,root,agent.timeoutMs);
+  const outputTail=stripVTControlCharacters(result.output.slice(-12000));
   await writeJson(path.join(root,'.runtime/test-plan-agent.json'),result);
-  invariant(result.exitCode===0&&!result.signal&&!result.timedOut,'TEST_PLAN_AGENT_FAILED',`測試計劃生成失敗，原內容保留。\n${result.output.slice(-12000)}`);
+  invariant(result.exitCode===0&&!result.signal&&!result.timedOut,'TEST_PLAN_AGENT_FAILED',`測試計劃生成失敗，原內容保留。\n${outputTail}`);
   const after=await sourceFiles(root),outside=files=>files.filter(f=>!f.path.startsWith(prefix)).map(f=>[f.path,digest(f.content)]).sort(([a],[b])=>a.localeCompare(b));
   invariant(identity(outside(before))===identity(outside(after))&&identity(projectHashes)===identity(await contextHashes(root)),'AGENT_CHANGED_INPUT','Agent 修改了測試計劃以外的內容；提案未保存。',409);
   const proposal=after.filter(file=>file.path.startsWith(prefix));
@@ -89,7 +92,13 @@ async function generateInView(context,snapshot,feature,root,prefix,receiptId,age
   return inDraftView(snapshot,async validationRoot=>{
     for(const file of proposal)await atomicWrite(await safePath(validationRoot,file.path),file.content);
     await useRepositoryTools(validationRoot,options,request);
-    const check=await checkTests(validationRoot,input,store,repositoryId,true);
+    let check;
+    try { check=await checkTests(validationRoot,input,store,repositoryId,true); }
+    catch(error) {
+      error.message+=`\n\nCLI exit ${result.exitCode} 僅表示程序結束，測試計劃未通過檢查，原稿保留。\nCLI 最後輸出（包含 Agent 回報的原因）：\n${outputTail}`;
+      error.details={...error.details,agent:{exitCode:result.exitCode,signal:result.signal,timedOut:result.timedOut,outputTail}};
+      throw error;
+    }
     await refreshWorkflowFiles(validationRoot,{modules:draftModules(snapshot,store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId)});
     const changes=(await sourceFiles(validationRoot)).filter(file=>!snapshot.files.some(old=>old.target===file.target&&old.path===file.path&&old.sha256===digest(file.content)))
       .map(file=>({...file,baseHash:snapshot.files.find(old=>old.target===file.target&&old.path===file.path)?.baseHash??null}));

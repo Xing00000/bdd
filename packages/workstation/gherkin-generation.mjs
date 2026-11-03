@@ -1,3 +1,4 @@
+import {selectedAgent,selectedTaskSnapshot} from './agent-task.mjs';
 /** CLI-authored drafts are proposals, never an automatic requirement approval. */
 import path from 'node:path';
 import {createRequire} from 'node:module';
@@ -21,12 +22,12 @@ export async function generateGherkin(context){
     const [requirementId,featureId]=source.editorKey.split('/');
     await inDraftView(snapshot,async root=>{await assertFeatureActive(root,requirementId,featureId);invariant(!(await reviewState(root,requirementId,featureId)).records.gherkin,'STAGE_READ_ONLY','需求已確認，請先退回需求階段。',409);});
   }
-  const prompt=approvedAgentPrompt(snapshot,context,'gherkin'),agent=validateAgentSettings(snapshot.settings.agent),command=await agentExecutable(agent.command);
+  const prompt=approvedAgentPrompt(snapshot,context,'gherkin'),agent=selectedAgent(snapshot,context),command=await agentExecutable(agent.command);
   const directory=await safePath(options.home,`gherkin-generations/${request.operationId}`),workspace=path.join(directory,'workspace');
   await mkdir(workspace,{recursive:true,mode:0o700});
   const initialized=await execute('git',['init','--quiet','--template='],{cwd:workspace,env:processEnvironment({HOME:process.env.HOME},{git:true})});
   invariant(initialized.exitCode===0&&!initialized.timedOut&&!initialized.overflow,'GHERKIN_WORKSPACE_FAILED','無法建立 Gherkin 生成工作區。');
-  const task=await writeAgentTask(directory,snapshot,{purpose:'gherkin',workspace,source});
+  const task=await writeAgentTask(directory,selectedTaskSnapshot(snapshot,context),{purpose:'gherkin',workspace,source});
   const result=await runInteractiveAgent(context,command,agentArguments(agent,{prompt,spec:context.root,project:workspace,task}),workspace,agent.timeoutMs);
   invariant(result.exitCode===0&&!result.signal&&!result.timedOut,'GHERKIN_AGENT_FAILED',`CLI 生成 Gherkin 失敗，原稿已保留。\n${result.output.slice(-12000)}`);
   const output=await safePath(workspace,gherkinOutputFile,{missing:false}),stat=await lstat(output);

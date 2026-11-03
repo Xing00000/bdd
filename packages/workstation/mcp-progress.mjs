@@ -2,7 +2,7 @@ import { id, invariant } from '../contracts/index.mjs';
 import {readProgress} from '../git-core/progress-store.mjs';
 import {supportedProtocolVersions,negotiateProtocolVersion} from './mcp-protocol.mjs';
 
-const definitions = [
+export const progressTools = [
   ['workbench_list_repositories', {}, []],
   ['workbench_list_jobs', { repositoryId: {type:'string'}, limit:{type:'integer',minimum:1,maximum:50} }, ['repositoryId']],
   ['workbench_get_job_progress', { repositoryId:{type:'string'}, jobId:{type:'string'}, recentBytes:{type:'integer',minimum:1,maximum:16384}, staleAfterMs:{type:'integer',minimum:1000,maximum:86400000} }, ['repositoryId','jobId']]
@@ -48,9 +48,9 @@ export async function handleProgress(store, home, request) {
     let result;
     if(q.method==='initialize') {result={protocolVersion:negotiateProtocolVersion(q.params?.protocolVersion),capabilities:{tools:{}},serverInfo:{name:'workbench-progress',version:'1.0.0'}};}
     else if(q.method==='ping')result={};
-    else if(q.method==='tools/list')result={tools:definitions};
+    else if(q.method==='tools/list')result={tools:progressTools};
     else if(q.method==='tools/call') {
-      const def=definitions.find(x=>x.name===q.params?.name); invariant(def,'UNKNOWN_TOOL','Unknown tool'); const args=q.params.arguments??{};
+      const def=progressTools.find(x=>x.name===q.params?.name); invariant(def,'UNKNOWN_TOOL','Unknown tool'); const args=q.params.arguments??{};
       invariant(args && typeof args==='object'&&!Array.isArray(args)&&Object.keys(args).every(k=>Object.hasOwn(def.inputSchema.properties,k))&&def.inputSchema.required.every(k=>Object.hasOwn(args,k)),'INVALID_ARGUMENT','Invalid arguments');
       let value;
       if(def.name==='workbench_list_repositories')value={repositories:store.repositories().map(({id,title})=>({id,title}))};

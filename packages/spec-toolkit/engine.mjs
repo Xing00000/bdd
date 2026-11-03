@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { caseSelection } from './tags.mjs';
 import { materializeDependencies, reuseForExecution } from './dependencies.mjs';
-import { invariant, id, version, exists, safePath, walk, writeJson, readJson, atomicWrite, digest, identity, escapeHtml, errorResult } from '../contracts/index.mjs';
+import { WorkstationError, invariant, id, version, exists, safePath, walk, writeJson, readJson, atomicWrite, digest, identity, escapeHtml, errorResult } from '../contracts/index.mjs';
 import { execute, processEnvironment, trackChild, startProgressPty, gitSourceFiles } from '../git-core/index.mjs';
 import { currentProgress } from '../git-core/progress.mjs';
 import { validate, reviewState, configuration, featureKey } from './index.mjs';
@@ -145,6 +145,7 @@ export async function validateTestImplementation(root, requirementId, featureId)
   invariant(required.every(file => files.includes(file)), 'TEST_PLAN_REQUIRED', '測試計劃必須包含 steps.ts 與 hooks.ts。');
   const ts = createRequire(path.join(root, 'package.json'))('typescript');
   const handlers = new Set(['Given','When','Then','Before','After','BeforeStep','AfterStep']);
+  const incompleteHandlers=[];
   for (const relative of files) {
     const file = await safePath(directory, relative), text = await readFile(file, 'utf8');
     if(required.includes(relative))invariant(text.trim(), 'TEST_PLAN_REQUIRED', `${relative} 尚無測試實作。`);
@@ -163,7 +164,10 @@ export async function validateTestImplementation(root, requirementId, featureId)
           const callback=node.arguments.find(arg=>ts.isArrowFunction(arg)||ts.isFunctionExpression(arg));
           if(callback) {
             const body=callback.body;
-            invariant(body&&(!ts.isBlock(body)||body.statements.some(statement=>!ts.isEmptyStatement(statement)&&!ts.isThrowStatement(statement))), 'TEST_PLAN_INCOMPLETE', `${relative} 包含空白或尚未實作的 handler。`);
+            if(!(body&&(!ts.isBlock(body)||body.statements.some(statement=>!ts.isEmptyStatement(statement)&&!ts.isThrowStatement(statement))))) {
+              const position=source.getLineAndCharacterOfPosition(node.getStart(source)),step=node.arguments[0];
+              incompleteHandlers.push({path:`tests/${key}/${relative}`,line:position.line+1,column:position.character+1,handler:expression.text,step:step&&ts.isStringLiteralLike(step)?step.text:expression.text});
+            }
           }
         }
       }
@@ -171,6 +175,7 @@ export async function validateTestImplementation(root, requirementId, featureId)
     };
     visit(source);
   }
+  if(incompleteHandlers.length)throw new WorkstationError('TEST_PLAN_INCOMPLETE',`測試計劃仍有 ${incompleteHandlers.length} 個空白或尚未實作的 handler：\n${incompleteHandlers.map(item=>`${item.path}:${item.line}:${item.column} ${item.handler} ${item.step}`).join('\n')}`,422,{incompleteHandlers});
   const shared=(await gitSourceFiles(root,['tests/_shared',`tests/${requirementId}/_shared`])).filter(file=>file.endsWith('.ts'));
   const result=await execute(path.join(root,'node_modules/.bin/tsc'), ['--noEmit','--strict','--allowJs','--target','ES2023','--module','ESNext','--moduleResolution','Bundler','--esModuleInterop',...shared,...files.map(file=>`tests/${key}/${file}`)], {cwd:root,env:processEnvironment()});
   invariant(result.exitCode===0&&!result.timedOut&&!result.overflow,'TEST_PLAN_TYPECHECK_FAILED',(result.stderr+result.stdout).slice(-12000));

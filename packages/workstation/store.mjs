@@ -1,3 +1,5 @@
+import {installPromptCatalog,migrateAgentPrompts} from './prompt-catalog.mjs';
+import {installAgentCatalog,agentCatalogMethods} from './agent-catalog.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { installDraftSchema, draftMethods, isLocalSave, requiresRepositoryLock, projectionJobPredicate } from './draft-store.mjs';
 import path from 'node:path';
@@ -15,7 +17,7 @@ export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 10, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 12, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
@@ -30,6 +32,8 @@ export function openStore(home) {
   }
   if(version>0&&version<7) { const backup=path.join(home,'before-catalog-regression-v7.sqlite'); if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);} }
   if(version>0&&version<8) { const backup=path.join(home,'before-local-directories-v8.sqlite'); if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);} }
+  if(version>0&&version<11){const backup=path.join(home,'before-agent-catalog-v11.sqlite');if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}}
+  if(version>0&&version<12){const backup=path.join(home,'before-prompt-catalog-v12.sqlite');if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}}
   db.exec('BEGIN IMMEDIATE');
   try {
     const old = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='workspaces'").get();
@@ -96,10 +100,12 @@ export function openStore(home) {
       previous_path TEXT NOT NULL, local_path TEXT NOT NULL, created_at TEXT NOT NULL,
       PRIMARY KEY(repository_id,operation_id)
     );
-    PRAGMA user_version=10;
+    PRAGMA user_version=12;
   `);
   if(!db.prepare('PRAGMA table_info(spec_repositories)').all().some(c=>c.name==='local_path')) db.exec('ALTER TABLE spec_repositories ADD COLUMN local_path TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_repository_local_path ON spec_repositories(local_path) WHERE local_path IS NOT NULL');
+  installAgentCatalog(db);
+  installPromptCatalog(db);
   installDraftSchema(db);
   installProgressSchema(db);
   if(!db.prepare('PRAGMA table_info(operations)').all().some(column=>column.name==='interaction_type'))db.exec('ALTER TABLE operations ADD COLUMN interaction_type TEXT');
@@ -109,6 +115,8 @@ export function openStore(home) {
   for(const row of db.prepare(`SELECT id,request_json,result_json FROM operations WHERE interaction_key IS NULL AND ${llmInteractionPredicate()} ORDER BY rowid`).all())db.prepare('UPDATE operations SET interaction_key=? WHERE id=?').run(keyFor(JSON.parse(row.request_json),row.result_json?JSON.parse(row.result_json):null),row.id);
   db.exec('CREATE INDEX IF NOT EXISTS interactions_by_feature ON operations(repository_id,interaction_key,interaction_type)');
   db.exec(`DROP INDEX IF EXISTS one_writer_per_repository; CREATE UNIQUE INDEX one_writer_per_repository ON operations(repository_id) WHERE status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate};`);
+  if(version<11){const catalog=agentCatalogMethods(db,callback=>callback());for(const row of db.prepare('SELECT repository_id,settings_json FROM repository_preferences').all())catalog.ensureAgentDefaults(row.repository_id,JSON.parse(row.settings_json).agent);}
+  if(version<12)migrateAgentPrompts(db);
   db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
   function keyFor(request,result){
@@ -127,6 +135,7 @@ export function openStore(home) {
   const atomic=callback=>{const own=!db.isTransaction;if(own)db.exec('BEGIN IMMEDIATE');try{const result=callback();if(own)db.exec('COMMIT');return result;}catch(error){if(own)db.exec('ROLLBACK');throw error;}};
   return {
     ...draftMethods(db),
+    ...agentCatalogMethods(db,atomic),
     chatStorage(schemaSql) {
       atomic(()=>{if(!db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='chat_rooms'").get())db.exec(schemaSql);});
       const execute=command=>{const statement=db.prepare(command.sql),result=command.mode==='all'?statement.all(...(command.params??[])):statement.run(...(command.params??[]));

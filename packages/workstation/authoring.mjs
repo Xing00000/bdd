@@ -1,6 +1,7 @@
 import { draftModules, workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules } from './workflow-state.mjs';
 import { seedAgentSettings, validateAgentSettings } from './agent-settings.mjs';
 import { saveFeedback, readFeedback } from './feedback.mjs';
+import {readAcceptance,saveAcceptance} from './acceptance.mjs';
 import { canonicalLocation } from './locations.mjs';
 /** Authoring never mutates the checkout, downloads repositories or executes repository code. */
 import path from 'node:path';
@@ -94,6 +95,7 @@ export async function draftDetail(context) {
   await inDraftView(snapshot,async root=>{
     try { spec=await scan(root); for(const f of spec.features) {
       f.review=await reviewState(root,f.requirementId,f.id); f.feedback=await readFeedback(root,f.key);
+      f.acceptance=await readAcceptance(root,f.requirementId,f.id);
       f.workflow=workflowState(f,workflowModules,context.store.runs(repositoryId),context.store.reports(repositoryId),spec.config.specRepositoryId);
       f.workflow.portableState=await recordedWorkflow(root,f,f.workflow);
     } }
@@ -145,6 +147,7 @@ export async function editDraft(context) {
   const {store,request,options}=context,repositoryId=request.repositoryId,input=request.input;
   const prior=store.draftReceipt(repositoryId,request.operationId,request);if(prior)return prior;
   const snapshot=await ensureDraft({...context,repositoryId}),settings={...snapshot.settings};
+  if(input.expectedRevision!==undefined)invariant(snapshot.revision===input.expectedRevision,'DRAFT_REVISION_CHANGED','內容已變更，尚未派出修改。',409);
   let extra=[],result={};
   return inDraftView(snapshot,async root=>{
     if(request.operation==='repository.setup') {
@@ -164,7 +167,7 @@ export async function editDraft(context) {
         settings.globalTimeoutMs=input.globalTimeoutMs;
       }
       config.projects=projects.map(p=>({id:p.id,path:`projects/${p.id}`}));await writeJson(path.join(root,'workbench.yaml'),config);
-      if(input.agent!==undefined)settings.agent=validateAgentSettings(input.agent,settings.agent);
+      if(input.agent!==undefined){invariant(!store.agentDefaults(repositoryId).length,'AGENT_CATALOG_REQUIRED','Agent 已遷入管理中心，請從 Agent 與 Skill 管理更新',409);settings.agent=validateAgentSettings(input.agent,settings.agent);}
       if(input.execution)await configureExecution(root,{...input.execution,expectedHash:digest(await readFile(path.join(root,'workbench.yaml')))});
       Object.assign(settings,{schemaVersion:1,reviewer:input.reviewer.trim(),configured:true,projects,...(input.execution?{execution:input.execution}:{}),updatedAt:new Date().toISOString()});
       result={ready:true,settings,connection:'NOT_CHECKED'};
@@ -177,6 +180,8 @@ export async function editDraft(context) {
         result={...publicPlan(plan),status:'APPLIED',committed:false};
       } else if(request.operation==='workflow.feedback') {
         result=await saveFeedback(root,input,context);
+      } else if(request.operation==='workflow.accept') {
+        result=await saveAcceptance(root,input,context,snapshot);
       } else if(request.operation==='workflow.delete') {
         invariant(Number.isInteger(input.expectedRevision),'REVISION_REQUIRED','請重新載入需求後再刪除。',409);
         invariant(input.expectedRevision===snapshot.revision,'DRAFT_REVISION_CHANGED','需求或設定已更新，請重新載入後再確認刪除。',409);

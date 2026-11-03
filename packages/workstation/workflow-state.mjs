@@ -2,6 +2,7 @@
  * The stage string is never an authority by itself; recompute from matching inputs.
  */
 import { readFeedback } from './feedback.mjs';
+import {readAcceptance} from './acceptance.mjs';
 import { readFile } from 'node:fs/promises';
 import { id, identity, digest, exists, safePath, writeJson } from '../contracts/index.mjs';
 import { createGit } from '../git-core/index.mjs';
@@ -51,16 +52,18 @@ export function workflowState(feature, modules = [], runs = [], reports = [], sp
   const latest = history.find(r => r.current && r.manifest.scope === 'ALL_CASES');
   const feedback=(feature.feedback?.items??[]).filter(item=>!latest?.qualified || !latest.manifest.startedAt || time(latest.manifest.startedAt)<=time(item.createdAt));
   const verified = !pending && !feedback.length && Boolean(latest?.qualified);
+  const sourceDigests={gherkin:feature.review.hashes.gherkin,sd:feature.review.hashes.sd,tests:feature.review.hashes.tests};
+  const acceptance=verified?(feature.acceptance?.items??[]).findLast(a=>a.runId===latest.runId&&a.manifestDigest===identity(latest.manifest)&&identity(a.sourceDigests)===identity(sourceDigests)):null;
   const stage = pending ? reviewStage(feature.review.confirmed)
-    : verified ? 'VERIFIED' : 'IMPLEMENTATION';
+    : acceptance ? 'VERIFIED' : verified ? 'VERIFICATION' : 'IMPLEMENTATION';
   return {
     schemaVersion: 1, specRepositoryId, requirementId: feature.requirementId, featureId: feature.id,
     key: feature.key ?? `${feature.requirementId}/${feature.id}`, stage,
-    status: pending ? 'AWAITING_REVIEW' : verified ? 'COMPLETE' : 'READY_TO_RUN',
+    status: pending ? 'AWAITING_REVIEW' : acceptance ? 'COMPLETE' : verified ? 'AWAITING_ACCEPTANCE' : 'READY_TO_RUN',
     requiredReview: pending ?? null, feedback,
     needsChanges: feedback.length>0,
-    nextAction: pending ? 'HUMAN_REVIEW' : verified ? 'NONE' : 'RUN_VERIFICATION',
-    sourceDigests: { gherkin: feature.review.hashes.gherkin, sd: feature.review.hashes.sd, tests: feature.review.hashes.tests },
+    nextAction: pending ? 'HUMAN_REVIEW' : acceptance ? 'NONE' : verified ? 'HUMAN_ACCEPTANCE' : 'RUN_VERIFICATION',
+    sourceDigests, acceptance:acceptance??null,
     reviewPath: `spec/${feature.requirementId}/review.json`, confirmed: feature.review.confirmed,
     verification: verified ? 'VERIFIED' : history.some(r => r.manifest.verification === 'VERIFIED' && !r.current) ? 'STALE'
       : history.length ? 'NOT_VERIFIED' : 'NOT_RUN',
@@ -109,6 +112,7 @@ export async function refreshWorkflowFiles(root, { modules = [], runs = [], repo
   for (const feature of data.features) {
     feature.review = await reviewState(root, feature.requirementId, feature.id);
     feature.feedback = await readFeedback(root,feature.key);
+    feature.acceptance=await readAcceptance(root,feature.requirementId,feature.id);
     const workflow = workflowState(feature, modules, runs, reports, data.config.specRepositoryId);
     const { reports: ignored, latestHistoricalReport, ...portable } = workflow;
     // Persist a portable evidence reference, not machine-local IDs, paths or jobs.

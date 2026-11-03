@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "prompts": [
+    {"purpose":"gherkin","name":"Gherkin 需求生成","content":"Generate Gherkin. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed."},
+    {"purpose":"design","name":"系統設計與未決事項","content":"Generate the system design document for {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed. Follow the task decisionContract: turn unresolved contracts into concrete questions and proposed choices, preserve human answers, and never choose for the user."},
+    {"purpose":"testPlan","name":"測試計劃生成","content":"Complete the test plan for {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed."},
+    {"purpose":"development","name":"功能實作","content":"Implement {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed."}
+  ]
+}

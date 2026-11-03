@@ -2,6 +2,12 @@
 import { readFileSync } from 'node:fs';
 import { invariant } from '../contracts/index.mjs';
 
+export const agentPromptFields=Object.freeze({gherkin:'gherkinPrompt',design:'designPrompt',testPlan:'testPlanPrompt',development:'prompt'});
+const promptSeedData=JSON.parse(readFileSync(new URL('./seeds/prompts.json',import.meta.url),'utf8'));
+invariant(promptSeedData.schemaVersion===1&&Array.isArray(promptSeedData.prompts)&&promptSeedData.prompts.length===Object.keys(agentPromptFields).length&&new Set(promptSeedData.prompts.map(p=>p.purpose)).size===promptSeedData.prompts.length&&promptSeedData.prompts.every(p=>Object.hasOwn(agentPromptFields,p.purpose)&&typeof p.name==='string'&&p.name.trim()),'INVALID_PROMPT_SEED','Git Prompt seed 格式無效');
+export const defaultPromptSeeds=Object.freeze(promptSeedData.prompts.map(p=>Object.freeze({...p})));
+const promptSeed=purpose=>defaultPromptSeeds.find(p=>p.purpose===purpose).content;
+
 // Recognize the exact prior factory seed; user-authored instructions are retained.
 const legacyBundledSkills=readFileSync(new URL('../../skills/playwright-bdd/SKILL.md',import.meta.url),'utf8');
 const priorFactory = Object.freeze({
@@ -12,14 +18,15 @@ const priorArgs=['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{
 const defaults = Object.freeze({
   command: 'codex',
   args: Object.freeze(['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}']),
-  prompt: 'Implement {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed.',
+  prompt: promptSeed('development'),
   skills: '',
-  testPlanPrompt: 'Complete the test plan for {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed.',
-  designPrompt: 'Generate the system design document for {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed.',
-  gherkinPrompt: 'Generate Gherkin. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed.',
+  testPlanPrompt: promptSeed('testPlan'),
+  designPrompt: promptSeed('design'),
+  gherkinPrompt: promptSeed('gherkin'),
   maxAttempts: 3,
   timeoutMs: 900000,
 });
+export const agentLimits=Object.freeze({promptBytes:64*1024,skillBytes:256*1024});
 const variables = new Set(['requirementId','featureId','spec','projects','feedback','previousFailure']);
 const tokenPattern = /\{([^{}]+)\}/g;
 
@@ -36,22 +43,27 @@ export function seedAgentSettings(input = {}) {
   return settings;
 }
 
+export function validatePromptTemplate(content,label='Prompt'){
+ invariant(typeof content==='string'&&content.trim()&&!content.includes('\0')&&Buffer.byteLength(content)<=agentLimits.promptBytes,'INVALID_AGENT',`${label} 不可為空且必須在 64 KiB 內。`);
+ for(const match of content.matchAll(tokenPattern))invariant(variables.has(match[1]),'INVALID_AGENT',`${label} 未知模板變數：${match[1]}`);return content;
+}
+export function renderPromptTemplate(content,values){return validatePromptTemplate(content).replace(tokenPattern,(_,name)=>{invariant(Object.hasOwn(values,name)&&typeof values[name]==='string','INVALID_AGENT',`Prompt 缺少模板變數：${name}`);return values[name];});}
+export function validateAgentRuntimeSettings(input={}){
+ invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_AGENT','Agent 設定無效。');
+ const {command,args,maxAttempts,timeoutMs}={...defaults,...input};
+ invariant(typeof command==='string'&&command.trim()&&command.length<=2048&&!/[\x00-\x1f]/.test(command),'INVALID_AGENT','請設定 CLI 執行檔。');
+ invariant(Array.isArray(args)&&args.length<=40&&args.every(x=>typeof x==='string'&&x.length<=4000&&!x.includes('\0')),'INVALID_AGENT','Agent 參數無效。');
+ invariant(Number.isInteger(maxAttempts)&&maxAttempts>=1&&maxAttempts<=3&&Number.isInteger(timeoutMs)&&timeoutMs>=1000&&timeoutMs<=1800000,'INVALID_AGENT','Agent 執行限制無效。');
+ return {command:command.trim(),args,maxAttempts,timeoutMs};
+}
+
 export function validateAgentSettings(input={}, previous={}) {
   invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_AGENT','Agent 設定無效。');
   const {command,args,prompt,testPlanPrompt,gherkinPrompt,designPrompt,skills,maxAttempts,timeoutMs}=seedAgentSettings({...previous,...input});
-  invariant(typeof command==='string'&&command.trim()&&command.length<=2048&&!/[\x00-\x1f]/.test(command),'INVALID_AGENT','請設定 CLI 執行檔。');
-  invariant(Array.isArray(args)&&args.length<=40&&args.every(x=>typeof x==='string'&&x.length<=4000&&!x.includes('\0')),'INVALID_AGENT','Agent 參數無效。');
-  invariant(typeof prompt==='string'&&prompt.trim()&&Buffer.byteLength(prompt)<=64*1024,'INVALID_AGENT','CLI Agent Prompt 不可為空且必須在 64 KiB 內。');
-  for (const match of prompt.matchAll(tokenPattern)) invariant(variables.has(match[1]),'INVALID_AGENT',`Prompt 未知模板變數：${match[1]}`);
-  invariant(typeof testPlanPrompt==='string'&&testPlanPrompt.trim()&&Buffer.byteLength(testPlanPrompt)<=64*1024,'INVALID_AGENT','測試計劃 Prompt 不可為空且必須在 64 KiB 內。');
-  for (const match of testPlanPrompt.matchAll(tokenPattern)) invariant(variables.has(match[1]),'INVALID_AGENT',`測試計劃 Prompt 未知模板變數：${match[1]}`);
-  invariant(typeof gherkinPrompt==='string'&&gherkinPrompt.trim()&&Buffer.byteLength(gherkinPrompt)<=64*1024,'INVALID_AGENT','Gherkin Prompt 不可為空且必須在 64 KiB 內。');
-  for(const match of gherkinPrompt.matchAll(tokenPattern))invariant(variables.has(match[1]),'INVALID_AGENT',`Gherkin Prompt 未知模板變數：${match[1]}`);
-  invariant(typeof designPrompt==='string'&&designPrompt.trim()&&Buffer.byteLength(designPrompt)<=64*1024,'INVALID_AGENT','系統文件 Prompt 不可為空且必須在 64 KiB 內。');
-  for(const match of designPrompt.matchAll(tokenPattern))invariant(variables.has(match[1]),'INVALID_AGENT',`系統文件 Prompt 未知模板變數：${match[1]}`);
-  invariant(typeof skills==='string'&&Buffer.byteLength(skills)<=256*1024,'INVALID_AGENT','CLI Agent Skills 必須是 256 KiB 內的文字。');
-  invariant(Number.isInteger(maxAttempts)&&maxAttempts>=1&&maxAttempts<=3&&Number.isInteger(timeoutMs)&&timeoutMs>=1000&&timeoutMs<=1800000,'INVALID_AGENT','Agent 執行限制無效。');
-  return {command:command.trim(),args,prompt,testPlanPrompt,gherkinPrompt,designPrompt,skills,maxAttempts,timeoutMs};
+  const runtime=validateAgentRuntimeSettings({command,args,maxAttempts,timeoutMs});
+  for(const field of Object.values(agentPromptFields))validatePromptTemplate({prompt,testPlanPrompt,gherkinPrompt,designPrompt}[field]);
+  invariant(typeof skills==='string'&&Buffer.byteLength(skills)<=agentLimits.skillBytes,'INVALID_AGENT','CLI Agent Skills 必須是 256 KiB 內的文字。');
+  return {...runtime,prompt,testPlanPrompt,gherkinPrompt,designPrompt,skills};
 }
 
 export function renderAgentPrompt(settings, values, purpose='development') {
@@ -63,3 +75,5 @@ export function renderAgentPrompt(settings, values, purpose='development') {
   });
   return agent.skills ? `${prompt}\n\n${agent.skills}` : prompt;
 }
+
+for(const seed of defaultPromptSeeds)validatePromptTemplate(seed.content);

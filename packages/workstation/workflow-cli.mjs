@@ -15,7 +15,7 @@ export const workflowHelp = `BDD workflow CLI
   --timeout <seconds>        Wait limit (1–1800, default 1800)
   --json                     JSON is the default output; diagnostics use stderr
 
-next never grants human approvals. It stops with AWAITING_REVIEW or installs only
+next never grants human approvals. It stops with AWAITING_REVIEW or AWAITING_ACCEPTANCE, or installs only
 with explicit plan consent. run repeats verification; regress uses fixed versions.
 Exit: 0 success/status, 1 error or failed/unverified execution, 2 human review,
       3 installation consent required. Uses the same WB_HOME as the running UI.
@@ -60,7 +60,7 @@ export function resolveRepository(repositories, value, cwd = process.cwd()) {
 export function workflowExitCode(command, result, error) {
   if (error) return error.code==='INSTALL_REQUIRED'?3:1;
   if (command==='status') return 0;
-  if (result?.status==='AWAITING_REVIEW') return 2;
+  if (['AWAITING_REVIEW','AWAITING_ACCEPTANCE'].includes(result?.status)) return 2;
   if (command==='regress') return result?.status==='COMPLETED' && result?.outcome==='PASSED'?0:1;
   if (result?.status==='COMPLETE') return 0;
   return result?.testOutcome==='PASSED' && result?.verification==='VERIFIED'?0:1;

@@ -1,3 +1,4 @@
+import {createRequire} from 'node:module';
 import { terminalVendor } from './development.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -16,6 +17,9 @@ const assets = new Map([
   ['/repositories/operation-terminal.js', ['operation-terminal.js', 'text/javascript; charset=utf-8']],
   ['/repositories/interaction-history.js', ['interaction-history.js', 'text/javascript; charset=utf-8']],
   ['/repositories/chat.js', ['chat.js', 'text/javascript; charset=utf-8']],
+  ['/repositories/design-decisions.js', ['../../spec-toolkit/design-decisions.mjs', 'text/javascript; charset=utf-8']],
+  ['/repositories/design-view.js', ['design-view.js', 'text/javascript; charset=utf-8']],
+  ['/repositories/agent-catalog.js', ['agent-catalog.js', 'text/javascript; charset=utf-8']],
   ['/repositories/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
 const securityHeaders = {
@@ -30,6 +34,7 @@ export async function dispatch(service, request) {
     return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:{status:'ok',commit}};
   }
   if(request.method==='GET'&&['/repositories/xterm.js','/repositories/xterm.css'].includes(pathname))return {status:200,headers:{...securityHeaders,'content-type':pathname.endsWith('.js')?'text/javascript':'text/css'},body:await readFile(terminalVendor(service.options.home,pathname.split('/').at(-1)))};
+  if(request.method==='GET'&&pathname==='/repositories/markdown-it.js')return {status:200,headers:{...securityHeaders,'content-type':'text/javascript; charset=utf-8'},body:await readFile(createRequire(import.meta.url).resolve('markdown-it/browser'))};
   if (request.method === 'GET' && assets.has(pathname)) {
     const [name, type] = assets.get(pathname);
     return { status: 200, headers: { ...securityHeaders, 'content-type': type }, body: await readFile(new URL(`./public/${name}`, import.meta.url)) };
@@ -51,9 +56,22 @@ export async function dispatch(service, request) {
     invariant(Buffer.byteLength(JSON.stringify(input)) <= 2 * 1024 * 1024, 'REQUEST_TOO_LARGE', 'Request exceeds 2 MiB', 413);
   }
   let result, status = 200;
-  if(parts[0]==='chat-rooms'||parts[0]==='chat-settings') {
+  if(parts[0]==='agent-catalog'){
+    let body;
+    if(parts.length===1&&method==='GET')body=service.catalog();
+    else if(parts.length===2&&parts[1]==='agents'&&method==='POST')body=service.saveAgent(input);
+    else if(parts.length===2&&parts[1]==='prompts'&&method==='POST')body=service.savePrompt(input);
+    else if(parts.length===2&&parts[1]==='skills'&&method==='POST')body=service.saveSkill(input);
+    invariant(body!==undefined,'NOT_FOUND','Unknown catalog route',404);return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body};
+  }
+  if(parts[0]==='spec-repositories'&&parts[2]==='agent-defaults'&&parts.length===3){
+    const body=method==='GET'?await service.catalogDefaults(id(parts[1])):method==='PUT'?await service.saveCatalogDefault(id(parts[1]),input):undefined;
+    invariant(body!==undefined,'NOT_FOUND','Unknown defaults route',404);return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body};
+  }
+  if(parts[0]==='chat-rooms'||parts[0]==='chat-settings'||parts[0]==='chat-models') {
     const chat=await service.chat();
-    if(parts[0]==='chat-settings'&&parts.length===1){if(method==='GET')result=await chat.settings();else if(method==='PUT')result=await chat.saveSettings(input);}
+    if(parts[0]==='chat-models'&&parts.length===1&&method==='GET')result=await chat.models();
+    if(parts[0]==='chat-settings'&&parts.length===1){if(method==='GET')result=await chat.settings();else if(method==='PUT')result=await chat.saveSettings(input);else if(method==='PATCH')result=await chat.patchSettings(input);}
     if(parts[0]==='chat-rooms'){
       if(parts.length===1&&method==='GET')result=await chat.list();
       else if(parts.length===1&&method==='POST'){result=await chat.create(input);status=201;}
@@ -88,12 +106,12 @@ export async function dispatch(service, request) {
   else if(parts[0]==='operations'&&parts.length===3&&parts[2]==='interaction'&&method==='GET')result=service.interaction(id(parts[1]));
   else if(parts[0]==='operations'&&parts.length===3&&parts[2]==='terminal'&&method==='GET')result=await service.terminal(id(parts[1]),Number(url.searchParams.get('offset')??0));
   else if(parts[0]==='operations'&&parts.length===3&&parts[2]==='input'&&method==='POST')result=service.terminalInput(id(parts[1]),input);
-  else if (parts[0] === 'operations' && parts.length === 1 && method === 'POST') { result = service.enqueue(input); status = 202; }
+  else if (parts[0] === 'operations' && parts.length === 1 && method === 'POST') { result = service.enqueue(await service.prepareAgentRequest(input)); status = 202; }
   else if (parts[0] === 'operations' && parts.length === 2 && method === 'GET') result = service.operation(id(parts[1]));
   else if (parts[0] === 'operations' && parts[2] === 'cancel' && parts.length === 3 && method === 'POST') result = service.cancel(id(parts[1]));
   else if(parts[0]==='spec-repositories'&&parts[2]==='runs'&&parts[4]==='report'&&parts.length>=7&&method==='GET') {
-    const directory=await service.artifactDirectory(id(parts[1]),id(parts[3]));
-    const manifest=await verifyBundle(directory),relative=parts.slice(5).join('/');
+    const keyed=parts[5]==='by-key',directory=await service.artifactDirectory(id(parts[1]),id(parts[3]),keyed?parts[6]:undefined);
+    const manifest=await verifyBundle(directory),relative=parts.slice(keyed?7:5).join('/');
     invariant(relative.startsWith('native/')&&manifest.artifacts.some(a=>a.path===relative),'ARTIFACT_NOT_FOUND','Unknown report artifact',404);
     const types={html:'text/html; charset=utf-8',js:'text/javascript',css:'text/css',png:'image/png',jpg:'image/jpeg',json:'application/json'};
     const type=types[relative.split('.').at(-1)]??'application/octet-stream';
@@ -119,14 +137,22 @@ async function safeDispatch(service, request) {
   try { return await dispatch(service, request); }
   catch (error) { return { status: Number(error.statusCode) || (error.code === 'ENOENT' ? 404 : 500), headers: securityHeaders, body: errorResult(error) }; }
 }
+async function chatEvents(service,request,response){
+  const url=new URL(request.url,'http://workstation.invalid');
+  if(request.method!=='GET'||url.pathname!==prefix+'/chat-events')return false;
+  if(request.headers.origin){const origin=new URL(request.headers.origin);invariant(origin.host===request.headers.host&&['http:','https:'].includes(origin.protocol),'CROSS_ORIGIN_DENIED','Cross-origin streams are forbidden',403);}
+  const {openChatStream}=await import('../../dist/src/http/chat-stream.js');
+  await openChatStream(await service.chat(),response,url.searchParams.get('roomId')??undefined);return true;
+}
 export async function registerRepositoryRoutes(app, options) {
   const service = await createWorkstation(options);
   const handler = async (request, reply) => {
+    if(await chatEvents(service,request.raw,reply.raw)){reply.hijack();return;}
     const response = await safeDispatch(service, { method: request.method, url: request.raw.url, headers: request.headers, body: request.body });
     reply.code(response.status); for (const [key, value] of Object.entries(response.headers ?? {})) reply.header(key, value);
     return response.body;
   };
-  for (const route of [...assets.keys(),'/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
+  for (const route of [...assets.keys(),'/repositories/markdown-it.js','/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: `${prefix}/mcp/progress`, handler });
   app.route({ method: ['GET', 'POST','PUT'], url: `${prefix}/*`, handler });
   app.addHook('onClose', async () => service.close());
@@ -138,6 +164,7 @@ export async function createStandaloneServer(options) {
 
     let bytes = 0, chunks = [];
     try {
+      if(await chatEvents(service,request,response))return;
       for await (const chunk of request) { bytes += chunk.length; invariant(bytes <= 2 * 1024 * 1024, 'REQUEST_TOO_LARGE', 'Request exceeds 2 MiB', 413); chunks.push(chunk); }
       let body;
       if (chunks.length) { try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { invariant(false, 'INVALID_JSON', 'Expected a JSON request', 400); } }
