@@ -12,6 +12,8 @@ npm start
 
 預設 `http://127.0.0.1:4173/`，`WB_HOME` 預設 `~/.bdd-workstation`。**直接 `npm start` 即可在頁面確認測試與執行驗收，不需傳入旗標。** 測試僅由使用者明確觸發；首次安裝套件及瀏覽器仍必須同意，需求／設計／測試的人工審核也不會自動代簽。只有要刻意停用執行時才設定 `WB_ENABLE_TRUSTED_EXECUTION=0`（亦接受 `false` 或 `off`），並重啟服務。Git、SSH agent／known-host、系統瀏覽器相依套件仍由主機管理；不要把 Token 寫進 Git URL。本機服務與測試執行並非 OS 沙箱，僅適合可信任的使用環境。
 
+受管理的工作台候選會從 `WB_TARGET_BASE_URL` 取得監聽埠；明確設定的 `WB_PORT`／`WB_REPOSITORY_PORT` 優先。`GET /health` 回報產品目錄的實際 Git HEAD，供 runner 核對候選版本。驗收 runner 使用獨立 HOME／TMPDIR，候選的 SQLite 不會寫入管理工作台的資料目錄；請使用不同於管理入口的本機網址。
+
 ## 規格庫的本地目錄
 
 綁定時可在 **Spec Repo 本地目錄** 填入絕對路徑或 `~/`，例如 `/Users/xing/Desktop/projects/bdd-spec`。這是執行工作台服務的電腦上的路徑，不是瀏覽器上傳目錄，也不是 `/Users/xing/Desktop/projects/bdd` 工作台原始碼目錄。留空沿用 `WB_HOME/repositories/<repositoryId>/repo`，不要求額外設定。

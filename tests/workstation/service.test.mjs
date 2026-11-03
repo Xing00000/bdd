@@ -16,6 +16,13 @@ async function setup(t) {
 function request(operationId, operation, input = {}, expected = { head: null }) { return { schemaVersion: 1, operationId, repositoryId: 'WS-one', operation, input, expected }; }
 async function perform(service, value) { service.enqueue(value); const result = await service.wait(value.operationId); assert.equal(result.status, 'SUCCEEDED', JSON.stringify(result.error)); return result.result; }
 
+test('health reports the actual product Git commit for managed deployment checks',async t=>{
+  const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot});t.after(()=>app.close());
+  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
+  const response=await fetch(`http://127.0.0.1:${app.server.address().port}/health`);
+  assert.equal(response.status,200);assert.deepEqual(await response.json(),{status:'ok',commit:await git.resolve(toolkitRoot)});
+});
+
 test('worker clones and initializes an empty repository through durable jobs', async t => {
   const f = await setup(t); await perform(f.service, request('OP-clone', 'repository.clone')); await perform(f.service, request('OP-init', 'repository.initialize'));
   const detail = await f.service.detail('WS-one'); assert.equal(detail.initialized, true); assert.equal(detail.state.head, null);
