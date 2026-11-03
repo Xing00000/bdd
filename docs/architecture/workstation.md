@@ -33,6 +33,7 @@
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
 | `src/http/server.ts` | 共用後端的相容性 API／runtime 測試 host，只回傳 API 與正式產物，不供應網站／SPA；`ui/` 已移除。 |
 | `packages/workstation/chat.mjs`、`public/chat.js` | 正式入口的聊天室接線；重用 `src/application/chat.ts` 與 `src/adapters/sqlite/chat.ts`，聊天資料存同一個 `WB_HOME/metadata.sqlite`。Codex 擁有模型上下文，SQLite 擁有原始訊息。 |
+| `packages/workstation/chat-tools.mjs` | 聊天專用的私有 loopback MCP；重用既有 service 的專案／進度讀取及需求提案產生、讀回，未開放 shell 或階段確認。 |
 
 ## SQLite schema 10
 
@@ -100,6 +101,10 @@ Toolkit 1.4.0 將此模組納入正式 manifest。升級既有 req-tags 工具�
 
 `agent-task.mjs` 是預覽、派工及任務資料 owner。預覽 API 不建立作業或啟動 CLI；畫面可編輯完整 Prompt，取消不派工，送出後原樣傳入 CLI，不再附加隱藏內容。後端要求非空 Prompt 及涵蓋 repository、作者修訂、設定、所選功能、階段與本地位置的預覽摘要；過期則拒絕。內部重試沿用同一已送出 Prompt，新的失敗資料只更新該次 attempt 的任務 MCP。已啟動的工作不因設定更新而重啟。
 
+驗收頁以上方 Playwright HTML 報告、下方驗收意見與「LLM 修改實作／驗收通過」組成。意見輸入本身就是使用者審閱的派工文字，點選修改後原樣傳入 `workflow.develop`，不再開另一個 Prompt 表單；派工摘要仍由 `agent-task.mjs` 驗證。工作站在同一開發作業中先以 SQLite revision CAS 保存該報告的 feedback，再派出 CLI；意見與真實終端結果由同一實作互動保存。修改後的測試結果保留為新報告，歷史互動與報告不刪除。
+
+完整自動驗證通過只會進入 `AWAITING_ACCEPTANCE`／`VERIFICATION`。人工驗收唯一 owner 是 `acceptance.mjs`，透過 `workflow.accept` 在同一 SQLite authoring transaction 保存 `spec/<requirement>/<feature>/acceptance.json`；不改寫封存測試結果。確認綁定當前完整報告的 run ID、manifest digest、來源摘要及確認者。只有仍匹配且沒有待修意見的人工確認才導出 `COMPLETE`／`VERIFIED`；新報告、規格／產品變動或新的驗收意見使舊確認失去目前適用性，歷史紀錄仍保留。來源編輯 API 禁止偽造 acceptance 檔案。
+
 每次派工保存固定 SQL 修訂的任務資料，`scripts/mcp-agent-task.mjs` 以 stdio 提供 `workbench_get_task` 與 `workbench_read_artifact`。前者提供工作目錄、允許寫入範圍、驗證入口、回報與失敗資料及 artifact 名稱；後者只能讀取該任務映射的所選功能和必要共用測試原文，不接受任意檔案路徑，不提供寫入工具。實作及測試計劃原有後端審閱、範圍、型別及獨立驗證 gate 保留。
 
 預設 CLI 參數中的 `{mcp}` 依 [Codex MCP 設定契約](https://developers.openai.com/codex/mcp) 展開為本次 `workbench_task` 的 command／args 設定，要求伺服器初始化成功，不修改使用者全域設定。自訂 CLI adapter 可透過 `{task}` 接收相同任務檔案並接入 MCP；兩種參數都缺少時拒絕派工，避免極簡 Prompt 在沒有資料通道時啟動。`{prompt}` 是使用者最後送出的文字，`{spec}`／`{project}` 仍可用於自訂 CLI 的工作目錄參數。
@@ -164,7 +169,13 @@ A report is identified by binding + requirement + feature + run. Local and Git-i
 
 `workflow.develop` is a durable, repository-locked worker operation. `development.mjs` resolves the host-local Agent command, starts node-pty with explicit argv/cwd and a reduced environment, and streams a bounded transcript through a scoped polling API. Input/resize uses IPC only to the owning live worker. Cancellation participates in the existing process-group termination and repository-lock lifecycle. The browser reconnects to an existing operation rather than launching duplicates.
 
-`packages/workstation/agent-settings.mjs` owns the editable dispatch seed, validation and template expansion. The skill seed reads the bundled `skills/playwright-bdd/SKILL.md`; it does not read host credentials or arbitrary user files. Authoring fills only undefined settings fields into SQLite, both at bootstrap and when opening legacy drafts. Existing argv, custom text and explicitly empty skills survive. Partial Agent updates merge saved settings before validation. The settings UI renders those saved values rather than maintaining a second seed. Development expands the saved template once, appends skills literally, and records the effective text in the existing local `prompt.txt` before sending it through argv to the PTY. Repository or feature navigation clears the old visible notice after the unsaved-draft guard accepts navigation; operation receipts remain available for diagnosis.
+`packages/workstation/agent-settings.mjs` owns the dispatch seed, field limits, validation and template expansion. `agent-catalog.mjs` owns the reusable Agent/Skill catalog in `WB_HOME/metadata.sqlite` (schema 12): profiles, immutable revisions, resource text, ordered bindings and per-repository task defaults. `prompt-catalog.mjs` owns independent Prompt metadata/revisions, validation and the migration from combined Agent settings. Current Agent rows contain only runtime settings; selected Prompt and Skills are composed at preview time. Existing customized settings and literal Skills are imported once; the prior embedded `settings.agent` remains historical migration input, not another editable UI. Once a repository has catalog defaults, new LLM submissions must carry a catalog selection and repository setup cannot update its old embedded Agent.
+
+The management page is global and independently edits Agents, Prompts and Skills. Gherkin, design, test-plan and development use one selection/preview component with independent Agent/Prompt/Skills controls. Changing Agent does not replace the other choices. `agentPreview` resolves the chosen current Agent, Prompt and Skill revisions and binds their digest to the source revision, task and rendered Prompt. HTTP preparation validates the preview and enqueue freezes `agentSnapshot` into the existing operation request. Workers use this snapshot, so later edits/archive cannot change an accepted job. Direct synchronous execution resolves selected immutable versions at its command boundary using the same catalog owner. Old persisted operations retain their original embedded-setting contract. Client-supplied execution snapshots are rejected.
+
+Skill bodies and UTF-8 resources are immutable SQLite data; resource paths must be relative, without traversal, duplicate paths or `SKILL.md` shadowing. Each task MCP exposes the selected skills at `skills/<skillId>/SKILL.md` and their resources only. Resources do not execute automatically or grant new tool/write rights. Combined rendered prompts retain the existing 64 KiB limit, and skill/resource bundles share the existing 256 KiB skill limit; an oversized selection fails explicitly. Skills can be ordered in the UI. Updating an item creates a revision; stale defaults or previews require explicit reselection. All writes use optimistic revision checks. No registry settings are stored in browser localStorage or a parallel configuration file. Prompt edits do not create Agent revisions.
+
+Catalog routes are `GET /repository-api/v1/agent-catalog`, `POST .../agent-catalog/agents`, `POST .../agent-catalog/skills`, `POST .../agent-catalog/prompts`, and `GET/PUT .../spec-repositories/:id/agent-defaults`. They use the same protected write header and same-origin checks as other workstation settings. The schema migration creates `before-agent-catalog-v11.sqlite` for an existing older database before migration. Verification is mapped by AC-WB-043 to the shared browser scenario driver and catalog contract tests.
 
 Product changes are imported with SQLite revision compare-and-swap, including explicit text deletions. Local commits contain those exact product changes and updated gitlinks; no push occurs. Independently sealed BDD evidence, not CLI exit status, controls acceptance. A source review change, concurrent authoring change or unsupported product file retains on-disk work and stops automatic promotion.
 
@@ -173,6 +184,12 @@ Once that shared workflow policy reports COMPLETE, both the development action a
 `workflow.feedback` is a SQLite authoring transaction. It validates report identity against the selected binding/requirement/feature, appends a protected `feedback.json`, and derives portable progress in the same transaction. Prior evidence is immutable. Unresolved feedback overrides an old PASS and returns the feature to IMPLEMENTATION; only a newer qualified run can advance it. The original issue remains in history and is passed to subsequent development as task data.
 
 The acceptance view renders original reporter scenario/step data and attachment hashes. Native Playwright HTML uses an artifact-scoped URL and sandbox without same-origin privileges. It cannot serve arbitrary repository files. Installation, runtime cache, process IDs and transcripts remain local; no credentials are written to portable requirement state.
+
+
+聊天室串流由 `src/application/chat.ts` 擁有：Copilot JSONL 文字增量經 Responses SSE 與 Codex app-server 通知傳入，`src/http/chat-stream.ts` 統一輸出瀏覽器 SSE。正式入口為 `/repository-api/v1/chat-events`，相容 API 為 `/chat-events`；POST 送出與 SQLite 最終保存維持既有契約。revision 快照負責重連恢復，生成中的累積文字僅存記憶體，服務重啟以 interrupted 結束未完成訊息。規格與證據對應見 AC-WB-040；前端不再以 timer 輪詢聊天室。
+
+
+Schema 12 adds `prompts`, `prompt_revisions` and migration provenance; `agent_task_defaults.prompt_revision_id` binds each task's independent template. Before upgrade, `before-prompt-catalog-v12.sqlite` is created. Historical Agent revisions and operation JSON remain byte-for-byte unchanged. Each legacy combined Agent head receives a new runtime-only revision; old template versions are imported as independent Prompt revisions and current defaults are rebound transactionally. Legacy frozen jobs retain their old execution contract. New submissions must select an explicit Prompt revision suitable for the task; updated/archived revisions are rejected before dispatch. The operation snapshot keeps runtime settings, Prompt content/version, Skills and the final edited text. AC-WB-044 and `prompt-catalog.test.mjs` verify this contract.
 
 ## 需求刪除生命週期
 
@@ -185,3 +202,13 @@ The acceptance view renders original reporter scenario/step data and attachment 
 `operations.interaction_key` 是互動歸屬的持久化 owner：已儲存需求使用 `{requirementId}/{featureId}`，未儲存需求使用其獨立的 `new-*` editor key。CLI 回覆只繼承同規格庫原作業的歸屬。首次儲存需求時，既有草稿互動與回覆在同一 authoring transaction 轉綁正式需求，不改寫不可變 request 或其 hash。
 
 開啟資料庫時，舊紀錄只按明確需求識別、原作業與保存收據／提案關聯補齊。無法證明歸屬的舊紀錄不會被指派給目前需求。歷程 API 在 SQL 依規格庫、需求 key、階段與 cursor 篩選；前端切換需求會清除舊卡片與終端，拒絕不同選取或較早查詢的回應。
+
+## 系統決策與文件預覽
+
+`spec-toolkit/design-decisions.mjs` 是決策格式、讀寫、未決判定與確認門檻的唯一 owner，亦以唯讀 JavaScript 資產供瀏覽器載入。canonical 資料存於同一份 `.sd.md` 的單一 fenced `workbench-decisions` JSON 區塊，經既有 authoring 交易進入 SQLite；不另建會與文件分歧的問答表或 browser storage。格式為 schemaVersion 1、items 陣列，每題含穩定 id、question、options（id、label、選填 description）、answer（null 或 optionId；選其他時另含非空 customText）。`other` 為程式保留項，由 UI 永遠提供，不由 LLM 產生。生成不能預選答案；重生成必須保留既有題目與人類答案，改寫已回答問題語意或選項會明確拒絕。
+
+`design-generation.mjs` 要求新產出包含決策區塊，即使 items 為空。`writeAgentTask` 的 design decisionContract 告知模型將未決契約轉為有說明的選擇題，選項是提案而非聲稱已實作。`saveFile` 驗證區塊格式；`confirm(sd)` 在有未回答項目時拒絕，不簽署 review。舊無結構化區塊的手寫文件保留相容性；需要問答時重新生成，不能從任意 prose 猜測決策。
+
+前端 `design-view.js` 預設預覽，只有明確按編輯才顯示 Markdown 原文。生成、儲存、重載與跨階段切換都回到預覽；切到預覽不會自動儲存。預覽使用鎖定版本的 markdown-it，停用 raw HTML，並在無腳本權限 iframe 呈現。問答以 DOM text nodes 與原生 radio/input 建立，答案寫回同一文件，由既有儲存按鈕或「儲存系統決策」提交；確認仍是獨立的人類動作。
+
+四種可編輯預設功能 Prompt 的文字唯一來源為 `packages/workstation/seeds/prompts.json`。啟動時驗證 seed schema、purpose 唯一性與模板變數，seedAgentSettings 與新 registry 初始化都從此派生。自訂 Prompt 與既有 revision 不因 Git seed 更新被覆寫；工作台自身的權限、產出格式與階段不變量仍由程式 owner 控制。
