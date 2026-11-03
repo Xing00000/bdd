@@ -45,6 +45,7 @@ test('legacy rows bind by explicit feature identifiers and never inherit a paren
   assert.equal(f.store.get('OP-parent').interactionKey,'REQ-002/feature');assert.equal(f.store.get('OP-cross').interactionKey,null);
   assert.equal(f.store.interactions('SPEC-other',{key:'REQ-002/feature'}).entries.length,0);
 });
+
 test('legacy failed draft history follows a committed save receipt even before worker completion and recovery',async t=>{
   const f=await setup(t),editorKey='new-interrupted-save';
   f.enqueue('OP-failed-draft','workflow.gherkin.generate',{editorKey,prompt:'Generate'});f.store.finish('OP-failed-draft','FAILED',null,{code:'AGENT_FAILED',message:'No proposal created'});

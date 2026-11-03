@@ -146,9 +146,21 @@ test('invalid and empty handlers are rejected independently of discovery',async 
   await writeFile(path.join(candidate,'tests/_shared/cache/broken.ts'),'let = ;');
   assert.equal((await validateTestImplementation(candidate,ids.requirementId,ids.featureId)).typecheck,'PASSED');
   await writeFile(path.join(candidate,stepPath),"import {Given} from '../../_shared/bdd';\nGiven('unfinished', async () => {});\n");
-  await assert.rejects(validateTestImplementation(candidate,ids.requirementId,ids.featureId),{code:'TEST_PLAN_INCOMPLETE'});
+  await assert.rejects(validateTestImplementation(candidate,ids.requirementId,ids.featureId),error=>{
+    assert.equal(error.code,'TEST_PLAN_INCOMPLETE');assert.deepEqual(error.details.incompleteHandlers,[{path:stepPath,line:2,column:1,handler:'Given',step:'unfinished'}]);assert.ok(error.message.includes(stepPath+':2:1'));return true;
+  });
   await writeFile(path.join(candidate,stepPath),"import {Given} from '../../_shared/bdd';\nGiven('unfinished', async () => {throw Error('pending');});\n");
   await assert.rejects(validateTestImplementation(candidate,ids.requirementId,ids.featureId),{code:'TEST_PLAN_INCOMPLETE'});
+});
+
+test('a zero-exit blocked agent preserves its explanation and incomplete step locations without saving the skeleton as complete',async t=>{
+  const f=await setup(t);await f.approve('sd');const before=await f.service.readFile('SPEC-plan',stepPath);
+  const explanation='BLOCKED: The identity adapter and reproducible multi-host setup contracts are missing.';
+  await writeFile(f.agentFile,`console.log(${JSON.stringify('\u001b[31m'+explanation+'\u001b[0m')});\n`);
+  await assert.rejects(f.job('workflow.tests.complete',{...ids,expectedDigest:(await f.current()).review.hashes.tests}),error=>{
+    assert.equal(error.code,'TEST_PLAN_INCOMPLETE');assert.equal(error.details.agent.exitCode,0);assert.ok(error.details.agent.outputTail.includes(explanation));assert.ok(error.message.includes(explanation));assert.ok(!error.message.includes('\u001b['));assert.ok(error.details.incompleteHandlers.length>0);assert.ok(error.details.incompleteHandlers.every(item=>item.path===stepPath&&item.line>0));return true;
+  });
+  assert.equal((await f.service.readFile('SPEC-plan',stepPath)).content,before.content);assert.equal((await f.current()).review.confirmed.tests,false);
 });
 
 test('an agent proposal that edits approved design is rejected without changing SQLite sources or creating a plan',async t=>{

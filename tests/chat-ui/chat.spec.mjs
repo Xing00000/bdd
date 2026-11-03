@@ -1,3 +1,5 @@
+import {ChatStreamDriver} from './chat-stream-driver.ts';
+import {ChatModelsDriver} from './chat-models-driver.ts';
 import {test as base,expect} from '@playwright/test';
 import {mkdtemp,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -7,6 +9,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 import {createServer as createCompatibilityApi} from '../../dist/src/http/server.js';
 import {access} from 'node:fs/promises';
+import {ChatToolsDriver} from './chat-tools-driver.ts';
 
 const prefix='/repository-api/v1';
 base('single UI: the compatibility API never serves the retired Vue application',async()=>{
@@ -67,4 +70,67 @@ test('AC-WB-038 正式入口：失敗不假回覆、重複送出與新草稿保�
  await page.getByRole('textbox',{name:'對話訊息輸入'}).fill('Reply with only 42.');await page.getByRole('button',{name:'送出',exact:true}).click();await page.getByRole('textbox',{name:'對話訊息輸入'}).fill('這是尚未送出的下一則草稿');release();
  await expect(page.getByRole('button',{name:'回覆中…',exact:true})).toBeDisabled();expect((await w.post('/chat-rooms/'+w.roomId+'/messages',{content:'duplicate'})).status()).toBe(409);
  await expect(page.getByTestId('chat-message-assistant')).toHaveCount(1,{timeout:180000});await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toHaveValue('這是尚未送出的下一則草稿');expect((await w.room()).messages.some(m=>m.content==='duplicate')).toBe(false);
+});
+
+base('AC-WB-039 UIUX：Codex 操作工作站並保存提案，重啟後讀回',async({page},info)=>{
+ const driver=await ChatToolsDriver.open(page);
+ try{
+  await base.step('使用者要求查詢規格庫並保存需求提案',()=>driver.generate());
+  const before=await driver.proposalEvidence();
+  await base.step('MCP 呼叫、SQLite、API 與畫面對照，且未確認任何需求階段',async()=>{
+   expect(before.proposals).toHaveLength(1);expect(before.rows).toHaveLength(1);
+   expect(before.proposals[0].description).toBe(driver.description);expect(before.rows[0].description).toBe(driver.description);
+   expect(before.rows[0].id).toBe(before.proposals[0].id);expect(before.rows[0].editor_key).toBe(driver.editorKey);
+   expect(before.authoring).toEqual(driver.baseline);
+   const calls=before.tools.filter(r=>r.payload.type==='function_call');
+   expect(calls.map(r=>r.payload.name)).toEqual(expect.arrayContaining(['workbench_list_repositories','workbench_generate_requirement']));
+   expect(calls.filter(r=>r.payload.name==='workbench_generate_requirement')).toHaveLength(1);
+   expect(calls.every(r=>r.payload.namespace==='mcp__workbench')).toBe(true);
+   for(const call of calls)expect(before.tools.some(r=>r.payload.type==='function_call_output'&&r.payload.call_id===call.payload.call_id&&r.metadata?.mcp_attribution?.status==='complete')).toBe(true);
+   const writes=before.operations.map(o=>({...o,request:JSON.parse(o.request_json),result:JSON.parse(o.result_json)})).filter(o=>o.request.operation==='interaction.requirement.generate');
+   expect(writes).toHaveLength(1);expect(writes[0].status).toBe('SUCCEEDED');expect(writes[0].result.proposalId).toBe(before.proposals[0].id);
+   await expect(page.getByTestId('chat-message-assistant')).toContainText(driver.repository.id);await expect(page.getByTestId('chat-message-assistant')).toContainText(before.proposals[0].id);
+  });
+  await base.step('重啟正式工作站，以同一 Codex thread 重新查詢保存的提案',async()=>{
+   await driver.restartAndAsk();const after=await driver.proposalEvidence();
+   expect(after.room.thread_id).toBe(before.room.thread_id);expect(after.proposals).toEqual(before.proposals);expect(after.authoring).toEqual(driver.baseline);
+   expect(after.room.messages.map(m=>m.status)).toEqual(['completed','completed','completed','completed']);
+   expect(after.tools.filter(r=>r.payload.type==='function_call'&&r.payload.name==='workbench_get_requirement_proposals').length).toBeGreaterThan(0);
+   await expect(page.getByTestId('chat-message-assistant').last()).toContainText(before.proposals[0].id);await expect(page.getByTestId('chat-message-assistant').last()).toContainText(driver.description);
+  });
+ }finally{try{await driver.attach(info);}finally{await driver.close();}}
+});
+
+
+base('AC-WB-040 正式入口：真實文字增量透過 SSE 到達且不輪詢完整對話',async({page},info)=>{
+ const driver=await ChatStreamDriver.open(page);
+ try{await driver.send();await driver.early();await driver.complete();await driver.reconnect();await driver.failure();}
+ finally{try{await driver.attach(info);}finally{await driver.close();}}
+});
+
+base('AC-WB-047 UIUX：取得模型清單、選擇並保存，重新整理維持選擇（協定測試）',async({page},info)=>{
+ const driver=await ChatModelsDriver.open(page);
+ try{
+  expect(driver.catalog.models.map(m=>m.id)).toEqual(['fixture-a','fixture-b']);
+  await driver.select();await driver.persisted();await driver.refresh();
+  for(const width of [390,1440]){await page.setViewportSize({width,height:1000});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);const select=await page.getByRole('combobox',{name:'對話模型',exact:true}).boundingBox(),send=await page.getByRole('button',{name:'送出',exact:true}).boundingBox();expect(select.x+select.width).toBeLessThanOrEqual(send.x);expect(Math.abs((select.y+select.height/2)-(send.y+send.height/2))).toBeLessThanOrEqual(Math.max(select.height,send.height)/2);await expect(page.locator('.chat-composer-actions').getByRole('combobox',{name:'對話模型',exact:true})).toBeVisible();}
+  await driver.attach(info);
+ }finally{await driver.close();}
+});
+
+test('對話模型清單：真實 Copilot CLI 的可用與空清單狀態',async({page,workstation:w},info)=>{
+ const response=page.waitForResponse(r=>r.url().endsWith('/chat-models'));await w.create();const received=await response,catalog=await received.json();expect(received.ok(),JSON.stringify(catalog)).toBe(true);
+ const select=page.getByRole('combobox',{name:'對話模型',exact:true});await expect(select).toBeEnabled();await expect(select.locator('option')).toHaveCount(catalog.models.length+1);await expect(select).toHaveValue(catalog.automaticModel);
+ await expect(page.locator('.chat-model-picker [role=status]')).toHaveText(catalog.models.length?`已取得 ${catalog.models.length} 個模型`:'Copilot 目前未提供可手選模型，仍可使用自動選擇。');
+ await info.attach('真實 Copilot CLI 模型清單（含實際空清單）',{body:JSON.stringify(catalog,null,2),contentType:'application/json'});expect(w.errors).toEqual([]);
+});
+
+base('AC-WB-047 UIUX：重疊保存模型與進階設定不互相覆蓋',async({page},info)=>{
+ const driver=await ChatModelsDriver.open(page),gate=Promise.withResolvers(),held=Promise.withResolvers(),patches=[];
+ try{
+  await page.getByText('對話設定',{exact:true}).click();const timeoutMs=driver.before.timeoutMs+1;await page.getByRole('textbox',{name:'對話 逾時',exact:true}).fill(String(timeoutMs));
+  await page.route('**/chat-settings',async route=>{if(route.request().method()==='PATCH'){const patch=route.request().postDataJSON();patches.push(patch);if(Object.hasOwn(patch,'model')){held.resolve();await gate.promise;}}await route.continue();});
+  await page.getByRole('combobox',{name:'對話模型',exact:true}).selectOption('fixture-b');await held.promise;await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();expect(patches).toEqual([{model:'fixture-b'}]);await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toBeDisabled();gate.resolve();
+  const chat=await driver.app.service.chat();await expect.poll(async()=>{const settings=await chat.settings();return {model:settings.model,timeoutMs:settings.timeoutMs};}).toEqual({model:'fixture-b',timeoutMs});await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toHaveValue('fixture-b');expect(patches).toHaveLength(2);expect(patches[1]).not.toHaveProperty('model');expect(driver.errors).toEqual([]);await driver.attach(info);
+ }finally{gate.resolve();await driver.close();}
 });

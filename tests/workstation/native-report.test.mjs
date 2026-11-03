@@ -83,4 +83,7 @@ test('native presentation adds storage without changing sealed HTML, raw downloa
   assert.deepEqual(await readFile(path.join(directory, 'native/index.html')), html);
   assert.deepEqual(await readFile(path.join(directory, 'seal.json')), seal);
   assert.deepEqual(await verifyBundle(directory), manifest);
+  const key='REQ-002/feature/RUN-native';let requestedKey;
+  const keyed=await dispatch({artifactDirectory:async(_repository,_run,reportKey)=>{requestedKey=reportKey;return directory;}},{method:'GET',url:`${url}/report/by-key/${encodeURIComponent(key)}/native/index.html`,headers:{}});
+  assert.equal(requestedKey,key);assert.deepEqual(keyed.body,renderNativeReport(html));
 });

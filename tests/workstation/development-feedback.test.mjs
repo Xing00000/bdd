@@ -22,7 +22,7 @@ async function setup(t) {
  assert.equal((await job(service,'repository.setup',{reviewer:'Reviewer',projects:[]})).status,'SUCCEEDED');return {...f,service};
 }
 test('feedback saves report identity in SQLite, preserves evidence, returns to development and survives restart',async t=>{
- const f=await setup(t),before=(await f.service.detail('SPEC-one')).spec.features[0];assert.equal(before.workflow.stage,'VERIFIED');
+ const f=await setup(t),before=(await f.service.detail('SPEC-one')).spec.features[0];assert.equal(before.workflow.stage,'VERIFICATION');assert.equal(before.workflow.status,'AWAITING_ACCEPTANCE');
  const r=await job(f.service,'workflow.feedback',{requirementId:'REQ-001',featureId:'login',runId:'RUN-history',message:'登入後版面錯位'});assert.equal(r.status,'SUCCEEDED',JSON.stringify(r.error));assert.equal(r.result.nextStage,'IMPLEMENTATION');
  const after=(await f.service.detail('SPEC-one')).spec.features[0];assert.equal(after.workflow.stage,'IMPLEMENTATION');assert.notEqual(after.verification.status,'VERIFIED');assert.deepEqual(after.review.hashes,before.review.hashes);assert.deepEqual(after.review.confirmed,before.review.confirmed);assert.equal(after.workflow.reports.length,1);
  const reopened=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>reopened.close());
@@ -32,10 +32,12 @@ test('feedback saves report identity in SQLite, preserves evidence, returns to d
 test('feedback refuses another feature report and cannot be forged through the source editor',async t=>{
  const f=await setup(t);let r=await job(f.service,'workflow.feedback',{requirementId:'REQ-001',featureId:'login',runId:'RUN-other',message:'wrong'});assert.equal(r.status,'FAILED');assert.equal(r.error.code,'REPORT_NOT_FOUND');
  r=await job(f.service,'repository.save',{kind:'source',path:'spec/REQ-001/login/feedback.json',expectedHash:null,content:'{"items":[]}'});assert.equal(r.error.code,'FILE_NOT_EDITABLE');
- assert.equal((await f.service.workflow('SPEC-one')).workflows[0].stage,'VERIFIED');
+ assert.equal((await f.service.workflow('SPEC-one')).workflows[0].stage,'VERIFICATION');
 });
 test('a completed development stage cannot launch another agent before acceptance feedback reopens it',async t=>{
  const f=await setup(t),service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,enableExecution:true,autoAcquire:false});t.after(()=>service.close());
+ const workflow=(await service.workflow('SPEC-one','REQ-001/login')).workflows[0];
+ const accepted=await job(service,'workflow.accept',{requirementId:'REQ-001',featureId:'login',runId:workflow.latestReport.runId,expectedManifestDigest:workflow.latestReport.manifestDigest});assert.equal(accepted.status,'SUCCEEDED',JSON.stringify(accepted.error));
  const result=await job(service,'workflow.develop',{requirementId:'REQ-001',featureId:'login'});
  assert.equal(result.status,'FAILED');assert.equal(result.error.code,'STAGE_READ_ONLY');
  assert.equal((await service.workflow('SPEC-one','REQ-001/login')).workflows[0].stage,'VERIFIED');
@@ -44,7 +46,7 @@ test('only a newer genuine passing run clears feedback; an old success or a newe
  const feature={key:'REQ-001/login',requirementId:'REQ-001',id:'login',review:{confirmed:{gherkin:true,sd:true,tests:true},hashes:{gherkin:'g',sd:'s',tests:'t'}},feedback:{items:[{message:'bug',createdAt:'2026-01-02T00:00:00Z'}]}};
  const manifest={runId:'RUN-a',requirementId:'REQ-001',featureId:'login',baseline:'t',projects:[],testOutcome:'PASSED',verification:'VERIFIED',scope:'ALL_CASES',coverageComplete:true,evidenceComplete:true,startedAt:'2026-01-01T00:00:00Z',finishedAt:'2026-01-01T00:00:01Z'};
  const state=m=>workflowState(feature,[],[{id:m.runId,state:'SEALED',result:m}],[],'spec');
- assert.equal(state(manifest).stage,'IMPLEMENTATION');assert.equal(state({...manifest,startedAt:'2026-01-03T00:00:00Z'}).stage,'VERIFIED');
+ assert.equal(state(manifest).stage,'IMPLEMENTATION');assert.equal(state({...manifest,startedAt:'2026-01-03T00:00:00Z'}).stage,'VERIFICATION');assert.equal(state({...manifest,startedAt:'2026-01-03T00:00:00Z'}).status,'AWAITING_ACCEPTANCE');
  assert.equal(state({...manifest,testOutcome:'FAILED',startedAt:'2026-01-03T00:00:00Z'}).stage,'IMPLEMENTATION');
 });
 test('development settings use executable and argument arrays, never a shell command or approval bypass',async()=>{

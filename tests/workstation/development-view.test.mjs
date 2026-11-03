@@ -6,12 +6,21 @@ function harness(status, api, canRecover=()=>true, previewAgent=async()=>null) {
   const elements = new Map(['#notice','#development-terminal','#development-status','#develop','#stop-development'].map(id => [id, { dataset:{}, textContent:'', hidden:false, disabled:false, replaceChildren(){} }]));
   globalThis.document={querySelector:id=>elements.get(id)};
   globalThis.window={addEventListener(){}};
-  let version=0; const messages=[]; let refreshes=0;
-  const feature={key:'REQ-1/feature',requirementId:'REQ-1',id:'feature'};
-  const view=developmentView({api,view:()=>({repositoryId:'repo',detail:{operations:[{id:'old',status,request:{operation:'workflow.develop',input:{requirementId:'REQ-1',featureId:'feature'}}}]}}),feature:()=>feature,refresh:async()=>{refreshes++;},navigate:async()=>{},ask:async()=>{throw new Error('unexpected prompt');},previewAgent,note:(...args)=>messages.push(args),showOperation(){},beginAction:()=>++version,actionVersion:()=>version,canRecover});
-  return {view,elements,messages,beginAction:()=>++version,refreshes:()=>refreshes};
+  let version=0; const messages=[],shown=[]; let refreshes=0;
+  let feature={key:'REQ-1/feature',requirementId:'REQ-1',id:'feature'};
+  const state={repositoryId:'repo',detail:{operations:[{id:'old',status,request:{operation:'workflow.develop',input:{requirementId:'REQ-1',featureId:'feature'}}}]}};
+  const view=developmentView({api,view:()=>state,feature:()=>feature,refresh:async()=>{refreshes++;},navigate:async()=>{},ask:async()=>{throw new Error('unexpected prompt');},previewAgent,note:(...args)=>messages.push(args),showOperation:operation=>shown.push(operation),beginAction:()=>++version,actionVersion:()=>version,canRecover});
+  return {view,elements,messages,shown,beginAction:()=>++version,refreshes:()=>refreshes,select(repositoryId,key){state.repositoryId=repositoryId;state.detail.operations=[];feature={key,requirementId:key.split('/')[0],id:key.split('/')[1]};}};
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('a delayed launch remains owned by its original repository and cannot attach to a new selection',async()=>{
+ let resolveLaunch;const calls=[];
+ const h=harness('FAILED',async(route,method,body)=>{calls.push({route,body});return new Promise(resolve=>{resolveLaunch=resolve;});});
+ const pending=h.view.start({acceptanceFeedback:{message:'original opinion'}},{prompt:'original opinion',promptDigest:'original digest'});await flush();
+ h.select('other-repository','REQ-other/feature');resolveLaunch({id:'original-operation',status:'RUNNING'});const accepted=await pending;await flush();
+ assert.equal(accepted.id,'original-operation');assert.equal(calls[0].body.repositoryId,'repo');assert.equal(calls[0].body.input.requirementId,'REQ-1');assert.deepEqual(h.shown,[]);assert.equal(calls.length,1);h.view.leave();
+});
 
 test('development waits for an edited preview, cancel never dispatches, and submit sends exact text',async()=>{
   let resolvePreview;const calls=[];

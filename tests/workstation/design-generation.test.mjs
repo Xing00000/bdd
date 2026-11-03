@@ -1,3 +1,4 @@
+import {writeDesignDecisions} from '../../packages/spec-toolkit/design-decisions.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import {writeFile} from 'node:fs/promises';
 import {fixture,toolkitRoot} from './helpers.mjs';
 import {createWorkstation} from '../../packages/workstation/service.mjs';
 
-const document='# 系統設計\n\n## 責任\n依已確認需求呈現文件。\n\n## 驗證\n使用正式介面驗證情境結果。\n';
+const document=writeDesignDecisions('# 系統設計\n\n## 責任\n依已確認需求呈現文件。\n\n## 驗證\n使用正式介面驗證情境結果。\n',{schemaVersion:1,items:[]});
 async function setup(t,body){
   const f=await fixture(t),agent=path.join(f.base,'design-peer.mjs');
   // Controlled CLI peer verifies PTY, frozen input and persistence; not model inference.
@@ -38,4 +39,8 @@ test('changed design input after preview cannot dispatch the CLI',async t=>{
 test('invalid design output fails without overwriting the document',async t=>{
   const f=await setup(t,"await writeFile(task.output,'not a Markdown document');"),result=await f.service.wait(f.start('workflow.design.generate',await f.input()));
   assert.equal(result.status,'FAILED');assert.equal(result.error.code,'INVALID_DESIGN_OUTPUT');assert.equal((await f.service.readFile(f.repositoryId,f.file.path)).content,f.file.content);
+});
+
+test('new generated designs must explicitly contain structured decisions, even when there are none',async t=>{
+ const f=await setup(t,"await writeFile(task.output,'# Valid Markdown without decision contract');"),result=await f.service.wait(f.start('workflow.design.generate',await f.input()));assert.equal(result.status,'FAILED');assert.equal(result.error.code,'INVALID_DESIGN_DECISIONS');assert.equal((await f.service.readFile(f.repositoryId,f.file.path)).content,f.file.content);
 });

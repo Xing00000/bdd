@@ -41,6 +41,7 @@ test('repository selection accepts URL/name/ID and refuses ambiguous automatic c
 });
 test('automation exit codes distinguish human, installation, failed tests and unverified passing tests',()=>{
   assert.equal(workflowExitCode('next',{status:'AWAITING_REVIEW'}),2);
+  assert.equal(workflowExitCode('next',{status:'AWAITING_ACCEPTANCE'}),2);
   assert.equal(workflowExitCode('run',null,{code:'INSTALL_REQUIRED'}),3);
   assert.equal(workflowExitCode('run',{testOutcome:'FAILED',verification:'NOT_VERIFIED'}),1);
   assert.equal(workflowExitCode('run',{testOutcome:'PASSED',verification:'NOT_VERIFIED'}),1);
@@ -73,7 +74,7 @@ test('workflow files persist revisions in SQLite without needing a checkout',asy
 const feature={requirementId:'REQ-001',id:'login',key:'REQ-001/login',review:{confirmed:{gherkin:true,sd:true,tests:true},hashes:{gherkin:'g',sd:'s',tests:'t'}}};
 function report(runId='RUN-one',extra={}) {return {key:`REQ-001/login/${runId}`,runId,ref:'refs/remotes/origin/evidence/example',reportCommit:'a'.repeat(40),manifest:{schemaVersion:1,specRepositoryId:'spec-one',runId,requirementId:'REQ-001',featureId:'login',baseline:'t',projects:[],testOutcome:'PASSED',verification:'VERIFIED',scope:'ALL_CASES',coverageComplete:true,evidenceComplete:true,finishedAt:'2026-01-01T00:00:00Z',...extra}};}
 test('shared workflow derives progress from matching evidence, never from an editable status string',()=>{
-  const pass=report();assert.equal(workflowState(feature,[],[],[pass],'spec-one').stage,'VERIFIED');
+  const pass=report();assert.equal(workflowState(feature,[],[],[pass],'spec-one').stage,'VERIFICATION');assert.equal(workflowState(feature,[],[],[pass],'spec-one').status,'AWAITING_ACCEPTANCE');
   const edited={...feature,review:{...feature.review,confirmed:{...feature.review.confirmed,gherkin:false},hashes:{...feature.review.hashes,tests:'changed'}}};
   assert.equal(workflowState(edited,[],[],[pass],'spec-one').stage,'GHERKIN');
   assert.equal(workflowState(edited,[],[],[pass],'spec-one').verification,'STALE');
@@ -104,6 +105,8 @@ test('synchronized workflow state and requirement reports reconstruct on a fresh
   const a=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>a.close());
   const first=a.register({id:'SPEC-a',title:'portable',remoteUrl:f.remote});assert.equal((await a.wait(first.connection.operationId)).status,'SUCCEEDED');
   await job(a,'repository.setup',{reviewer:'Human',projects:[]},'SPEC-a');
+  const workflow=(await a.workflow('SPEC-a','REQ-001/login')).workflows[0];
+  await job(a,'workflow.accept',{requirementId:'REQ-001',featureId:'login',runId:workflow.latestReport.runId,expectedManifestDigest:workflow.latestReport.manifestDigest},'SPEC-a');
   await job(a,'repository.sync',{},'SPEC-a');
   const raw=(await git.command(undefined,['--git-dir',f.remote,'show','main:spec/REQ-001/login/workflow.json'])).stdout;
   assert.equal(JSON.parse(raw).stage,'VERIFIED');assert.equal(JSON.parse(raw).latestReport.path,'reports/REQ-001/login/RUN-portable/manifest.json');
