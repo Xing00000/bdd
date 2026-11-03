@@ -4,6 +4,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fixture, toolkitRoot } from './helpers.mjs';
 import { checkRepository, generatedPath } from '../../scripts/check-repository.mjs';
+import { execute } from '../../packages/git-core/index.mjs';
 
 async function repositoryFixture(t) {
   const f = await fixture(t); await mkdir(f.repo);
@@ -45,8 +46,18 @@ test('npm aliases and CLI file paths must resolve', async t => {
   const result = await checkRepository(f.repo, { trackedFiles: [], docs: ['README.md'] });
   assert.equal(result.errors.length, 2); assert.ok(result.errors.some(x => x.includes('missing CLI entry')));
 });
-test('clean-clone listing and tooling explicitly regenerate the retained legacy acceptance source', async () => {
+test('workstation test listing is read-only while legacy generation retains its review gate', async () => {
   const pkg = JSON.parse(await readFile(path.join(toolkitRoot, 'package.json'), 'utf8'));
-  assert.equal(pkg.scripts['prespec:list'], 'npm run spec:generate');
+  const reviewFile = 'spec/REQ-WB-001/review.json';
+  const review = JSON.parse(await readFile(path.join(toolkitRoot, reviewFile), 'utf8'));
+  const files = [reviewFile, review.featurePath, review.sdPath];
+  const before = await Promise.all(files.map(file => readFile(path.join(toolkitRoot, file), 'utf8')));
+  const listing = await execute('npm', ['run', 'spec:list'], { cwd: toolkitRoot, env: process.env, timeoutMs: 30000, progress: false });
+  assert.equal(listing.exitCode, 0, listing.stderr + listing.stdout);
+  assert.match(listing.stdout, /tests\/chat-ui\//);
+  assert.match(listing.stdout, /Total: [1-9]\d* tests/);
+  assert.deepEqual(await Promise.all(files.map(file => readFile(path.join(toolkitRoot, file), 'utf8'))), before);
   assert.equal(pkg.scripts['pretest:tooling'], 'npm run spec:generate');
+  const { sourcesConfirmed, sourceCases } = await import('../../tools/bdd/source.mjs');
+  if (!sourcesConfirmed()) assert.throws(sourceCases, /Source review is pending or hashes changed/);
 });

@@ -1,7 +1,7 @@
 /** Independent task templates; historical combined Agent rows remain immutable. */
 import {randomUUID} from 'node:crypto';
 import {invariant} from '../contracts/index.mjs';
-import {agentPromptFields,validatePromptTemplate,validateAgentRuntimeSettings} from './agent-settings.mjs';
+import {agentPromptFields,validatePromptTemplate,validateAgentRuntimeSettings,seedAgentSettings} from './agent-settings.mjs';
 const purposes=Object.keys(agentPromptFields);
 export function installPromptCatalog(db){
  db.exec(`CREATE TABLE IF NOT EXISTS prompts(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0,origin_agent_id TEXT,origin_purpose TEXT,UNIQUE(origin_agent_id,origin_purpose));
@@ -36,12 +36,13 @@ export function promptCatalogMethods(db,atomic){
  };
 }
 export function migrateAgentPrompts(db){
+ const defaults=seedAgentSettings();
  const records=db.prepare('SELECT r.*,a.name,a.archived FROM agent_revisions r JOIN agent_profiles a ON a.id=r.agent_id ORDER BY r.agent_id,r.version').all();
  for(const row of records){
   const settings=JSON.parse(row.settings_json);if(!Object.values(agentPromptFields).some(field=>Object.hasOwn(settings,field)))continue;
   for(const [purpose,field] of Object.entries(agentPromptFields)){
    if(db.prepare('SELECT 1 FROM prompt_migrations WHERE agent_revision_id=? AND purpose=?').get(row.id,purpose))continue;
-   const content=validatePromptTemplate(settings[field]);let profile=db.prepare('SELECT id FROM prompts WHERE origin_agent_id=? AND origin_purpose=?').get(row.agent_id,purpose);
+   const content=validatePromptTemplate(Object.hasOwn(settings,field)?settings[field]:defaults[field]);let profile=db.prepare('SELECT id FROM prompts WHERE origin_agent_id=? AND origin_purpose=?').get(row.agent_id,purpose);
    if(!profile){profile={id:randomUUID()};db.prepare('INSERT INTO prompts VALUES(?,?,?,?,?,?)').run(profile.id,`${row.name} · ${purpose}`,'由既有 Agent Prompt 原文遷入',row.archived,row.agent_id,purpose);}
    const version=(db.prepare('SELECT MAX(version) n FROM prompt_revisions WHERE prompt_id=?').get(profile.id).n??0)+1,id=randomUUID();
    db.prepare('INSERT INTO prompt_revisions VALUES(?,?,?,?,?,?)').run(id,profile.id,version,content,JSON.stringify([purpose]),row.created_at);

@@ -14,7 +14,7 @@ function sqlString(value:string):string{
 
 function replaceExactlyOnce(value:string,marker:string,replacement:string,description:string):string{
  if(value.split(marker).length!==2)throw new Error(`The application seed must contain exactly one ${description} marker.`);
- return value.replace(marker,replacement);
+ return value.replace(marker,()=>replacement);
 }
 
 function section(value:string,name:typeof seedSections[number]):string{

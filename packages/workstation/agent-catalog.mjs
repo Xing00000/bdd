@@ -77,12 +77,30 @@ export function agentCatalogMethods(db,atomic){
   agentCatalog(){return {agents:listAgents(),prompts:prompts.listPrompts(),skills:listSkills(),template:validateAgentRuntimeSettings(),promptTemplates:Object.fromEntries(Object.entries(agentPromptFields).map(([purpose,field])=>[purpose,seedAgentSettings()[field]])),purposes:agentPurposes};},
   saveCatalogAgent:saveAgent,saveCatalogSkill:saveSkill,saveCatalogPrompt:prompts.saveCatalogPrompt,
   ensureAgentDefaults(repositoryId,legacy){return atomic(()=>{
-   if(db.prepare('SELECT 1 FROM agent_task_defaults WHERE repository_id=? LIMIT 1').get(repositoryId))return;
-   const settings=validateAgentSettings(legacy),bindings=[];
-   if(settings.skills){const skill=saveSkill({name:'匯入的技能指引',description:'保留規格庫原始 Skills',content:settings.skills});bindings.push(skill.revisions[0].id);}
+   const savedDefaults=db.prepare('SELECT * FROM agent_task_defaults WHERE repository_id=?').all(repositoryId);
+   const existing=new Set(savedDefaults.map(row=>row.purpose));
+   const missing=agentPurposes.filter(purpose=>!existing.has(purpose));
+   if(!missing.length)return;
    const repository=db.prepare('SELECT title FROM spec_repositories WHERE id=?').get(repositoryId);invariant(repository,'REPOSITORY_NOT_FOUND','找不到規格庫',404);
-   const agent=saveAgent({name:repository.title+' Agent',description:'由原有規格庫設定遷入',settings:validateAgentRuntimeSettings(settings),skillRevisionIds:bindings});
-   for(const purpose of agentPurposes){const prompt=prompts.saveCatalogPrompt({name:repository.title+' · '+purpose,content:settings[agentPromptFields[purpose]],purposes:[purpose]});db.prepare('INSERT INTO agent_task_defaults(repository_id,purpose,agent_revision_id,skills_json,prompt_revision_id) VALUES(?,?,?,?,?)').run(repositoryId,purpose,agent.revisions[0].id,JSON.stringify(bindings),prompt.revisions[0].id);}
+   const settings=validateAgentSettings(legacy),runtime=validateAgentRuntimeSettings(settings),bindings=[];
+   const agentSeed={name:repository.title+' Agent',description:'由原有規格庫設定遷入',settings:runtime};
+   // Reuse only complete, current seed revisions; never change a user-edited
+   // profile or revive an archived/historical version while repairing defaults.
+   const matchingAgents=listAgents().filter(item=>!item.archived&&item.name===agentSeed.name&&item.description===agentSeed.description&&identity(item.revisions[0].settings)===identity(runtime));
+   const preferReferenced=(items,ids)=>items.find(item=>ids.has(item.revisions[0].id))??items[0];
+   if(settings.skills){
+    const skillSeed={name:'匯入的技能指引',description:'保留規格庫原始 Skills',content:settings.skills};
+    const references=new Set([...savedDefaults.flatMap(row=>JSON.parse(row.skills_json)),...matchingAgents.flatMap(item=>item.revisions[0].skillRevisionIds)]);
+    const matchingSkills=listSkills().filter(item=>!item.archived&&item.name===skillSeed.name&&item.description===skillSeed.description&&item.revisions[0].content===settings.skills&&!item.revisions[0].resources.length&&identity(item.revisions[0].purposes)===identity(agentPurposes));
+    const skill=preferReferenced(matchingSkills,references)??saveSkill(skillSeed);bindings.push(skill.revisions[0].id);
+   }
+   const agent=preferReferenced(matchingAgents.filter(item=>identity(item.revisions[0].skillRevisionIds)===identity(bindings)),new Set(savedDefaults.map(row=>row.agent_revision_id)))??saveAgent({...agentSeed,skillRevisionIds:bindings});
+   const catalogPrompts=prompts.listPrompts();
+   for(const purpose of missing){
+    const promptSeed={name:repository.title+' · '+purpose,content:settings[agentPromptFields[purpose]],purposes:[purpose]};
+    const prompt=catalogPrompts.find(item=>!item.archived&&item.name===promptSeed.name&&item.description===''&&item.revisions[0].content===promptSeed.content&&identity(item.revisions[0].purposes)===identity(promptSeed.purposes))??prompts.saveCatalogPrompt(promptSeed);
+    db.prepare('INSERT INTO agent_task_defaults(repository_id,purpose,agent_revision_id,skills_json,prompt_revision_id) VALUES(?,?,?,?,?)').run(repositoryId,purpose,agent.revisions[0].id,JSON.stringify(bindings),prompt.revisions[0].id);
+   }
   });},
   agentDefaults(repositoryId){return db.prepare('SELECT purpose,agent_revision_id agentRevisionId,prompt_revision_id promptRevisionId,skills_json FROM agent_task_defaults WHERE repository_id=? ORDER BY purpose').all(repositoryId).map(row=>({purpose:row.purpose,agentRevisionId:row.agentRevisionId,promptRevisionId:row.promptRevisionId,skillRevisionIds:JSON.parse(row.skills_json)}));},
   saveAgentDefault(repositoryId,input){const resolved=resolve(repositoryId,input.purpose,input);db.prepare('INSERT INTO agent_task_defaults(repository_id,purpose,agent_revision_id,skills_json,prompt_revision_id) VALUES(?,?,?,?,?) ON CONFLICT(repository_id,purpose) DO UPDATE SET agent_revision_id=excluded.agent_revision_id,skills_json=excluded.skills_json,prompt_revision_id=excluded.prompt_revision_id').run(repositoryId,input.purpose,resolved.agentRevisionId,JSON.stringify(resolved.skillRevisionIds),resolved.promptRevisionId);return resolved;},

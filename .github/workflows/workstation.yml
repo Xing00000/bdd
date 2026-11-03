@@ -18,6 +18,8 @@ jobs:
   workstation:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /tmp/bdd-workstation-browsers
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +38,10 @@ jobs:
         run: npm run check:repository 2>&1 | tee verification/repository.log
       - name: Check workstation syntax
         run: node scripts/check-workstation.mjs 2>&1 | tee verification/syntax.log
+      - name: Install locked workstation and PTY dependencies
+        run: npm ci 2>&1 | tee verification/install.log
+      - name: Install browser used by test-plan lifecycle checks
+        run: node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee verification/browser-install.log
       - name: Test actual Git, processes, CLI and HTTP
         run: node --test tests/workstation/*.test.mjs 2>&1 | tee verification/tests.log
       - name: Preserve exact source and verification receipts
@@ -59,7 +65,7 @@ jobs:
         with:
           node-version: '24'
       - name: Install application and PTY runtime
-        run: npm ci
+        run: npm ci && npm run build
       - name: Real browser and repository management acceptance
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
@@ -92,8 +98,8 @@ jobs:
         run: |
           mkdir -p verification
           npm ci 2>&1 | tee verification/application-install.log
-      - name: Rebuild legacy discovery from a clean source checkout
-        run: npm run spec:list 2>&1 | tee verification/legacy-discovery.log
+      - name: Discover maintained workstation browser tests
+        run: npm run spec:list 2>&1 | tee verification/browser-discovery.log
       - name: Reject unused production declarations
         run: npm run check:unused 2>&1 | tee verification/application-unused.log
       - name: Type check application
@@ -119,6 +125,6 @@ jobs:
           name: workstation-application-${{ github.sha }}
           path: |
             verification/application-*.log
-            verification/legacy-discovery.log
+            verification/browser-discovery.log
           retention-days: 3
           if-no-files-found: error

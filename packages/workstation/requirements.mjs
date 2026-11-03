@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, exists, readJson, writeJson, atomicWrite } from '../contracts/index.mjs';
 import { createFeature, scan, assertFileEditable } from '../spec-toolkit/index.mjs';
+import { testIdentity } from '../spec-toolkit/tags.mjs';
 
 export const MAX_REQUIREMENT_BYTES = 256 * 1024;
 export function requirementText(value, label, { empty = true } = {}) {
@@ -117,6 +118,78 @@ export async function readComposer(root, requirementId, featureId) {
   return { requirementId, featureId, key: p.key, description, gherkin,
     token: identity({ description, gherkin }), diagnostics: requirementDiagnostics(gherkin), suggestions: requirementSuggestions(gherkin) };
 }
+/** Keep ordinary tagged drafts usable before optional tools are installed.
+ * This only reads tag lines in simple Scenarios. It is not grammar validation;
+ * Outline/Rule expansion requires Cucumber and retains the prior matrix meanwhile.
+ */
+function simpleRequirementCaseIds(gherkin, requirementId, featureId) {
+  if (requirementDiagnostics(gherkin).length) return null;
+  let docString = null, tags = [], featureTags = [];
+  const caseIds = [];
+  for (const row of gherkin.split(/\r?\n/)) {
+    const line = row.trim();
+    if (docString) { if (line.startsWith(docString)) docString = null; continue; }
+    if (/^("""|```)/.test(line)) { docString = line.slice(0, 3); continue; }
+    if (!line || line.startsWith('#')) continue;
+    if (/^(Rule|規則|Scenario (?:Outline|Template)|(?:場景|劇本|情境)大綱|Examples|Scenarios|例子|範例):/.test(line)) return null;
+    if (line.startsWith('@')) {
+      if (!/^@[^\s]+(?:\s+@[^\s]+)*$/.test(line)) return null;
+      tags.push(...line.split(/\s+/)); continue;
+    }
+    if (/^(Feature|功能|機能|特性):/.test(line)) { featureTags = tags; tags = []; continue; }
+    const scenario = /^(?:Scenario|Example|場景|劇本|情境):\s*(.*)$/.exec(line);
+    if (scenario) {
+      try { caseIds.push(testIdentity({ title: scenario[1], tags: [...featureTags, ...tags] }, requirementId, featureId).caseId); }
+      catch { return null; }
+      tags = [];
+    }
+  }
+  return caseIds.length && new Set(caseIds).size === caseIds.length ? caseIds : null;
+}
+/** Match the reporter's concrete case identities, never tag-like document text.
+ * An unfinished or ambiguous draft remains saveable without replacing the last
+ * complete execution matrix. Discovery is still the execution gate.
+ */
+async function requirementCaseIds(gherkin, requirementId, featureId) {
+  if (!gherkin.trim()) return null;
+  const parserModules = [];
+  for (const name of ['@cucumber/gherkin', '@cucumber/messages']) {
+    try { parserModules.push(import.meta.resolve(name)); }
+    catch (error) {
+      if (error.code === 'ERR_MODULE_NOT_FOUND' && error.message.startsWith(`Cannot find package '${name}' imported from `))
+        return simpleRequirementCaseIds(gherkin, requirementId, featureId);
+      throw error;
+    }
+  }
+  // Missing transitive dependencies, broken installations and parser failures are
+  // real errors. Only an absent top-level parser package selects the fallback.
+  const [{ generateMessages }, { IdGenerator, SourceMediaType }] = await Promise.all(parserModules.map(url => import(url)));
+  const messages = generateMessages(gherkin, `${featureId}.feature`, SourceMediaType.TEXT_X_CUCUMBER_GHERKIN_PLAIN, {
+    newId: IdGenerator.incrementing(), includeGherkinDocument: true, includePickles: true, includeSource: false
+  });
+  if (messages.some(message => message.parseError)) return null;
+  const document = messages.find(message => message.gherkinDocument)?.gherkinDocument;
+  const rows = new Map();
+  const collect = children => {
+    for (const child of children ?? []) {
+      if (child.rule) collect(child.rule.children);
+      for (const examples of child.scenario?.examples ?? []) {
+        const index = examples.tableHeader?.cells.findIndex(cell => cell.value === 'case_id') ?? -1;
+        for (const row of examples.tableBody ?? []) rows.set(row.id, index < 0 ? undefined : row.cells[index]?.value);
+      }
+    }
+  };
+  collect(document?.feature?.children);
+  const caseIds = [];
+  for (const { pickle } of messages.filter(message => message.pickle)) {
+    const rowId = pickle.astNodeIds[1];
+    if (rowId && !rows.get(rowId)) return null;
+    const title = rowId ? `[case:${rows.get(rowId)}]` : pickle.name;
+    try { caseIds.push(testIdentity({ title, tags: pickle.tags }, requirementId, featureId).caseId); }
+    catch { return null; }
+  }
+  return caseIds.length && new Set(caseIds).size === caseIds.length ? caseIds : null;
+}
 export async function saveComposer(root, input) {
   const description = requirementText(input.description, '需求描述'), gherkin = requirementText(input.gherkin, 'Gherkin');
   invariant(description.trim() || gherkin.trim(), 'EMPTY_REQUIREMENT', '請先填寫需求描述或 Gherkin。');
@@ -136,10 +209,9 @@ export async function saveComposer(root, input) {
   }
   const p = composerPaths(requirementId, featureId), meta = await readJson(await safePath(root, p.metadata));
   // Edited Gherkin is authoritative. Keep its exact bytes, including unfinished text.
-  const cases = [...gherkin.matchAll(/(?:^|\s)@case:([A-Za-z0-9][A-Za-z0-9_-]{0,79})(?=\s|$)/g)].map(x => x[1]);
-  const caseIds = [...new Set(cases)];
+  const caseIds = await requirementCaseIds(gherkin, requirementId, featureId);
   await atomicWrite(await safePath(root, p.gherkin), gherkin);
   await writeJson(await safePath(root, p.source), { schemaVersion: 1, description });
-  await writeJson(await safePath(root, p.metadata), { ...meta, title, ...(caseIds.length ? { caseIds } : {}) });
+  await writeJson(await safePath(root, p.metadata), { ...meta, title, ...(caseIds ? { caseIds } : {}) });
   return { ...(await readComposer(root, requirementId, featureId)), sha256: digest(gherkin) };
 }

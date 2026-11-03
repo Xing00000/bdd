@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile} from 'node:fs/promises';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -39,4 +39,26 @@ test('one Prompt is reusable across Agents; edits and archive invalidate new dis
   assert.throws(()=>store.saveCatalogPrompt({id:prompt.id,expectedRevision:prompt.revisions[0].id,name:'Stale',content:'Stale'}),{code:'CATALOG_CHANGED'});
   const archived=store.saveCatalogPrompt({id:prompt.id,expectedRevision:updated.revisions[0].id,name:prompt.name,content:updated.revisions[0].content,purposes:['gherkin'],archived:true});assert.throws(()=>store.resolveAgent('SPEC-prompts','gherkin',{...selection,promptRevisionId:archived.revisions[0].id}),{code:'CATALOG_CHANGED'});
  }finally{store.close();}
+});
+
+test('schema 11 migration fills absent Prompt fields while preserving the exact historical settings',async t=>{
+ const home=await mkdtemp(path.join(tmpdir(),'bdd-prompt-partial-')),file=path.join(home,'metadata.sqlite');let store=openStore(home);
+ t.after(async()=>{store?.close();await rm(home,{recursive:true,force:true});});
+ const repositoryId='SPEC-partial-migration';store.register({id:repositoryId,title:'Partial migration',remoteUrl:'https://github.com/example/spec'});store.close();store=null;
+ const settings={command:'legacy-cli',args:['{task}','{prompt}'],gherkinPrompt:'  Exact custom Gherkin {featureId}\n'},agentId=randomUUID(),revisionId=randomUUID(),original=JSON.stringify(settings);
+ const db=new DatabaseSync(file);
+ try{
+  db.exec('PRAGMA foreign_keys=ON; ALTER TABLE agent_task_defaults DROP COLUMN prompt_revision_id; DROP TABLE prompt_migrations; DROP TABLE prompt_revisions; DROP TABLE prompts;');
+  db.prepare('INSERT INTO agent_profiles VALUES(?,?,?,?)').run(agentId,'Legacy Agent','Partial legacy settings',0);
+  db.prepare('INSERT INTO agent_revisions VALUES(?,?,?,?,?)').run(revisionId,agentId,1,original,new Date().toISOString());
+  for(const purpose of Object.keys(agentPromptFields))db.prepare('INSERT INTO agent_task_defaults(repository_id,purpose,agent_revision_id,skills_json) VALUES(?,?,?,?)').run(repositoryId,purpose,revisionId,'[]');
+  db.exec('PRAGMA user_version=11');
+ }finally{db.close();}
+ store=openStore(home);
+ const defaults=validateAgentSettings();
+ for(const [purpose,field] of Object.entries(agentPromptFields))assert.equal(store.resolveAgent(repositoryId,purpose).prompt.content,settings[field]??defaults[field]);
+ const verify=new DatabaseSync(file,{readOnly:true});
+ try{assert.equal(verify.prepare('SELECT settings_json FROM agent_revisions WHERE id=?').get(revisionId).settings_json,original);assert.deepEqual(verify.prepare('PRAGMA foreign_key_check').all(),[]);}finally{verify.close();}
+ const catalog=store.agentCatalog();assert.equal(catalog.prompts.length,4);assert.equal(catalog.agents[0].revisions.length,2);
+ store.close();store=openStore(home);assert.deepEqual(store.agentCatalog(),catalog);
 });

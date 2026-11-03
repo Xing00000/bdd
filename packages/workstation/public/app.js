@@ -681,7 +681,7 @@ on('#upload-requirement','click',()=>$('#requirement-file').click());
 on('#requirement-file','change',importDocument);
 on('#requirement-description','input',composerChanged);on('#requirement-gherkin','input',composerChanged);
 on('#generate-gherkin','click',generateGherkin);on('#save-requirement','click',saveRequirement);
-on('#feature-select','change',()=>navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'}));on('#save-source','click',saveSource);on('#advance','click',advance);
+on('#feature-select','change',async()=>{try{await navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'});}finally{$('#feature-select').value=state.featureKey??'';}});on('#save-source','click',saveSource);on('#advance','click',advance);
 on('#acceptance-opinion','input',()=>{acceptanceDrafts.set(acceptanceKey(),$('#acceptance-opinion').value);renderAcceptanceActions();});on('#request-implementation-changes','click',requestImplementationChanges);on('#accept-requirement','click',acceptRequirement);
 on('#source-select','change',async()=>{const value=$('#source-select').value;if(await guard())await openSource(value);});
 on('#generate-design','click',generateDesign);on('#generate-test-plan','click',generateTestPlan);on('#complete-test-plan','click',completeTestPlan);on('#restart-stage','click',restartStage);
