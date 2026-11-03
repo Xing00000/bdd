@@ -31,7 +31,8 @@ export async function main(command = process.argv[2]) {
     }
     const options = environmentOptions();
     if (command === 'serve') {
-      const port = Number(process.env.WB_PORT ?? process.env.WB_REPOSITORY_PORT ?? 4173);
+      const target=process.env.WB_TARGET_BASE_URL?new URL(process.env.WB_TARGET_BASE_URL):null;
+      const port = Number(process.env.WB_PORT ?? process.env.WB_REPOSITORY_PORT ?? (target?(target.port||80):4173));
       invariant(Number.isInteger(port) && port >= 1 && port <= 65535, 'INVALID_PORT', 'Invalid listen port');
       const app = await createStandaloneServer(options);
       await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(port, '127.0.0.1', resolve); });

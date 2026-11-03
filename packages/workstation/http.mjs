@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createGit } from '../git-core/index.mjs';
 import { createWorkstation } from './service.mjs';
 import { invariant, id, safePath, errorResult } from '../contracts/index.mjs';
 import { verifyBundle } from '../spec-toolkit/engine.mjs';
@@ -18,6 +19,10 @@ const securityHeaders = {
 };
 export async function dispatch(service, request) {
   const url = new URL(request.url, 'http://workstation.invalid'), pathname = url.pathname.replace(/\/$/, '') || '/';
+  if(request.method==='GET'&&pathname==='/health') {
+    const commit=await createGit().resolve(service.options.toolkitRoot);
+    return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:{status:'ok',commit}};
+  }
   if (request.method === 'GET' && assets.has(pathname)) {
     const [name, type] = assets.get(pathname);
     return { status: 200, headers: { ...securityHeaders, 'content-type': type }, body: await readFile(new URL(`./public/${name}`, import.meta.url)) };
