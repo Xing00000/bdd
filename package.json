@@ -30,6 +30,8 @@
     "check:workstation": "node scripts/check-workstation.mjs",
     "test:workstation": "node --test tests/workstation/*.test.mjs",
     "test:seed": "node --test tests/workstation/agent-settings.test.mjs tests/workstation/agent-catalog.test.mjs tests/workstation/prompt-catalog.test.mjs tests/integration/application-seed.test.ts",
+    "pretest:chat:runtime": "npm run build",
+    "test:chat:runtime": "node --test dist/tests/integration/chat.test.js dist/tests/integration/chat-stream.test.js dist/tests/integration/chat-tool-protocol.test.js dist/tests/integration/copilot-models.test.js dist/tests/integration/codex-chat-runtime.test.js dist/tests/integration/copilot-chat-runtime.test.js dist/tests/integration/chat-provider-lifecycle.test.js dist/tests/integration/chat-service-lifecycle.test.js dist/tests/integration/chat-cli-smoke.test.js dist/tests/integration/chat-native-runtime.test.js",
     "test:workstation:e2e": "node --test --test-concurrency=1 tests/workstation-e2e/*.test.mjs",
     "pretest:tooling": "npm run spec:generate",
     "check:repository": "node scripts/check-repository.mjs",

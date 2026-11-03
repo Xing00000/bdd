@@ -186,7 +186,13 @@ Once that shared workflow policy reports COMPLETE, both the development action a
 The acceptance view renders original reporter scenario/step data and attachment hashes. Native Playwright HTML uses an artifact-scoped URL and sandbox without same-origin privileges. It cannot serve arbitrary repository files. Installation, runtime cache, process IDs and transcripts remain local; no credentials are written to portable requirement state.
 
 
-聊天室串流由 `src/application/chat.ts` 擁有：Copilot JSONL 文字增量經 Responses SSE 與 Codex app-server 通知傳入，`src/http/chat-stream.ts` 統一輸出瀏覽器 SSE。正式入口為 `/repository-api/v1/chat-events`，相容 API 為 `/chat-events`；POST 送出與 SQLite 最終保存維持既有契約。revision 快照負責重連恢復，生成中的累積文字僅存記憶體，服務重啟以 interrupted 結束未完成訊息。規格與證據對應見 AC-WB-040；前端不再以 timer 輪詢聊天室。
+聊天室串流由 `src/application/chat.ts` 擁有：Copilot headless JSON-RPC 的 session 文字增量經 Responses SSE 與 Codex app-server 通知傳入，`src/http/chat-stream.ts` 統一輸出瀏覽器 SSE。正式入口為 `/repository-api/v1/chat-events`，相容 API 為 `/chat-events`；POST 送出與 SQLite 最終保存維持既有契約。revision 快照負責重連恢復，生成中的累積文字僅存記憶體，服務重啟以 interrupted 結束未完成訊息。規格與證據對應見 AC-WB-040；前端不再以 timer 輪詢聊天室。
+
+聊天程序的生命週期與單次回合分開。`codex-chat.ts` 按聊天室保存 Codex worker；正常 reply／compact 完成後保留連線、初始化狀態與 thread，事件依 thread／turn 識別分流。provider credential 屬於 worker，每輪只啟用該輪的取消訊號；空閒 credential 不接受模型請求，停用或 HTTP 中斷會取消該請求。逾時先中斷當輪，只有確認 terminal event 才重用；協定失敗、無法確認已中斷、設定變更、空閒回收或服務關閉時才回收程序。空閒 worker 有時間與數量限制，回收不刪除已保存的對話。
+
+`copilot-chat.ts` 重用 Copilot headless server，模型清單與推理共享程序；每個 provider request 建立獨立 session，僅輸入 Codex 當次提供的上下文。session 結束不終止背景服務，也不將 Copilot 歷史附加回下一個 request。工具只向 Copilot 宣告，實際執行仍由 Codex 的 workbench MCP 擁有；內建工具與額外操作不獲授權。取消、工具交接與完成都清理對應 session，遲到事件不得送入其他請求；不確定是否清理成功的連線須失效重建。
+
+程序重用測試以受控子程序協定 peer 檢查實際 spawn 次數、串流、並行聊天室、逾時、遲到事件、設定更新、故障恢復與關閉。真實 CLI 的無推理 smoke 驗證固定版本的初始化與 session 協定；這些證據不代表已量測外部模型的首字時間或吞吐量。真實聊天速度須在具有 Copilot 登入與模型權限的環境另行量測。
 
 
 Schema 12 adds `prompts`, `prompt_revisions` and migration provenance; `agent_task_defaults.prompt_revision_id` binds each task's independent template. Before upgrade, `before-prompt-catalog-v12.sqlite` is created. Historical Agent revisions and operation JSON remain byte-for-byte unchanged. Each legacy combined Agent head receives a new runtime-only revision; old template versions are imported as independent Prompt revisions and current defaults are rebound transactionally. Legacy frozen jobs retain their old execution contract. New submissions must select an explicit Prompt revision suitable for the task; updated/archived revisions are rejected before dispatch. The operation snapshot keeps runtime settings, Prompt content/version, Skills and the final edited text. AC-WB-044 and `prompt-catalog.test.mjs` verify this contract.

@@ -20,7 +20,9 @@ export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,ru
  type Event={type:'changed'|'delta'|'closed';revision:number;roomId?:string;messageId?:string;delta?:string;offset?:number};
  const listeners=new Set<(event:Event)=>void>(),streams=new Map<string,{messageId:string;text:string}>();
  function publish(type:Event['type'],roomId?:string,delta?:string,offset?:number){if(type==='changed')stateRevision++;const event:Event={type,revision:++revision,roomId,...(type==='delta'?{messageId:streams.get(roomId!)!.messageId,delta,offset}:{})};for(const listener of listeners){try{listener(event);}catch(error){listeners.delete(listener);console.error('Chat subscriber failed',error);}}}
- const jobs=new Set<Promise<void>>(),busyRooms=new Set<string>(),persistenceErrors:unknown[]=[];let closing=false,closePromise:Promise<void>|undefined;
+ const jobs=new Set<Promise<void>>(),admissions=new Set<Promise<unknown>>(),busyRooms=new Set<string>(),persistenceErrors:unknown[]=[];let closing=false,closePromise:Promise<void>|undefined;
+ const requireOpen=()=>{if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');};
+ function admit<T>(action:()=>Promise<T>){const job=action();admissions.add(job);void job.then(()=>admissions.delete(job),()=>admissions.delete(job));return job;}
  const room=async(id:string)=>{const row=(await store.all('SELECT * FROM chat_rooms WHERE id=?',[id]))[0];if(!row)fail(404,'CHAT_NOT_FOUND','找不到聊天室');return row;};
  const settings=async():Promise<ChatSettings>=>JSON.parse((await store.all('SELECT value_json FROM chat_settings WHERE id=1'))[0].value_json);
  const pending=async(id:string)=>(await store.all("SELECT id FROM chat_messages WHERE room_id=? AND status='pending'",[id])).length>0;
@@ -43,7 +45,8 @@ export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,ru
   async create(input:any){const title=input?.title===undefined?newChatTitle:chatText(input.title,'聊天室名稱',chatLimits.title),id=randomUUID(),now=new Date().toISOString();await store.run('INSERT INTO chat_rooms(id,title,created_at,updated_at) VALUES(?,?,?,?)',[id,title,now,now]);publish('changed',id);return room(id);},
   detail,
   async send(id:string,input:any){
-   if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');
+   requireOpen();
+   return admit(async()=>{
    if(busyRooms.has(id))fail(409,'CHAT_BUSY','此聊天室正在回覆，請等待完成');
    busyRooms.add(id);
    try{
@@ -53,11 +56,15 @@ export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,ru
    const messageId=randomUUID(),now=new Date().toISOString();
    const firstMessage=!(await store.all('SELECT id FROM chat_messages WHERE room_id=? LIMIT 1',[id])).length;
    const title=firstMessage&&current.title===newChatTitle?Array.from(text.trim().replace(/\s+/g,' ')).slice(0,chatLimits.title).join(''):current.title;
+   requireOpen();
    try{await store.batch([{sql:"INSERT INTO chat_messages(id,room_id,role,content,status,created_at) VALUES(?,?,'user',?,'pending',?)",params:[messageId,id,text,now]},{sql:'UPDATE chat_rooms SET updated_at=?,title=? WHERE id=?',params:[now,title,id]}]);}
    catch(error){if(await pending(id))fail(409,'CHAT_BUSY','此聊天室正在回覆，請等待完成');throw error;}
    streams.set(id,{messageId,text:''});publish('changed',id);
    const job=(async()=>{
     try{
+     // The pending INSERT may have committed while shutdown started. Preserve
+     // that user message as interrupted without starting work on a closed CLI.
+     requireOpen();
      const answer=await runtime.reply({roomId:id,threadId:current.thread_id,text,settings:config,onDelta:delta=>{const stream=streams.get(id)!;const offset=stream.text.length;stream.text+=delta;publish('delta',id,delta,offset);},onThread:async threadId=>{await store.run('UPDATE chat_rooms SET thread_id=? WHERE id=?',[threadId,id]);}});
      if(!answer.trim())throw Error('CLI 未提供助手回覆');
      await store.batch([{sql:"UPDATE chat_messages SET status='completed' WHERE id=? AND status='pending'",params:[messageId],expectChanges:1},{sql:"INSERT INTO chat_messages(id,room_id,role,content,status,created_at) VALUES(?,?,'assistant',?,'completed',?)",params:[randomUUID(),id,answer,new Date().toISOString()]},{sql:'UPDATE chat_rooms SET updated_at=? WHERE id=?',params:[new Date().toISOString(),id]}]);
@@ -66,13 +73,28 @@ export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,ru
    })();jobs.add(job);void job.then(()=>jobs.delete(job),error=>{jobs.delete(job);persistenceErrors.push(error);console.error('Chat message persistence failed; the incomplete message remains pending until recovery.');});
    return {messageId};
    }catch(error){busyRooms.delete(id);throw error;}
+   });
   },
   async compact(id:string){
-   if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');
+   requireOpen();
+   return admit(async()=>{
    if(busyRooms.has(id))fail(409,'CHAT_BUSY','此聊天室正在回覆');busyRooms.add(id);
-   try{const current=await room(id);if(!current.thread_id)fail(409,'CHAT_NO_THREAD','此聊天室還沒有 Codex 對話');if(await pending(id))fail(409,'CHAT_BUSY','此聊天室正在回覆');await runtime.compact({roomId:id,threadId:current.thread_id,settings:await settings()});return {status:'completed'};}
+   try{const current=await room(id);if(!current.thread_id)fail(409,'CHAT_NO_THREAD','此聊天室還沒有 Codex 對話');if(await pending(id))fail(409,'CHAT_BUSY','此聊天室正在回覆');const config=await settings();requireOpen();await runtime.compact({roomId:id,threadId:current.thread_id,settings:config});return {status:'completed'};}
    finally{busyRooms.delete(id);}
+   });
   },
-  close(){return closePromise??=(async()=>{closing=true;publish('closed');listeners.clear();await runtime.close();await Promise.all(jobs);if(persistenceErrors.length)throw new AggregateError(persistenceErrors,'Chat message persistence failed');})();},
+  close(){return closePromise??=(async()=>{
+   closing=true;publish('closed');listeners.clear();
+   // Cancel active inference first. Admissions can still be awaiting SQLite;
+   // wait for them before collecting final persistence jobs or closing storage.
+   const stopped=(async()=>{await runtime.close();})();
+   const [shutdown]=await Promise.allSettled([stopped,...admissions]);
+   await Promise.allSettled(jobs);
+   if(shutdown.status==='rejected'){
+    if(persistenceErrors.length)throw new AggregateError([shutdown.reason,...persistenceErrors],'Chat shutdown and message persistence failed');
+    throw shutdown.reason;
+   }
+   if(persistenceErrors.length)throw new AggregateError(persistenceErrors,'Chat message persistence failed');
+  })();},
  };
 }
