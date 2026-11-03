@@ -38,8 +38,10 @@ jobs:
         run: npm run check:repository 2>&1 | tee verification/repository.log
       - name: Check workstation syntax
         run: node scripts/check-workstation.mjs 2>&1 | tee verification/syntax.log
-      - name: Install locked workstation and PTY dependencies
-        run: npm ci 2>&1 | tee verification/install.log
+      - name: Install and build locked workstation and PTY dependencies
+        run: |
+          npm ci 2>&1 | tee verification/install.log
+          npm run build 2>&1 | tee verification/build.log
       - name: Install browser used by test-plan lifecycle checks
         run: node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee verification/browser-install.log
       - name: Test actual Git, processes, CLI and HTTP
@@ -72,7 +74,8 @@ jobs:
           WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e
         run: |
           mkdir -p "$WB_E2E_ARTIFACTS"
-          node --test --test-concurrency=1 tests/workstation-e2e/*.test.mjs 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
+          node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-install.log"
+          npm run test:workstation:e2e 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
       - name: Preserve browser evidence and dependency receipts
         if: always()
         uses: actions/upload-artifact@v4

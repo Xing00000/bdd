@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, cp, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fixture, toolkitRoot } from './helpers.mjs';
 import { checkRepository, generatedPath } from '../../scripts/check-repository.mjs';
@@ -46,13 +46,17 @@ test('npm aliases and CLI file paths must resolve', async t => {
   const result = await checkRepository(f.repo, { trackedFiles: [], docs: ['README.md'] });
   assert.equal(result.errors.length, 2); assert.ok(result.errors.some(x => x.includes('missing CLI entry')));
 });
-test('workstation test listing is read-only while legacy generation retains its review gate', async () => {
+test('workstation test listing is read-only without build output while legacy generation retains its review gate', async t => {
   const pkg = JSON.parse(await readFile(path.join(toolkitRoot, 'package.json'), 'utf8'));
   const reviewFile = 'spec/REQ-WB-001/review.json';
   const review = JSON.parse(await readFile(path.join(toolkitRoot, reviewFile), 'utf8'));
   const files = [reviewFile, review.featurePath, review.sdPath];
   const before = await Promise.all(files.map(file => readFile(path.join(toolkitRoot, file), 'utf8')));
-  const listing = await execute('npm', ['run', 'spec:list'], { cwd: toolkitRoot, env: process.env, timeoutMs: 30000, progress: false });
+  const f = await fixture(t); await mkdir(f.repo);
+  for (const source of ['packages', 'tests', 'skills', 'package.json', 'playwright.config.ts', 'playwright.chat.config.ts', 'tsconfig.json'])
+    await cp(path.join(toolkitRoot, source), path.join(f.repo, source), { recursive: true });
+  await symlink(path.join(toolkitRoot, 'node_modules'), path.join(f.repo, 'node_modules'), 'junction');
+  const listing = await execute('npm', ['run', 'spec:list'], { cwd: f.repo, env: process.env, timeoutMs: 30000, progress: false });
   assert.equal(listing.exitCode, 0, listing.stderr + listing.stdout);
   assert.match(listing.stdout, /tests\/chat-ui\//);
   assert.match(listing.stdout, /Total: [1-9]\d* tests/);

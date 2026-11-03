@@ -7,12 +7,12 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
-import {createServer as createCompatibilityApi} from '../../dist/src/http/server.js';
 import {access} from 'node:fs/promises';
 import {ChatToolsDriver} from './chat-tools-driver.ts';
 
 const prefix='/repository-api/v1';
 base('single UI: the compatibility API never serves the retired Vue application',async()=>{
+ const {createServer:createCompatibilityApi}=await import('../../dist/src/http/server.js');
  const home=await mkdtemp(path.join(tmpdir(),'bdd-single-ui-'));
  const api=await createCompatibilityApi({root:process.cwd(),metadataFile:path.join(home,'metadata.sqlite'),dataRoot:path.join(home,'data'),baseUrl:'http://127.0.0.1:1'});
  try{
