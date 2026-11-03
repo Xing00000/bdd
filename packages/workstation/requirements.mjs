@@ -129,7 +129,7 @@ export async function saveComposer(root, input) {
     await assertFileEditable(root, composerPaths(requirementId, featureId).gherkin);
   } else {
     invariant(input.expectedToken === null, 'CONTENT_CHANGED', '請以新的需求表單儲存。', 409);
-    const features = (await scan(root)).features; let n = 1;
+    const features = (await scan(root,{includeDeleted:true})).features; let n = 1;
     while (features.some(f => f.requirementId === `REQ-${String(n).padStart(3, '0')}`)) n++;
     requirementId = `REQ-${String(n).padStart(3, '0')}`; featureId = 'feature';
     await createFeature(root, { requirementId, featureId, title, projectIds: input.projectIds ?? [] });

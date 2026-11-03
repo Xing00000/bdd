@@ -9,7 +9,7 @@ import os from 'node:os';
 import { mkdtemp, mkdir, readFile, readdir, rm, lstat } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, exists, walk, atomicWrite, writeJson, readJson } from '../contracts/index.mjs';
 import { remoteUrl, gitSourcePaths, gitSourceFiles, trackSourceView } from '../git-core/index.mjs';
-import { initialize, configuration, createFeature, scan, saveFile, buildGuidedFeature, parseGuidedFeature, reviewState, confirm, restartReview, assertFileEditable } from '../spec-toolkit/index.mjs';
+import { initialize, configuration, createFeature, deleteFeature, scan, saveFile, buildGuidedFeature, parseGuidedFeature, reviewState, confirm, restartReview, assertFileEditable } from '../spec-toolkit/index.mjs';
 import { configureFeature, configureExecution, sourcePath } from './repository-actions.mjs';
 import { planUpgrade } from './upgrades.mjs';
 import { publicPlan } from './transactions.mjs';
@@ -177,6 +177,13 @@ export async function editDraft(context) {
         result={...publicPlan(plan),status:'APPLIED',committed:false};
       } else if(request.operation==='workflow.feedback') {
         result=await saveFeedback(root,input,context);
+      } else if(request.operation==='workflow.delete') {
+        invariant(Number.isInteger(input.expectedRevision),'REVISION_REQUIRED','請重新載入需求後再刪除。',409);
+        invariant(input.expectedRevision===snapshot.revision,'DRAFT_REVISION_CHANGED','需求或設定已更新，請重新載入後再確認刪除。',409);
+        result=await deleteFeature(root,input);
+        // Exported repos must understand the logical-deletion schema as well.
+        const plan=await planUpgrade(root,options.toolkitRoot);
+        for(const file of plan.files)await atomicWrite(await safePath(root,file.path),Buffer.from(file.content,'base64'));
       } else if(request.operation==='workflow.requirement.save') {
         result=await saveComposer(root,input);
       } else if(request.operation==='repository.save') {
@@ -189,7 +196,7 @@ export async function editDraft(context) {
           extra.push({target:`project:${input.projectId}`,path:input.path,content:input.content,baseHash:old?.sha256??null});result={path:input.path,projectId:input.projectId,sha256:digest(input.content)};
         }else{invariant(input.kind==='source','INVALID_SAVE_TARGET','請選擇規格或產品。');result=await saveFile(root,input);}
       } else if(request.operation==='workflow.create') {
-        const existing=(await scan(root)).features;let requirementId=input.requirementId?.trim(),featureId=input.featureId?.trim();
+        const existing=(await scan(root,{includeDeleted:true})).features;let requirementId=input.requirementId?.trim(),featureId=input.featureId?.trim();
         if(!requirementId){let n=1;while(existing.some(f=>f.requirementId===`REQ-${String(n).padStart(3,'0')}`))n++;requirementId=`REQ-${String(n).padStart(3,'0')}`;}
         if(!featureId){const prefix=String(input.title??'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'feature';featureId=prefix;let n=1;while(existing.some(f=>f.requirementId===requirementId&&f.id===featureId))featureId=`${prefix}-${String(++n).padStart(3,'0')}`;}
         result=await createFeature(root,{...input,requirementId,featureId,guided:Boolean(input.guided||input.goal||input.acceptance)});

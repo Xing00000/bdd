@@ -12,7 +12,7 @@ export function llmInteractionPredicate(alias='operations') {
 const fixed={
   'workflow.design.generate':'SD',
   'workflow.gherkin.generate':'GHERKIN',
-  'workflow.requirement.save':'GHERKIN','workflow.create':'GHERKIN','workflow.draft':'GHERKIN','interaction.requirement.generate':'GHERKIN','interaction.document.import':'GHERKIN','spec.feature.create':'GHERKIN',
+  'workflow.delete':'GHERKIN','workflow.requirement.save':'GHERKIN','workflow.create':'GHERKIN','workflow.draft':'GHERKIN','interaction.requirement.generate':'GHERKIN','interaction.document.import':'GHERKIN','spec.feature.create':'GHERKIN',
   'workflow.tests.generate':'TESTS','workflow.tests.complete':'TESTS','spec.tests.check':'TESTS',
   'workflow.develop':'IMPLEMENTATION','workflow.verify':'VERIFICATION','workflow.feedback':'VERIFICATION','workflow.next':'VERIFICATION',
   'run.prepare':'VERIFICATION','run.execute':'VERIFICATION','run.publish':'VERIFICATION',

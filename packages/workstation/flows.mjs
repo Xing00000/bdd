@@ -12,7 +12,7 @@ import { requirementDiagnostics } from './requirements.mjs';
 import { currentProgress } from '../git-core/progress.mjs';
 import { dependencyDefinition, dependencyInputs, installedDependencies, materializeDependencies, nodeRuntime, dependencyReceiptPath, specToolBinaries } from '../spec-toolkit/dependencies.mjs';
 
-export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.create', 'workflow.draft', 'workflow.requirement.save', 'workflow.feedback', 'workflow.restart', 'workflow.review', 'workflow.verify', 'repository.prepare'];
+export const flowNames = ['repository.setup', 'repository.save', 'repository.sync', 'workflow.delete', 'workflow.create', 'workflow.draft', 'workflow.requirement.save', 'workflow.feedback', 'workflow.restart', 'workflow.review', 'workflow.verify', 'repository.prepare'];
 
 export async function attached(root, git, repositoryId) {
   const state = await git.inspect(root);

@@ -115,7 +115,9 @@ export function draftMethods(db) {
   };
 }
 
-export const localSaveOperations=Object.freeze(['repository.setup','repository.save','repository.upgrade.apply','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback','workflow.restart','interaction.requirement.generate','interaction.document.import','interaction.cli.input','interaction.cancel']);
+export const localSaveOperations=Object.freeze(['workflow.delete','repository.setup','repository.save','repository.upgrade.apply','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback','workflow.restart','interaction.requirement.generate','interaction.document.import','interaction.cli.input','interaction.cancel']);
 export const isLocalSave = request => localSaveOperations.includes(request.operation)
   || request.operation === 'workflow.review' && request.input?.stage === 'gherkin';
-export const projectionJobPredicate = `NOT (json_extract(request_json,'$.operation') IN (${localSaveOperations.map(name=>`'${name}'`).join(',')}) OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage')='gherkin'))`;
+const exclusiveLocalSaves=Object.freeze(['workflow.delete']);
+export const requiresRepositoryLock=request=>!isLocalSave(request)||exclusiveLocalSaves.includes(request.operation);
+export const projectionJobPredicate = `(json_extract(request_json,'$.operation') IN (${exclusiveLocalSaves.map(name=>`'${name}'`).join(',')}) OR NOT (json_extract(request_json,'$.operation') IN (${localSaveOperations.map(name=>`'${name}'`).join(',')}) OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage')='gherkin')))`;

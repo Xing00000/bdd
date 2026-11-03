@@ -5,7 +5,7 @@ import {mkdir,readFile,lstat} from 'node:fs/promises';
 import {invariant,identity,safePath} from '../contracts/index.mjs';
 import {execute,processEnvironment} from '../git-core/index.mjs';
 import {ensureDraft,inDraftView} from './authoring.mjs';
-import {reviewState} from '../spec-toolkit/index.mjs';
+import {reviewState,assertFeatureActive} from '../spec-toolkit/index.mjs';
 import {requirementText,requirementDiagnostics,MAX_REQUIREMENT_BYTES} from './requirements.mjs';
 import {validateAgentSettings} from './agent-settings.mjs';
 import {agentExecutable} from './development.mjs';
@@ -19,7 +19,7 @@ export async function generateGherkin(context){
   invariant(snapshot.settings.configured,'SETUP_REQUIRED','請先儲存規格庫設定。');
   if(!source.editorKey.startsWith('new-')){
     const [requirementId,featureId]=source.editorKey.split('/');
-    await inDraftView(snapshot,async root=>invariant(!(await reviewState(root,requirementId,featureId)).records.gherkin,'STAGE_READ_ONLY','需求已確認，請先退回需求階段。',409));
+    await inDraftView(snapshot,async root=>{await assertFeatureActive(root,requirementId,featureId);invariant(!(await reviewState(root,requirementId,featureId)).records.gherkin,'STAGE_READ_ONLY','需求已確認，請先退回需求階段。',409);});
   }
   const prompt=approvedAgentPrompt(snapshot,context,'gherkin'),agent=validateAgentSettings(snapshot.settings.agent),command=await agentExecutable(agent.command);
   const directory=await safePath(options.home,`gherkin-generations/${request.operationId}`),workspace=path.join(directory,'workspace');

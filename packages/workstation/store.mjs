@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { installDraftSchema, draftMethods, isLocalSave, projectionJobPredicate } from './draft-store.mjs';
+import { installDraftSchema, draftMethods, isLocalSave, requiresRepositoryLock, projectionJobPredicate } from './draft-store.mjs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, chmodSync } from 'node:fs';
@@ -197,7 +197,7 @@ export function openStore(home) {
           invariant(previous.request_hash === hash, 'OPERATION_ID_CONFLICT', 'An operation ID cannot be reused with different input', 409);
           db.exec('COMMIT'); return previous;
         }
-        const busy = !isLocalSave(request) && db.prepare(`SELECT id FROM operations WHERE repository_id=? AND status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate}`).get(request.repositoryId);
+        const busy = requiresRepositoryLock(request) && db.prepare(`SELECT id FROM operations WHERE repository_id=? AND status IN ('QUEUED','RUNNING','CANCELLING') AND ${projectionJobPredicate}`).get(request.repositoryId);
         invariant(!busy, 'REPOSITORY_BUSY', `Spec repository has an active operation ${busy?.id ?? ''}`, 409);
         const type=interactionType(request,request.input?.parentOperationId?get(request.input.parentOperationId)?.interaction_type:undefined);
         db.prepare("INSERT INTO operations(id,repository_id,request_hash,request_json,status,created_at,interaction_type) VALUES(?,?,?,?,'QUEUED',?,?)")

@@ -173,3 +173,9 @@ Once that shared workflow policy reports COMPLETE, both the development action a
 `workflow.feedback` is a SQLite authoring transaction. It validates report identity against the selected binding/requirement/feature, appends a protected `feedback.json`, and derives portable progress in the same transaction. Prior evidence is immutable. Unresolved feedback overrides an old PASS and returns the feature to IMPLEMENTATION; only a newer qualified run can advance it. The original issue remains in history and is passed to subsequent development as task data.
 
 The acceptance view renders original reporter scenario/step data and attachment hashes. Native Playwright HTML uses an artifact-scoped URL and sandbox without same-origin privileges. It cannot serve arbitrary repository files. Installation, runtime cache, process IDs and transcripts remain local; no credentials are written to portable requirement state.
+
+## 需求刪除生命週期
+
+邏輯刪除的 canonical owner 是 `spec/{requirementId}/{featureId}/feature.yaml` 的可選 `deletedAt` 時戳，先透過 SQLite authoring transaction 儲存。原文件、測試、審閱紀錄與報告保留；`scan()` 預設排除已刪除功能，`includeDeleted` 僅供識別碼保留、完整性檢查與歷史用途。`assertFeatureActive()` 阻擋已刪除功能的編輯、退回與確認，runner 亦拒絕執行。
+
+`workflow.delete` 要求人類確認的功能 key 與目前 authoring revision，並取得和開發、驗收相同的 repository writer lock；普通儲存仍可進行，revision CAS 防止誤刪新內容。刪除不移除原始檔案，也不提供自動還原。刪除交易透過現有 hash-verified toolkit upgrade 一併更新規格庫工具至 1.7.0，確保輸出後的 CLI 同樣理解刪除狀態；客製或被修改的工具必須先人工處理，不能靜默覆寫。

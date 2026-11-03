@@ -35,7 +35,7 @@ export async function configuration(root) {
   invariant(config.reports?.storage === 'git' && config.reports.publishMode === 'explicit', 'INVALID_REPORT_POLICY', 'v1 reports use Git and explicit publication');
   return config;
 }
-export const TOOLKIT_VERSION = '1.6.1';
+export const TOOLKIT_VERSION = '1.7.0';
 export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'git-core/progress.mjs', 'git-core/progress-store.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/tags.mjs', 'spec-toolkit/dependencies.mjs', 'spec-toolkit/cli.mjs']);
 export async function toolkitSnapshot(toolkitRoot) {
   const files = await Promise.all(TOOLKIT_FILES.map(async relative => ({ path: relative, content: await readFile(path.join(toolkitRoot, relative)) })));
@@ -118,7 +118,23 @@ export async function createFeature(root, input) {
   if (!await exists(reviewPath)) await writeJson(reviewPath, { schemaVersion: 1, features: {} });
   return { key, files: Object.keys(files), stage: 'GHERKIN' };
 }
-export async function scan(root) {
+export async function assertFeatureActive(root,requirementId,featureId) {
+  const key=featureKey(requirementId,featureId),feature=version(await readJson(await safePath(root,`spec/${key}/feature.yaml`,{missing:false})));
+  validateContract('feature',feature);
+  invariant(!feature.deletedAt,'FEATURE_DELETED','需求已刪除，不能再修改或執行。',409);
+  return feature;
+}
+/** Logical removal preserves canonical files, identifiers and historical evidence. */
+export async function deleteFeature(root,input) {
+  const key=featureKey(input.requirementId,input.featureId);
+  invariant(input.confirmedKey===key,'CONFIRMATION_REQUIRED','請先確認要刪除的需求。',409);
+  const feature=(await scan(root,{includeDeleted:true})).features.find(f=>f.key===key);
+  invariant(feature&&!feature.deletedAt,'FEATURE_NOT_FOUND','找不到可刪除的需求。',404);
+  const file=await safePath(root,`spec/${key}/feature.yaml`,{missing:false}),metadata=await readJson(file),deletedAt=new Date().toISOString();
+  await writeJson(file,{...metadata,deletedAt});
+  return {key,title:feature.title,deleted:true,deletedAt};
+}
+export async function scan(root, {includeDeleted=false}={}) {
   const config = await configuration(root), features = [];
   for (const requirementId of await directories(root, 'spec')) {
     const requirement = version(await readJson(await safePath(root, `spec/${requirementId}/requirement.yaml`, { missing: false })));
@@ -148,7 +164,7 @@ export async function scan(root) {
   }
   for (const area of ['tests', 'reports']) for (const req of await directories(root, area))
     for (const feature of await directories(root, `${area}/${req}`)) invariant(features.some(x => x.key === `${req}/${feature}`), 'ORPHAN_FEATURE_DIRECTORY', `${area}/${req}/${feature}`);
-  return { config, features };
+  return { config, features:includeDeleted?features:features.filter(f=>!f.deletedAt) };
 }
 export async function validate(root, git, { pinned = false } = {}) {
   const result = await scan(root), modules = await git.modules(root);
@@ -197,6 +213,7 @@ export async function confirm(root, input) {
   }
   invariant(reviewKinds.includes(input.stage), 'INVALID_STAGE', 'Confirm gherkin, sd or tests');
   invariant(typeof input.confirmedBy === 'string' && input.confirmedBy.trim() && input.confirmedBy.length <= 120, 'CONFIRMER_REQUIRED', 'Supply the human reviewer identity');
+  await assertFeatureActive(root,input.requirementId,input.featureId);
   const state = await reviewState(root, input.requirementId, input.featureId);
   invariant(input.expectedDigest === state.hashes[input.stage], 'CONTENT_CHANGED', 'Source changed since review', 409);
   if (input.stage !== 'gherkin') invariant(state.confirmed.gherkin, 'UPSTREAM_NOT_CONFIRMED', 'Confirm Gherkin first', 409);
@@ -224,7 +241,8 @@ export async function saveFile(root, input) {
 
 /** Source ownership follows the same review digests used to derive workflow progress. */
 export async function assertFileEditable(root, relative) {
-  for (const feature of (await scan(root)).features) {
+  for (const feature of (await scan(root,{includeDeleted:true})).features) {
+    if(feature.deletedAt){if(relative.startsWith(`spec/${feature.key}/`)||relative.startsWith(`tests/${feature.key}/`))await assertFeatureActive(root,feature.requirementId,feature.id);continue;}
     const state = await reviewState(root, feature.requirementId, feature.id);
     const stage = relative === `spec/${feature.key}/${feature.id}.feature` || relative === `spec/${feature.key}/requirement-source.json` || relative === `spec/${feature.requirementId}/requirement.yaml` ? 'gherkin'
       : relative === `spec/${feature.key}/${feature.id}.sd.md` || relative === `spec/${feature.key}/feature.yaml` ? 'sd'
@@ -238,6 +256,7 @@ export async function assertFileEditable(root, relative) {
 export async function restartReview(root, input) {
   const stages = reviewKinds, index = stages.indexOf(input.stage);
   invariant(index >= 0, 'INVALID_STAGE', '退回需求、系統設計或測試計劃。');
+  await assertFeatureActive(root,input.requirementId,input.featureId);
   const state = await reviewState(root, input.requirementId, input.featureId);
   invariant(input.expectedDigest === state.hashes.tests, 'CONTENT_CHANGED', '內容已更新，請重新讀取後再退回。', 409);
   invariant(stages.slice(0, index).every(stage => state.confirmed[stage]), 'UPSTREAM_NOT_CONFIRMED', '只能退回目前或已通過的階段。', 409);

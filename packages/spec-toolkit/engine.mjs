@@ -119,6 +119,7 @@ export function assessEvidence(plan, discovery, receipt, processResult, inputsUn
 export async function runBddCommand(root, mode, requirementId, featureId, options = {}) {
   featureKey(requirementId, featureId);
   const metadata = await readJson(await safePath(root, `spec/${requirementId}/${featureId}/feature.yaml`, { missing: false }));
+  invariant(!metadata.deletedAt,'FEATURE_DELETED','需求已刪除，不能再執行其測試。',409);
   invariant(!metadata.authoringOnly, 'TEST_RUNNER_NOT_CONFIGURED', '此規格尚未接線工作台測試執行器。', 409);
   invariant(['generate', 'list', 'test'].includes(mode), 'INVALID_BDD_COMMAND', mode);
   const output = options.output ?? path.resolve(root, '.runtime', `preview-${randomUUID()}`);
