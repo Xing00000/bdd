@@ -140,7 +140,7 @@ function sessionOptions(f:{workspace:string;url:string;copilotHome:string},sessi
 }
 const restrictedOptions={skipCustomInstructions:true,installedPlugins:[],includedBuiltinSkills:[],coauthorEnabled:false,manageScheduleEnabled:false};
 
-test('installed Codex reuses one app-server for unauthenticated thread lifecycle without inference',{timeout:60000},async t=>{
+test('installed Codex reuses one app-server for unauthenticated in-memory thread lifecycle without inference',{timeout:60000},async t=>{
  const f=await fixture();t.after(()=>f.close());
  const version=await promisify(execFile)(process.execPath,[codexLoader,'--version'],{cwd:f.workspace,env:f.env,timeout:requestTimeoutMs});
  assert.equal(version.stdout.trim(),`codex-cli ${codexVersion}`);
@@ -152,10 +152,12 @@ test('installed Codex reuses one app-server for unauthenticated thread lifecycle
  const params={model:'protocol-smoke',cwd:f.workspace,approvalPolicy:'never',sandbox:'read-only',baseInstructions:'No inference is permitted in this lifecycle smoke.'};
  const first=await cli.request('thread/start',params),second=await cli.request('thread/start',params);
  assert.equal(typeof first.thread.id,'string');assert.equal(typeof second.thread.id,'string');assert.notEqual(first.thread.id,second.thread.id);
- const resumed=await cli.request('thread/resume',{...params,threadId:first.thread.id,excludeTurns:true});assert.equal(resumed.thread.id,first.thread.id);
- const loaded=await cli.request('thread/loaded/list',{});assert.deepEqual(new Set(loaded.data),new Set([first.thread.id,second.thread.id]));
+ // A new thread without a submitted turn has no durable rollout to resume.
+ // This no-inference check verifies only the threads loaded in this process.
+ const loaded=await cli.request('thread/loaded/list',{});assert.equal(loaded.data.length,2);assert.deepEqual(new Set(loaded.data),new Set([first.thread.id,second.thread.id]));
  assert.equal(cli.child.pid,pid);assert.equal(cli.child.exitCode,null);
  assert.equal(cli.methods.filter(method=>method==='initialize').length,1);
+ assert.equal(cli.methods.filter(method=>method==='thread/start').length,2);
  assert(!cli.methods.some(method=>method==='turn/start'||method==='thread/compact/start'));
  await cli.finish();assert.deepEqual(f.inferenceRequests,[],'No model HTTP request was made');
 });
