@@ -29,6 +29,13 @@ test('edited prompt dispatches verbatim, while missing approval and stale previe
   assert.throws(()=>approvedAgentPrompt(snapshot,{...context,request:{...context.request,input:{...context.request.input,prompt:' '}}},'development'),{code:'PROMPT_REQUIRED'});
   assert.throws(()=>agentArguments({args:['exec','{prompt}']},{prompt:'do this'}),{code:'AGENT_MCP_REQUIRED'});
 });
+
+test('new requirements can preview a minimal Gherkin prompt bound to unsaved composer input',()=>{
+  const input={purpose:'gherkin',editorKey:'new-composer',description:'描述需求',previousGherkin:''};
+  const preview=previewAgentPrompt(snapshot,'SPEC-one','/repo',input);assert.ok(preview.prompt.length<250);
+  const context={root:'/repo',request:{repositoryId:'SPEC-one',input:{...input,...preview}}};assert.equal(approvedAgentPrompt(snapshot,context,'gherkin'),preview.prompt);
+  context.request.input.previousGherkin='Changed';assert.throws(()=>approvedAgentPrompt(snapshot,context,'gherkin'),{code:'PROMPT_CHANGED'});
+});
 test('a real stdio task MCP exposes only frozen selected artifacts and no write operations',async t=>{
   const directory=await mkdtemp(path.join(os.tmpdir(),'agent-task-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const file=await writeAgentTask(directory,snapshot,{...selection,workspace:'/isolated',products:['/isolated/product'],feedback:[{message:'fix layout'}],previousFailure:'last failure'});

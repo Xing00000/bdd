@@ -15,6 +15,7 @@ const defaults = Object.freeze({
   prompt: 'Implement {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed.',
   skills: '',
   testPlanPrompt: 'Complete the test plan for {requirementId}/{featureId}. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed.',
+  gherkinPrompt: 'Generate Gherkin. Use workbench MCP: workbench_get_task, then workbench_read_artifact as needed.',
   maxAttempts: 3,
   timeoutMs: 900000,
 });
@@ -36,22 +37,24 @@ export function seedAgentSettings(input = {}) {
 
 export function validateAgentSettings(input={}, previous={}) {
   invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_AGENT','Agent 設定無效。');
-  const {command,args,prompt,testPlanPrompt,skills,maxAttempts,timeoutMs}=seedAgentSettings({...previous,...input});
+  const {command,args,prompt,testPlanPrompt,gherkinPrompt,skills,maxAttempts,timeoutMs}=seedAgentSettings({...previous,...input});
   invariant(typeof command==='string'&&command.trim()&&command.length<=2048&&!/[\x00-\x1f]/.test(command),'INVALID_AGENT','請設定 CLI 執行檔。');
   invariant(Array.isArray(args)&&args.length<=40&&args.every(x=>typeof x==='string'&&x.length<=4000&&!x.includes('\0')),'INVALID_AGENT','Agent 參數無效。');
   invariant(typeof prompt==='string'&&prompt.trim()&&Buffer.byteLength(prompt)<=64*1024,'INVALID_AGENT','CLI Agent Prompt 不可為空且必須在 64 KiB 內。');
   for (const match of prompt.matchAll(tokenPattern)) invariant(variables.has(match[1]),'INVALID_AGENT',`Prompt 未知模板變數：${match[1]}`);
   invariant(typeof testPlanPrompt==='string'&&testPlanPrompt.trim()&&Buffer.byteLength(testPlanPrompt)<=64*1024,'INVALID_AGENT','測試計劃 Prompt 不可為空且必須在 64 KiB 內。');
   for (const match of testPlanPrompt.matchAll(tokenPattern)) invariant(variables.has(match[1]),'INVALID_AGENT',`測試計劃 Prompt 未知模板變數：${match[1]}`);
+  invariant(typeof gherkinPrompt==='string'&&gherkinPrompt.trim()&&Buffer.byteLength(gherkinPrompt)<=64*1024,'INVALID_AGENT','Gherkin Prompt 不可為空且必須在 64 KiB 內。');
+  for(const match of gherkinPrompt.matchAll(tokenPattern))invariant(variables.has(match[1]),'INVALID_AGENT',`Gherkin Prompt 未知模板變數：${match[1]}`);
   invariant(typeof skills==='string'&&Buffer.byteLength(skills)<=256*1024,'INVALID_AGENT','CLI Agent Skills 必須是 256 KiB 內的文字。');
   invariant(Number.isInteger(maxAttempts)&&maxAttempts>=1&&maxAttempts<=3&&Number.isInteger(timeoutMs)&&timeoutMs>=1000&&timeoutMs<=1800000,'INVALID_AGENT','Agent 執行限制無效。');
-  return {command:command.trim(),args,prompt,testPlanPrompt,skills,maxAttempts,timeoutMs};
+  return {command:command.trim(),args,prompt,testPlanPrompt,gherkinPrompt,skills,maxAttempts,timeoutMs};
 }
 
 export function renderAgentPrompt(settings, values, purpose='development') {
   const agent = validateAgentSettings(settings);
-  invariant(['development','testPlan'].includes(purpose),'INVALID_AGENT','未知 Agent 任務。');
-  const prompt = (purpose==='testPlan'?agent.testPlanPrompt:agent.prompt).replace(tokenPattern, (_, name) => {
+  invariant(['development','testPlan','gherkin'].includes(purpose),'INVALID_AGENT','未知 Agent 任務。');
+  const prompt = ({development:agent.prompt,testPlan:agent.testPlanPrompt,gherkin:agent.gherkinPrompt}[purpose]).replace(tokenPattern, (_, name) => {
     invariant(Object.hasOwn(values,name)&&typeof values[name]==='string','INVALID_AGENT',`Prompt 缺少模板變數：${name}`);
     return values[name];
   });

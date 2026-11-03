@@ -5,15 +5,23 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { id, identity, invariant } from '../contracts/index.mjs';
 import { validateAgentSettings, renderAgentPrompt } from './agent-settings.mjs';
 import {negotiateProtocolVersion} from './mcp-protocol.mjs';
+import {requirementText} from './requirements.mjs';
+
+export const gherkinOutputFile='gherkin.feature';
+export function gherkinInput(input){
+  invariant(typeof input.editorKey==='string'&&/^(?:new-[A-Za-z0-9-]+|[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)$/.test(input.editorKey)&&input.editorKey.length<=180,'INVALID_EDITOR','需求編輯識別無效。');
+  return {editorKey:input.editorKey,description:requirementText(input.description,'需求描述',{empty:false}),previousGherkin:requirementText(input.previousGherkin??'','Gherkin')};
+}
 
 export function previewAgentPrompt(snapshot, repositoryId, root, input) {
   const {purpose,requirementId,featureId}=input;
-  invariant(['development','testPlan'].includes(purpose),'INVALID_AGENT','未知 Agent 任務。');
-  const key=`${id(requirementId)}/${id(featureId)}`;
-  invariant(snapshot.files.some(f=>f.target==='spec'&&f.path===`spec/${key}/${featureId}.feature`),'FEATURE_NOT_FOUND','找不到需求。',404);
+  invariant(['development','testPlan','gherkin'].includes(purpose),'INVALID_AGENT','未知 Agent 任務。');
+  const source=purpose==='gherkin'?gherkinInput(input):undefined;
+  const key=source?.editorKey??`${id(requirementId)}/${id(featureId)}`;
+  if(!source)invariant(snapshot.files.some(f=>f.target==='spec'&&f.path===`spec/${key}/${featureId}.feature`),'FEATURE_NOT_FOUND','找不到需求。',404);
   const agent=validateAgentSettings(snapshot.settings.agent);
-  const values={requirementId,featureId,spec:root,projects:'See workbench MCP task',feedback:'See workbench MCP task',previousFailure:'See workbench MCP task'};
-  return {prompt:renderAgentPrompt(agent,values,purpose),promptDigest:identity({repositoryId,root,revision:snapshot.revision,agent,key,purpose})};
+  const values={requirementId:requirementId??'',featureId:featureId??'',spec:root,projects:'See workbench MCP task',feedback:'See workbench MCP task',previousFailure:'See workbench MCP task'};
+  return {prompt:renderAgentPrompt(agent,values,purpose),promptDigest:identity({repositoryId,root,revision:snapshot.revision,agent,key,purpose,...(source?{source}:{})})};
 }
 
 export function approvedAgentPrompt(snapshot, context, purpose) {
@@ -25,7 +33,13 @@ export function approvedAgentPrompt(snapshot, context, purpose) {
   return input.prompt;
 }
 
-export async function writeAgentTask(directory, snapshot, {purpose,requirementId,featureId,workspace,products,feedback,previousFailure=''}) {
+export async function writeAgentTask(directory, snapshot, {purpose,requirementId,featureId,workspace,products,feedback,previousFailure='',source}) {
+  if(purpose==='gherkin'){
+    const output=path.join(workspace,gherkinOutputFile);
+    const task={purpose,key:source.editorKey,workspace,writable:[output],output,rules:'Read the requirement description and previous Gherkin using workbench_read_artifact. Write one complete UTF-8 Gherkin feature to output. Use English Gherkin keywords, Traditional Chinese domain language, a short Feature description and minimal complete user flows. Give each Scenario a unique stable @case:<id> tag. Preserve existing case tags when revising existing scenarios. Do not modify any other files. Do not claim tests passed.'};
+    const artifacts={'requirement-description.txt':source.description,'previous.feature':source.previousGherkin};
+    await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task,artifacts}),{mode:0o600});return file;
+  }
   const key=`${id(requirementId)}/${id(featureId)}`,prefix=`tests/${key}/`;
   const artifacts=Object.fromEntries(snapshot.files.filter(f=>f.target==='spec'&&(
     f.path.startsWith(`spec/${key}/`)||f.path.startsWith(prefix)||f.path.startsWith('tests/_shared/')||f.path.startsWith(`tests/${requirementId}/_shared/`)

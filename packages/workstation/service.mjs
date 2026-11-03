@@ -16,6 +16,7 @@ import { projectFiles, readProjectFile } from './repository-actions.mjs';
 import { migrateCheckoutDirectory } from './migrate.mjs';
 import { listTransactions } from './transactions.mjs';
 import { openStore } from './store.mjs';
+import {llmTasks} from './interaction-types.mjs';
 import {openChat} from './chat.mjs';
 import { workflowStatus } from './workflow.mjs';
 import { workflowState, recordedWorkflow } from './workflow-state.mjs';
@@ -77,7 +78,7 @@ export async function createWorkstation(configuration) {
     },
     terminalInput(operationId, input) {
       const operation=this.operation(operationId),child=children.get(operationId);
-      invariant(operation.request.operation==='workflow.develop'&&operation.status==='RUNNING'&&child?.connected,'TERMINAL_UNAVAILABLE','終端已結束或不屬於這個服務。',409);
+      invariant(llmTasks.includes(operation.request.operation)&&operation.status==='RUNNING'&&child?.connected,'TERMINAL_UNAVAILABLE','終端已結束或不屬於這個服務。',409);
       invariant(typeof input.data==='string'&&Buffer.byteLength(input.data)<=4096 || input.data===undefined&&Number.isInteger(input.cols)&&input.cols>=20&&input.cols<=300&&Number.isInteger(input.rows)&&input.rows>=5&&input.rows<=150,'INVALID_TERMINAL_INPUT','終端輸入無效。');
       const interactions=[];
       if(typeof input.data==='string') {

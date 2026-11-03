@@ -11,6 +11,7 @@ import { useRepositoryTools } from './repository-tools.mjs';
 import { checkTests } from './repository-actions.mjs';
 import { refreshWorkflowFiles, draftModules } from './workflow-state.mjs';
 import { approvedAgentPrompt, writeAgentTask, agentArguments } from './agent-task.mjs';
+import {runInteractiveAgent} from './agent-cli.mjs';
 
 export async function generateTestPlan(context) {
   const {options,store,request}=context,repositoryId=request.repositoryId,input=request.input;
@@ -75,9 +76,9 @@ async function generateInView(context,snapshot,feature,root,prefix,receiptId,age
   const task=await writeAgentTask(parent,snapshot,{purpose:'testPlan',requirementId:input.requirementId,featureId:input.featureId,workspace:root,products:projects,feedback:[]});
   await atomicWrite(path.join(root,'.runtime/test-plan-prompt.txt'),prompt);
   const args=agentArguments(agent,{prompt,spec:root,project:root,task});
-  const result=await execute(command,args,{cwd:root,env:processEnvironment({HOME:process.env.HOME}),timeoutMs:agent.timeoutMs});
+  const result=await runInteractiveAgent(context,command,args,root,agent.timeoutMs);
   await writeJson(path.join(root,'.runtime/test-plan-agent.json'),result);
-  invariant(result.exitCode===0&&!result.signal&&!result.timedOut&&!result.overflow,'TEST_PLAN_AGENT_FAILED',`測試計劃生成失敗，原內容保留。\n${(result.stderr+result.stdout).slice(-12000)}`);
+  invariant(result.exitCode===0&&!result.signal&&!result.timedOut,'TEST_PLAN_AGENT_FAILED',`測試計劃生成失敗，原內容保留。\n${result.output.slice(-12000)}`);
   const after=await sourceFiles(root),outside=files=>files.filter(f=>!f.path.startsWith(prefix)).map(f=>[f.path,digest(f.content)]).sort(([a],[b])=>a.localeCompare(b));
   invariant(identity(outside(before))===identity(outside(after))&&identity(projectHashes)===identity(await contextHashes(root)),'AGENT_CHANGED_INPUT','Agent 修改了測試計劃以外的內容；提案未保存。',409);
   const proposal=after.filter(file=>file.path.startsWith(prefix));

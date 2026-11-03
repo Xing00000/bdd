@@ -22,11 +22,12 @@ import { validateContract } from '../contracts/schemas.mjs';
 
 import { runDevelopment } from './development.mjs';
 import { generateTestPlan } from './test-plan.mjs';
+import {generateGherkin} from './gherkin-generation.mjs';
 import { generateTestSkeleton } from './test-plan-codegen.mjs';
 import { prepareRepositoryTools } from './repository-tools.mjs';
 
 export const operationNames = Object.freeze([
-  ...flowNames, 'repository.tools.prepare', 'workflow.tests.generate', 'workflow.tests.complete', 'workflow.develop', 'workflow.next', 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
+  ...flowNames, 'repository.tools.prepare', 'workflow.gherkin.generate', 'workflow.tests.generate', 'workflow.tests.complete', 'workflow.develop', 'workflow.next', 'repository.location', 'repository.acquire', 'repository.history.more', 'regression.start',
   'repository.clone', 'repository.initialize', 'repository.validate',
   'repository.upgrade.preview', 'repository.upgrade.apply', 'repository.transaction.resume',
   'legacy.preview', 'legacy.import', 'reports.reindex',
@@ -60,6 +61,7 @@ export async function executeOperation(options, store, request) {
   }
   if(request.operation==='repository.upgrade.apply')return editDraft({root,options,store,request,git});
   if(request.operation==='repository.tools.prepare')return prepareRepositoryTools({root,options,store,request,git});
+  if(request.operation==='workflow.gherkin.generate')return generateGherkin({root,options,store,request,git});
   if(request.operation==='workflow.tests.generate')return generateTestSkeleton({root,options,store,request,git});
   if(request.operation==='workflow.tests.complete')return generateTestPlan({root,options,store,request,git});
   if(request.operation==='workflow.review'&&input.stage==='sd') {

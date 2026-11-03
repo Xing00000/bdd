@@ -31,7 +31,7 @@ export function terminalVendor(home,asset) {
   for(const req of runtimeCandidates(home))try{return req.resolve(names[asset]);}catch{/* not installed */}
   throw new WorkstationError('TERMINAL_RUNTIME_MISSING','終端元件尚未安裝。',409);
 }
-async function terminalRuntime(context) {
+export async function terminalRuntime(context) {
   const {options,request}=context;
   for(const req of runtimeCandidates(options.home))try{const pty=req('node-pty');terminalVendor(options.home,'xterm.js');return pty;}catch{/* use approved private runtime */}
   const packages={'node-pty':'1.1.0','@xterm/xterm':'6.0.0'},plan=identity({packages,node:process.versions.node.split('.')[0],platform:process.platform,arch:process.arch});
