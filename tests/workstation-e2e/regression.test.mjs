@@ -83,8 +83,11 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   await tab('需求流程');await page.locator('#feature-select').selectOption('REQ-102/title');await ready();
   await page.getByRole('button',{name:'5 驗收',exact:true}).click();await ready();
   await expect(page.locator('#feature-report-list .feature-report')).toHaveCount(1);await expect(page.locator('#feature-report-list')).toContainText('reports/REQ-102/title/RUN-history/manifest.json');
+  const reportHistoryDetails=page.locator('.report-history');
+  if(!await reportHistoryDetails.evaluate(node=>node.open))await page.locator('.report-history > summary').click();
+  await expect(reportHistoryDetails).toHaveJSProperty('open',true);
   await page.locator('#feature-report-list').getByRole('button',{name:'檢視證據',exact:true}).click();
-  await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id','RUN-history');
+  await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id','RUN-history');await expect(page.locator('#feature-report-view')).toHaveAttribute('aria-busy','false');
   await page.screenshot({path:path.join(artifacts,'06-imported-requirement-report.png'),fullPage:true});
   await page.locator('#feature-select').selectOption('REQ-101/readiness');await ready();await expect(page.locator('#feature-report-list .feature-report')).toHaveCount(0);await expect(page.locator('#feature-report-view')).not.toBeVisible();
   await page.getByRole('button',{name:'1 需求確認',exact:true}).click();await ready();

@@ -89,9 +89,12 @@ jobs:
           if-no-files-found: error
 
   browser-acceptance:
-    needs: workstation
     runs-on: ubuntu-22.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [ui-and-pty, workflow, regression, live-provider]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,16 +107,31 @@ jobs:
       - name: Real browser and repository management acceptance
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
-          WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e
+          WB_E2E_ARTIFACTS: ${{ runner.temp }}/workstation-e2e/${{ matrix.suite }}
+          WB_TEST_ARTIFACTS: ${{ runner.temp }}/workstation-e2e/${{ matrix.suite }}
         run: |
           mkdir -p "$WB_E2E_ARTIFACTS"
           node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-install.log"
-          npm run test:workstation:e2e 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
+          qa_test_files=()
+          for qa_test_file in tests/workstation-e2e/*.test.mjs; do
+            case "$qa_test_file" in
+              */browser.test.mjs) qa_test_suite=workflow ;;
+              */regression.test.mjs) qa_test_suite=regression ;;
+              */design-generation.test.mjs|*/gherkin-generation.test.mjs) qa_test_suite=live-provider ;;
+              *) qa_test_suite=ui-and-pty ;;
+            esac
+            if [[ "$qa_test_suite" == "${{ matrix.suite }}" ]]; then
+              qa_test_files+=("$qa_test_file")
+            fi
+          done
+          test "${#qa_test_files[@]}" -gt 0
+          printf '%s\n' "${qa_test_files[@]}" > "$WB_E2E_ARTIFACTS/test-files.txt"
+          PATH="$PWD/node_modules/.bin:$PATH" node --test --test-concurrency=1 "${qa_test_files[@]}" 2>&1 | tee "$WB_E2E_ARTIFACTS/browser-tests.log"
       - name: Preserve browser evidence and dependency receipts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: workstation-browser-${{ github.sha }}
+          name: workstation-browser-${{ matrix.suite }}-${{ github.sha }}
           path: ${{ runner.temp }}/workstation-e2e/
           retention-days: 3
           if-no-files-found: error
