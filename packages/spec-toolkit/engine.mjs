@@ -83,9 +83,12 @@ export function assessEvidence(plan, discovery, receipt, processResult, inputsUn
     const steps = (x.steps ?? []).filter(s => s.category === 'test.step' && keyword.test(s.title));
     const used = new Set();
     // Playwright reports the localized keyword; playwright-bdd's $step.title omits it.
-    // Match the declared hook convention while requiring a distinct image for each step.
-    return x.assertions > 0 && steps.length > 0 && steps.every(step => {
-      const names = new Set([`step-${step.title}`, `step-${step.title.replace(keyword, '')}`]);
+    // Hooks may number screenshots to distinguish repeated titles. Match the step's
+    // exact ordinal and title while still requiring a distinct image for each step.
+    return x.assertions > 0 && steps.length > 0 && steps.every((step, index) => {
+      const ordinal = String(index + 1).padStart(3, '0');
+      const names = new Set([step.title, step.title.replace(keyword, '')]
+        .flatMap(title => [`step-${title}`, `step-${ordinal}-${title}`]));
       const image = (x.attachments ?? []).find(a => a.path.startsWith('screenshots/') && names.has(a.name) && !used.has(a.path));
       if (!image) return false;
       used.add(image.path); return true;
