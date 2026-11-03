@@ -152,7 +152,7 @@ export async function runDevelopment(context,verify) {
       result=await verify({requirementId:input.requirementId,featureId:input.featureId});
       log(`[BDD] ${result.testOutcome} / ${result.verification}\r\n`);
       if(result.verification==='VERIFIED'&&result.testOutcome==='PASSED'){await phase('COMPLETED',{attempt,runId:result.runId});return {...result,development:{operationId:request.operationId,attempt}};}
-      previousFailure=`Last independent BDD result: ${JSON.stringify({failure:result.failure,reasons:result.reasons,cases:result.cases?.filter(c=>c.status!=='passed').map(c=>({title:c.title,steps:c.steps,errors:c.errors}))})}`;
+      previousFailure=`Last independent BDD result: ${JSON.stringify({failure:result.failure,reasons:result.reasons,evidenceIssues:result.evidenceIssues,cases:result.cases?.filter(c=>c.status!=='passed').map(c=>({title:c.title,steps:c.steps,errors:c.errors}))})}`;
       previousFailure=previousFailure.slice(0,16000);log(previousFailure+'\r\n');
     }
     await phase('FAILED',{runId:result?.runId});return {...result,development:{operationId:request.operationId},nextStage:'IMPLEMENTATION'};

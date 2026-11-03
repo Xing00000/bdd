@@ -12,6 +12,18 @@ function receipt() {
     cases: [{ caseId: 'CASE-001', profile: 'chromium', retry: 0, status: 'passed', expectedStatus: 'passed', assertions: 1, steps: [{ title: 'Then expected result', category: 'test.step' }], attachments: [{ path: 'screenshots/case/image.png', name: 'step-Then expected result' }] }] };
 }
 const passed = { exitCode: 0, timedOut: false, overflow: false };
+test('numbered hook screenshots require the correct ordinal, title and distinct image for every step',()=>{
+  const execution=receipt(),row=execution.cases[0];
+  row.steps=[{title:'Given 使用者開啟工作台',category:'test.step'},{title:'Then 使用者開啟工作台',category:'test.step'}];
+  row.attachments=[{path:'screenshots/first.png',name:'step-001-使用者開啟工作台'},{path:'screenshots/second.png',name:'step-002-使用者開啟工作台'}];
+  const assess=()=>assessEvidence(plan,receipt(),execution,passed,true,{verified:true});
+  assert.equal(assess().verification,'VERIFIED');assert.deepEqual(assess().evidenceIssues,[]);
+  row.attachments[1].name='step-001-使用者開啟工作台';
+  let result=assess();assert.equal(result.verification,'NOT_VERIFIED');assert.equal(result.evidenceIssues[0].ordinal,2);assert.equal(result.evidenceIssues[0].step,'Then 使用者開啟工作台');
+  row.attachments[1].name='step-002-不同內容';assert.equal(assess().evidenceComplete,false);
+  row.attachments[1].name='step-002-使用者開啟工作台';row.attachments[1].path=row.attachments[0].path;assert.equal(assess().evidenceComplete,false);
+  row.attachments.pop();assert.equal(assess().evidenceComplete,false);
+});
 
 test('candidate preparation requires a clean, committed, confirmed baseline', async t => {
   const f = await fixture(t); await mkdir(f.home); await specRepository(f.repo);

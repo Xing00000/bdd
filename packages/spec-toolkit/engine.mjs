@@ -84,19 +84,27 @@ export function assessEvidence(plan, discovery, receipt, processResult, inputsUn
   const testPassed = processResult.exitCode === 0 && !processResult.timedOut && !processResult.overflow
     && receipt.status === 'passed' && receipt.errors.length === 0 && receipt.cases.length > 0
     && receipt.cases.every(x => x.status === 'passed' && x.expectedStatus === 'passed' && x.retry === 0);
-  const evidenceComplete = receipt.cases.every(x => {
+  const evidenceIssues=[];
+  for(const x of receipt.cases) {
     const keyword = /^(Given|When|Then|And|But|假如|假設|假定|當|那麼|那么|而且|並且|并且|但是)\s+/;
-    const steps = (x.steps ?? []).filter(s => s.category === 'test.step' && keyword.test(s.title));
-    const used = new Set();
-    // Playwright reports the localized keyword; playwright-bdd's $step.title omits it.
-    // Match the declared hook convention while requiring a distinct image for each step.
-    return x.assertions > 0 && steps.length > 0 && steps.every(step => {
-      const names = new Set([`step-${step.title}`, `step-${step.title.replace(keyword, '')}`]);
-      const image = (x.attachments ?? []).find(a => a.path.startsWith('screenshots/') && names.has(a.name) && !used.has(a.path));
-      if (!image) return false;
-      used.add(image.path); return true;
+    const steps=(x.steps??[]).filter(s=>s.category==='test.step'&&keyword.test(s.title)),used=new Set();
+    const issue=details=>evidenceIssues.push({caseId:x.caseId,profile:x.profile,...details});
+    if(!(x.assertions>0))issue({code:'MISSING_ASSERTIONS'});
+    if(!steps.length)issue({code:'MISSING_GHERKIN_STEPS'});
+    steps.forEach((step,index)=>{
+      const titles=[step.title,step.title.replace(keyword,'')],names=new Set(titles.map(title=>`step-${title}`));
+      // AfterStep may prefix its per-scenario ordinal. Both ordinal and title must match.
+      const image=(x.attachments??[]).find(a=>{
+        if(!a.path.startsWith('screenshots/')||used.has(a.path))return false;
+        if(names.has(a.name))return true;
+        const numbered=/^step-(\d+)-([\s\S]+)$/.exec(a.name);
+        return numbered&&Number(numbered[1])===index+1&&names.has(`step-${numbered[2]}`);
+      });
+      if(image)used.add(image.path);
+      else issue({code:'MISSING_STEP_IMAGE',step:step.title,ordinal:index+1,expectedNames:[...names,...titles.map(title=>`step-${String(index+1).padStart(3,'0')}-${title}`)],availableImages:(x.attachments??[]).filter(a=>a.path.startsWith('screenshots/')).map(a=>({name:a.name,path:a.path}))});
     });
-  });
+  }
+  const evidenceComplete=evidenceIssues.length===0;
   const deploymentMatches = deployment?.verified && (plan.requiredProjectIds ?? []).every(projectId => deployment.projectId === projectId && deployment.commit === plan.projects?.find(p => p.id === projectId)?.commit);
   const reasons = [];
   if (!completeDiscovery || !selectedDiscovery || !exactExecution) reasons.push('CASE_SET_MISMATCH');
@@ -106,7 +114,7 @@ export function assessEvidence(plan, discovery, receipt, processResult, inputsUn
   if (plan.scope !== 'ALL_CASES') reasons.push('PARTIAL_COVERAGE');
   if (!testPassed) reasons.push('TESTS_NOT_PASSED');
   return { testOutcome: testPassed ? 'PASSED' : 'FAILED', verification: reasons.length ? 'NOT_VERIFIED' : 'VERIFIED',
-    coverageComplete: completeDiscovery && exactExecution && plan.scope === 'ALL_CASES', evidenceComplete, reasons };
+    coverageComplete: completeDiscovery && exactExecution && plan.scope === 'ALL_CASES', evidenceComplete, evidenceIssues, reasons };
 }
 export async function runBddCommand(root, mode, requirementId, featureId, options = {}) {
   featureKey(requirementId, featureId);
