@@ -23,7 +23,9 @@ npm start
 
 聊天室位於左側「對話」，按「新對話」直接在中間開啟獨立頁籤，不需輸入名稱；第一則訊息會自動成為對話標題。訊息原文、狀態與 Codex thread 對應保存於同一份 `WB_HOME/metadata.sqlite`；關閉頁籤不刪除紀錄。首次使用聊天前執行 `npm install`、`npm run build`。Codex（`@openai/codex`）與 Copilot（`@github/copilot`）都由專案依賴安裝，預設不依賴全域 CLI；GitHub Copilot 須先登入並具有模型權限。執行檔、模型及逾時可在「對話設定」調整。
 
-聊天由 Codex 管理上下文，經文字 adapter 呼叫 Copilot。目前提供文字回覆，不支援工具呼叫或附件，回答完成後顯示全文。Codex 壓縮不刪除原始聊天訊息；失敗或重啟中斷會保留明確狀態。
+聊天由 Codex 管理上下文，透過 Copilot 提供模型回答，文字會逐段串流顯示。工作台入口可查詢專案與進度、產生及讀回需求提案；提案仍須人工審閱，不會直接確認階段或執行 shell。目前不支援聊天附件。Codex 壓縮不刪除原始聊天訊息；失敗或重啟中斷會保留明確狀態。
+
+同一聊天室的連續訊息會重用 Codex 背景程序，Copilot 模型請求與模型清單查詢會重用背景服務。每次推理仍使用獨立 Copilot session，由 Codex 提供當次上下文，避免重複累積歷史或混入其他聊天室。空閒程序會回收；設定變更或程序故障時會重新建立，並從已保存的 Codex thread 繼續。這項改善消除正常連續回合的重複啟動，實際首字速度仍取決於所選模型、上下文與服務狀態。
 
 上方 **Gherkin** 是一直展開的正式規格編輯區，下方 **需求描述** 可直接打字或按「上傳文件」匯入。按 **LLM 生成 Gherkin** 會先預覽可修改的 Prompt，送出後才以設定的 CLI 生成草稿；新需求也能直接生成。沒有功能名稱、角色、條件或案例 ID 等額外必填欄位，名稱由 Gherkin 的 Feature 自動取得。
 
@@ -66,12 +68,15 @@ npm start
 npm run check:repository
 npm run check:workstation
 npm run test:seed
+npm run test:chat:runtime
 npm run test:workstation
 npm run test:workstation:e2e
 npm run test:ui:protocol
 ```
 
 `test:seed` 驗證首次初始化、缺少任務預設的補齊、重複執行不增加資料、舊版 Prompt 遷移、使用者自訂值保留，以及 CLI／Agent／Skill／Prompt 的關聯完整性。使用 Node.js 24 並先執行 `npm ci`，不需要瀏覽器或外部 LLM 登入。
+
+`test:chat:runtime` 驗證聊天程序重用、串流、取消、聊天室隔離、故障與設定變更後恢復，以及專案安裝的真實 Codex／Copilot CLI 協定。測試使用隔離資料與本機模型 fixture，不需要外部帳號，也不代表已量測真實模型的回答速度。CI 的 application checks 同時執行這些測試。
 
 `test:ui:protocol` 執行 7 項使用本機 fixture 的協定驗證（6 項真實 Chromium UI、1 項 API），須先執行 `npm ci`、`npm run build` 與 `npx playwright install chromium`，不需外部帳號。`npm test` 仍執行全部 16 項測試，包含需要真實 Codex／Copilot 登入的案例。
 
