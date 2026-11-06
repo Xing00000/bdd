@@ -53,13 +53,13 @@
 
 ### 互動留言與執行歷程
 
-作業以 `operations` 保存原始請求、時間、狀態、結果與錯誤，供執行與診斷使用。使用者可見的互動留言只包含 LLM 派工（補完測試計劃、實作）及該任務的 CLI 回覆；普通儲存、本機 Gherkin 生成、文件匯入、測試執行與停止操作不顯示為留言。LLM 派工即使在前置檢查失敗仍保留失敗紀錄。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方以最新送出在上的順序呈現留言及其可收合執行 log，載入更早紀錄時加在下方；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
+作業以 `operations` 保存原始請求、時間、狀態、結果與錯誤，供執行與診斷使用。使用者可見的互動留言只包含 LLM 派工（Gherkin、系統設計、補完測試計劃、實作）及該任務的 SDK 補充訊息；普通儲存、本機 Gherkin 生成、文件匯入、測試執行與停止操作不顯示為留言。LLM 派工即使在前置檢查失敗仍保留失敗紀錄。唯讀輪詢、Prompt 預覽／取消及單純切頁不建立留言。畫面在主要內容下方以最新送出在上的順序呈現留言及其可收合執行 log，載入更早紀錄時加在下方；歷史 API 以 SQL row cursor 分頁，展開舊紀錄不會替換新的紀錄或正在使用的 PTY。
 
-`interaction-types.mjs` 是歷程分類 owner，依操作、審閱階段及來源檔案判定 `GHERKIN`／`SD`／`TESTS`／`IMPLEMENTATION`／`VERIFICATION` 等類型；通用操作可帶入目前頁面的合法類型，已知業務操作不受錯誤的前端類型覆寫。類型保存於 `operations.interaction_type`，CLI 回覆及停止紀錄繼承 parent 類型。schema10 依原始請求回填既有紀錄，無法判定的舊操作保留為 `SYSTEM`，不冒稱所屬業務階段。歷史 API 在 SQL 分頁之前依類型過濾；切換階段會清除前階段的畫面與輪詢，只在目前階段下方顯示相符的互動。未帶類型的 API 查詢仍只回傳 LLM 互動。`interaction-types.mjs` 的 LLM predicate 統一決定 SQL 分頁資格與作業回傳的 `isLlmInteraction`；前端依該欄位決定是否即時建立或附加互動卡片。
+`interaction-types.mjs` 是歷程分類 owner，依操作、審閱階段及來源檔案判定 `GHERKIN`／`SD`／`TESTS`／`IMPLEMENTATION`／`VERIFICATION` 等類型；通用操作可帶入目前頁面的合法類型，已知業務操作不受錯誤的前端類型覆寫。類型保存於 `operations.interaction_type`，補充訊息及停止紀錄繼承 parent 類型。schema10 依原始請求回填既有紀錄，無法判定的舊操作保留為 `SYSTEM`，不冒稱所屬業務階段。歷史 API 在 SQL 分頁之前依類型過濾；切換階段會清除前階段的畫面與輪詢，只在目前階段下方顯示相符的互動。未帶類型的 API 查詢仍只回傳 LLM 互動。`interaction-types.mjs` 的 LLM predicate 統一決定 SQL 分頁資格與作業回傳的 `isLlmInteraction`；前端依該欄位決定是否即時建立或附加互動卡片。
 
 `git-core/progress-store.mjs` 是 `execution_logs`／`execution_log_chunks` 的唯一 schema 與輸出 owner。metadata 保存階段、程序與退出碼，輸出以 byte offset 分塊追加到 `metadata.sqlite`。作業 claim／finish、對應 log 與子互動完成使用同一交易；寫入失敗不會留下已完成狀態。每份 transcript 沿用既有 4 MiB 上限及截斷標示，ANSI／憑證處理與 UTF-8 分頁契約保留。新紀錄不依賴 `terminal.log`、`processes.json` 或 `state.json`；舊檔僅在 SQL 尚無紀錄時一次性讀入，拒絕 symlink，匯入後 SQLite 為唯一來源，不再從修改後的舊檔覆寫。
 
-CLI 終端每次 Enter 建立 `interaction.cli.input` 子留言，保存文字及 parent operation ID；逐字輸入與 resize 不另建留言。worker 在真正寫入 PTY 後保存 delivery ack，再結束前一筆互動；之後輸出同時寫入該筆獨立 log 與原作業完整 transcript。下一次 Enter 或原作業結束會封存前一筆，未取得送達確認的輸入不得隨 parent 成功而變成成功。人工停止保留作業診斷紀錄，但不另顯示互動留言；服務關閉等系統清理不偽造成使用者送出。
+每次提交完整多行訊息建立 `interaction.cli.input` 子留言；這個歷史操作名稱保留，但 API 只接受結構化 `message`，不再接受逐字終端輸入或 resize。訊息以 ID 與內容摘要排入後續 SDK thread 回合，worker 保存收件及實際回合結果；輸出同時寫入子留言與原作業 transcript。未取得處理結果的輸入不得隨 parent 成功而變成成功。人工停止保留作業診斷紀錄，但不另顯示互動留言；服務關閉等系統清理不偽造成使用者送出。
 
 來源匯入、審閱摘要與測試型別檢查仍共用 `gitSourceFiles`／`gitSourcePaths`，但實作是 `git-core/source-files.mjs` 的純檔案讀取，沒有 `ls-files`、`check-ignore` 或暫存 `git init/add`。忽略規則使用隨 toolkit 提供的 MIT `node-ignore` 7.0.14，保留巢狀規則、`!` 例外、global excludes 與 `.git/info/exclude`；只讀解析既有 index v2/v3/v4（含 split index）以保留 tracked-but-ignored 檔案。忽略目錄不被遍歷，接受來源仍拒絕 symlink 與特殊檔案。
 
@@ -103,9 +103,9 @@ Toolkit 1.4.0 將此模組納入正式 manifest。升級既有 req-tags 工具�
 
 需求、系統設計、測試計劃、開發實作、驗收使用同一套流程。`spec-toolkit.reviewState` 依 SQLite 所存確認紀錄與來源摘要推導階段及可編輯性；UI、API、生成器不得另存一份階段或自行解除確認。通過階段的原文、來源描述與測試模組唯讀，後端來源儲存也檢查同一 owner，不能只靠前端鎖定。
 
-`agent-settings.mjs` 的實作與測試計劃預設 Prompt 僅包含任務識別、動作及 MCP 工具入口，不展開規格、SD、產品路徑、回報、失敗紀錄或通用流程。Skills 預設留空；只精確遷移已知舊 factory Prompt／參數／完整 BDD skill，自訂值保留。SDK 任務使用獨立 Codex 設定；明確選用自訂 CLI 時，其全域指引仍由該 CLI 管理。
+`agent-settings.mjs` 的實作與測試計劃預設 Prompt 僅包含任務識別、動作及 MCP 工具入口，不展開規格、SD、產品路徑、回報、失敗紀錄或通用流程。Skills 預設留空；只精確遷移已知舊 factory Prompt／參數／完整 BDD skill，自訂值保留。所有任務使用獨立 Codex SDK 設定，不執行舊版 command／args。
 
-`agent-task.mjs` 是預覽、派工及任務資料 owner。預覽 API 不建立作業或啟動 Agent；畫面可編輯完整 Prompt，取消不派工，送出後原樣傳入 SDK 或選定的自訂 CLI，不再附加任務內容。後端要求非空 Prompt 及涵蓋 repository、作者修訂、設定、所選功能、階段與本地位置的預覽摘要；過期則拒絕。內部重試沿用同一已送出 Prompt，新的失敗資料只更新該次 attempt 的任務 MCP。已啟動的工作不因設定更新而重啟。
+`agent-task.mjs` 是預覽、派工及任務資料 owner。預覽 API 不建立作業或啟動 Agent；畫面可編輯完整 Prompt，取消不派工，送出後原樣傳入 SDK，不再附加任務內容。後端要求非空 Prompt 及涵蓋 repository、作者修訂、設定、所選功能、階段與本地位置的預覽摘要；過期則拒絕。內部重試沿用同一已送出 Prompt，新的失敗資料只更新該次 attempt 的任務 MCP。已啟動的工作不因設定更新而重啟。
 
 驗收頁以上方 Playwright HTML 報告、下方驗收意見與「LLM 修改實作／驗收通過」組成。意見輸入本身就是使用者審閱的派工文字，點選修改後原樣傳入 `workflow.develop`，不再開另一個 Prompt 表單；派工摘要仍由 `agent-task.mjs` 驗證。工作站在同一開發作業中先以 SQLite revision CAS 保存該報告的 feedback，再派出 Agent；意見與真實執行結果由同一實作互動保存。修改後的測試結果保留為新報告，歷史互動與報告不刪除。
 
@@ -115,7 +115,7 @@ Git checkpoint 或本機 evidence publication 失敗時，保留同一筆人工�
 
 每次派工保存固定 SQL 修訂的任務資料，`scripts/mcp-agent-task.mjs` 以 stdio 提供 `workbench_get_task` 與 `workbench_read_artifact`。前者提供工作目錄、允許寫入範圍、驗證入口、回報與失敗資料及 artifact 名稱；後者只能讀取該任務映射的所選功能和必要共用測試原文，不接受任意檔案路徑，不提供寫入工具。實作及測試計劃原有後端審閱、範圍、型別及獨立驗證 gate 保留。
 
-SDK 直接以結構化設定接入本次 `workbench_task` MCP，要求伺服器初始化成功，不修改使用者全域設定。只有自訂 CLI 相容模式才展開參數：`{mcp}` 依 [Codex MCP 設定契約](https://developers.openai.com/codex/mcp) 產生 command／args 設定；其他 CLI adapter 可透過 `{task}` 接收相同任務檔案並接入 MCP。自訂 CLI 同時缺少這兩種參數時拒絕派工，避免極簡 Prompt 在沒有資料通道時啟動。`{prompt}` 是使用者最後送出的文字，`{spec}`／`{project}` 可用於自訂 CLI 的工作目錄參數。
+SDK 直接以結構化設定接入本次 `workbench_task` MCP，要求伺服器初始化成功，不修改使用者全域設定。四類派工都經相同 SDK 邊界，沒有 CLI argv 展開或外部 CLI dispatch。舊版 command／args 只保留在原始歷史；新預覽解析為 SDK 設定，凍結的舊 CLI 派工必須重新預覽，不能在送出後靜默更換執行契約。
 
 任務與進度 MCP 共用 `mcp-protocol.mjs` 的版本協商，包含本機 Codex 0.166.0 實際提出的 `2025-06-18`。對未支援的版本提案依 [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) 回覆伺服器支援的版本，不把可協商的客戶端版本直接當成致命錯誤。驗證包含實機 Codex app-server 的 ephemeral thread 初始化，不送出模型 turn 或執行產品修改。
 
@@ -123,7 +123,7 @@ SDK 直接以結構化設定接入本次 `workbench_task` MCP，要求伺服器�
 
 需求確認直接保存 SQLite。系統設計確認先保存 SQLite，再進入測試計劃頁執行 `workflow.tests.generate`：`test-plan-codegen.mjs` 在固定修訂的隔離副本中透過已安裝 Playwright-BDD 的原生 Gherkin／step matching 與 Snippet 生成器建立完整 step 骨架，包含超過 CLI 顯示上限十筆的步驟，再執行真正的 bddgen。Playwright-BDD 沒有產生 hooks 的命令；工作台加入既有 AfterStep 截圖契約的可執行 hook。骨架未完成的 step 明確拋錯，不代表實作完成或測試通過。新需求兩份測試文件為空白；已有內容則禁止以骨架覆寫。原生 Snippet 介接集中在 `bdd-snippets.mjs`，不從 CLI 的截斷文字反解析程式。
 
-測試計劃頁另提供「LLM 生成測試計劃」，呼叫 `workflow.tests.complete`，才由 `test-plan.mjs` 使用 Agent 的 `testPlanPrompt`、SDK 或明確選用的自訂 CLI 與 Skills 補齊既有骨架。操作帶入目前測試摘要，拒絕補齊過期畫面或已確認的測試。Agent 隔離副本只載入目前功能的規格、必要需求 metadata、共用 fixtures、工具與設定，以及關聯產品 context；不載入其他 Spec Repo 功能的 Gherkin 或測試。產品二進位檔案保留原始 bytes，使用獨立檔案快照供 Agent 使用；不在暫存副本初始化 Git，也不修改 checkout。Codex 的執行參數明確略過 Git Repo 檢查，原有 sandbox 仍然生效。Agent 只能修改該功能測試檔案及 helpers，不得修改已確認文件、設定、產品或其他來源。Agent 結束並通過範圍檢查後，工作台在另一個完整且固定的 SQL 修訂副本套用提案、執行驗證及推導進度，其他功能原文不會因 Agent 工作目錄的裁切而被刪除。
+測試計劃頁另提供「LLM 生成測試計劃」，呼叫 `workflow.tests.complete`，才由 `test-plan.mjs` 使用 Agent 的 `testPlanPrompt`、SDK 與 Skills 補齊既有骨架。操作帶入目前測試摘要，拒絕補齊過期畫面或已確認的測試。Agent 隔離副本只載入目前功能的規格、必要需求 metadata、共用 fixtures、工具與設定，以及關聯產品 context；不載入其他 Spec Repo 功能的 Gherkin 或測試。產品二進位檔案保留原始 bytes，使用獨立檔案快照供 Agent 使用；不在暫存副本初始化 Git，也不修改 checkout。Codex 的執行參數明確略過 Git Repo 檢查，原有 sandbox 仍然生效。Agent 只能修改該功能測試檔案及 helpers，不得修改已確認文件、設定、產品或其他來源。Agent 結束並通過範圍檢查後，工作台在另一個完整且固定的 SQL 修訂副本套用提案、執行驗證及推導進度，其他功能原文不會因 Agent 工作目錄的裁切而被刪除。
 
 LLM 結束後獨立檢查禁止空白／僅拋錯 handler 與 skip／focus、TypeScript 型別檢核、真正的 bddgen 與完整案例／瀏覽器 discovery。檢核成功僅代表 `CHECKED / NOT_RUN`；人類確認測試計劃後才進入開發。測試是在產品開發前撰寫，允許產品尚未實作而使驗收失敗；已確認設計允許的狀態模擬與事件注入可作為受控輸入，仍禁止虛構 API、替代產品與假斷言。補齊失敗保留原骨架或原稿及隔離提案；完成後移除隔離 node_modules、.generated 與套件快取。所有生成結果均以原 SQLite 修訂 compare-and-swap 保存，同期退回或修改會阻擋回寫。
 
@@ -177,7 +177,7 @@ A report is identified by binding + requirement + feature + run. Local and Git-i
 
 ## Codex SDK execution and acceptance feedback
 
-`workflow.develop` is a durable, repository-locked worker operation. The same `runAgentTask` dispatch boundary serves development, Gherkin, system design and test-plan completion. Its default is the official Codex SDK; an explicit custom-CLI mode retains existing integrations without becoming a failure fallback. A supervised Node host invokes `startThread` and `runStreamed`, records real SDK events and thread IDs, and uses a task-scoped MCP connection. PTY supervision provides the existing process-group cleanup and durable transcript; it does not parse or drive the Codex terminal UI. Additional input is queued for a later SDK turn. Input/resize uses IPC only to the owning live worker, and the browser reconnects without launching duplicates.
+`workflow.develop` is a durable, repository-locked worker operation. The same `runAgentTask` dispatch boundary serves development, Gherkin, system design and test-plan completion. The official Codex SDK is its only execution runtime. Legacy CLI settings are normalized for new previews; old frozen CLI snapshots require a fresh preview, and new CLI-only writes are rejected. A supervised Node host invokes `startThread` and `runStreamed`, records real SDK events and thread IDs, and uses a task-scoped MCP connection. PTY supervision provides the existing process-group cleanup and durable transcript; it does not parse or drive the Codex terminal UI. Additional input is queued for a later SDK turn. Structured message input uses IPC only to the owning live worker, and the browser reconnects without launching duplicates.
 
 The SDK uses a local Responses provider backed by Copilot ACP. Coding tool policy accepts supported function/custom definitions actually advertised by Codex, maps them to private MCP proposal aliases, and reconstructs the original namespace/name/type and raw custom input. Copilot only proposes; its permission requests are cancelled and Codex executes the resulting calls. The chat provider retains its narrower workbench-only tool policy. Chat remains on app-server for streaming, compaction and persistent-process interaction.
 
@@ -219,7 +219,7 @@ Schema 12 adds `prompts`, `prompt_revisions` and migration provenance; `agent_ta
 
 ## 互動歷程的需求歸屬
 
-`operations.interaction_key` 是互動歸屬的持久化 owner：已儲存需求使用 `{requirementId}/{featureId}`，未儲存需求使用其獨立的 `new-*` editor key。CLI 回覆只繼承同規格庫原作業的歸屬。首次儲存需求時，既有草稿互動與回覆在同一 authoring transaction 轉綁正式需求，不改寫不可變 request 或其 hash。
+`operations.interaction_key` 是互動歸屬的持久化 owner：已儲存需求使用 `{requirementId}/{featureId}`，未儲存需求使用其獨立的 `new-*` editor key。補充訊息只繼承同規格庫原作業的歸屬。首次儲存需求時，既有草稿互動與回覆在同一 authoring transaction 轉綁正式需求，不改寫不可變 request 或其 hash。
 
 開啟資料庫時，舊紀錄只按明確需求識別、原作業與保存收據／提案關聯補齊。無法證明歸屬的舊紀錄不會被指派給目前需求。歷程 API 在 SQL 依規格庫、需求 key、階段與 cursor 篩選；前端切換需求會清除舊卡片與終端，拒絕不同選取或較早查詢的回應。
 

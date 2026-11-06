@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,readdir,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import type {TestContext} from 'node:test';
 import {createChatProvider} from '../../src/adapters/runtime/chat-provider.ts';
 import {createCopilotRuntime} from '../../src/adapters/runtime/copilot-chat.ts';
@@ -67,16 +68,46 @@ test('coding history preserves function and custom identities, exact patch text 
  assert.throws(()=>providerConversationInput([customCall],true));
 });
 
-async function fixture(t:TestContext,options:CopilotPeerOptions={}){
- const directory=await mkdtemp(path.join(tmpdir(),'bdd-codex-provider-')),peer=await copilotChatPeer(directory,options),provider=await createChatProvider(directory,'codex');
+async function fixture(t:TestContext,options:CopilotPeerOptions={},policy:boolean|'codex'='codex'){
+ const directory=await mkdtemp(path.join(tmpdir(),'bdd-codex-provider-')),peer=await copilotChatPeer(directory,options),provider=await createChatProvider(directory,policy);
  t.after(async()=>{await provider.close();await rm(directory,{recursive:true,force:true});});
- const settings={...defaultChatSettings(),...peer},registration=provider.register(settings,new AbortController().signal);
+ const wrapper=path.join(directory,'observed-copilot-peer.mjs');
+ await writeFile(wrapper,`import {appendFileSync,readdirSync} from 'node:fs';
+appendFileSync(${JSON.stringify(peer.tracePath)},JSON.stringify({type:'cwd',cwd:process.cwd(),entries:readdirSync(process.cwd())})+'\\n');
+await import(${JSON.stringify(pathToFileURL(peer.copilotArgs[0]).href)});\n`);
+ const settings={...defaultChatSettings(),...peer,copilotArgs:[wrapper]},registration=provider.register(settings,new AbortController().signal);
  const post=(body:object)=>fetch(provider.url+'/responses',{method:'POST',headers:{authorization:'Bearer '+registration.token,'content-type':'application/json'},body:JSON.stringify(body)});
  const trace=async()=>{try{return (await readFile(peer.tracePath,'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return [];throw error;}};
  return {directory,provider,settings,post,trace};
 }
 
 const prompt=[{type:'message',role:'user',content:[{type:'input_text',text:'[[tool]]'}]}];
+test('coding ACP starts and creates sessions in an owned empty directory, then removes only that directory',async t=>{
+ const f=await fixture(t),marker=path.join(f.directory,'product-source.txt');await writeFile(marker,'The product workspace remains owned by Codex.\n');
+ const response=await f.post({input:[{type:'message',role:'user',content:[{type:'input_text',text:'Inference context fixture'}]}]});
+ assert.equal(output(await response.text()).at(-1).type,'response.completed');
+ await f.provider.models(f.settings,new AbortController().signal);
+ const trace=await f.trace(),started=trace.find(event=>event.type==='cwd');assert(started);
+ assert.notEqual(started.cwd,f.directory);assert(!started.cwd.startsWith(f.directory+path.sep));assert.deepEqual(started.entries,[]);
+ const sessions=trace.filter(event=>event.method==='session/new');assert.equal(sessions.length,2);assert(sessions.every(event=>event.params.cwd===started.cwd));
+ await Promise.all([f.provider.close(),f.provider.close()]);
+ await assert.rejects(readdir(started.cwd),{code:'ENOENT'});assert.equal(await readFile(marker,'utf8'),'The product workspace remains owned by Codex.\n');
+});
+
+test('coding provider cleans its owned inference directory after an ACP initialization failure',async t=>{
+ const f=await fixture(t,{protocolVersion:99});
+ await assert.rejects(f.provider.models(f.settings,new AbortController().signal),/協定版本不相容/);
+ const started=(await f.trace()).find(event=>event.type==='cwd');assert(started);assert.notEqual(started.cwd,f.directory);
+ await f.provider.close();await assert.rejects(readdir(started.cwd),{code:'ENOENT'});assert((await readdir(f.directory)).length>0);
+});
+
+test('chat provider retains its existing workspace and never removes caller-owned directories',async t=>{
+ const f=await fixture(t,{},false);await f.provider.models(f.settings,new AbortController().signal);
+ const trace=await f.trace(),started=trace.find(event=>event.type==='cwd');assert.equal(started.cwd,f.directory);
+ assert(trace.filter(event=>event.method==='session/new').every(event=>event.params.cwd===f.directory));
+ await f.provider.close();assert((await readdir(f.directory)).length>0);
+});
+
 test('coding HTTP provider returns raw custom calls through ACP and carries their real outputs into the next inference',async t=>{
  const f=await fixture(t,{toolArguments:{input:patchInput}});
  const request={input:prompt,tools:[{type:'namespace',name:'functions',tools:[patch]}]};

@@ -1,7 +1,6 @@
 import { openStore } from './store.mjs';
 import { executeOperation } from './operations.mjs';
 import { withProgress } from '../git-core/progress.mjs';
-import { readProgress } from '../git-core/progress-store.mjs';
 import { llmTasks } from './interaction-types.mjs';
 import { sdkWorkerShutdownGraceMs } from './agent-lifecycle.mjs';
 
@@ -9,8 +8,8 @@ import { stopChildProcesses } from '../git-core/index.mjs';
 let cancelling = false,cancellationTimer;
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
   if (cancelling) return; cancelling = true; stopChildProcesses('SIGTERM');
-  const operation=store.get(operationId),runtime=readProgress(options.home,operationId)?.state?.runtime;
-  const grace=llmTasks.includes(operation.request.operation)&&runtime!=='custom-cli'?sdkWorkerShutdownGraceMs:500;
+  const operation=store.get(operationId);
+  const grace=llmTasks.includes(operation.request.operation)?sdkWorkerShutdownGraceMs:500;
   cancellationTimer=setTimeout(() => { stopChildProcesses('SIGKILL'); process.exit(143); }, grace);
 });
 

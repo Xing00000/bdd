@@ -1,7 +1,7 @@
 /** Independent task templates; historical combined Agent rows remain immutable. */
 import {randomUUID} from 'node:crypto';
 import {invariant} from '../contracts/index.mjs';
-import {agentPromptFields,validatePromptTemplate,validateAgentRuntimeSettings,seedAgentSettings} from './agent-settings.mjs';
+import {agentPromptFields,validatePromptTemplate,normalizeAgentRuntimeSettings,seedAgentSettings} from './agent-settings.mjs';
 const purposes=Object.keys(agentPromptFields);
 export function installPromptCatalog(db){
  db.exec(`CREATE TABLE IF NOT EXISTS prompts(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0,origin_agent_id TEXT,origin_purpose TEXT,UNIQUE(origin_agent_id,origin_purpose));
@@ -53,7 +53,7 @@ export function migrateAgentPrompts(db){
  for(const agent of db.prepare('SELECT id FROM agent_profiles').all()){
   const latest=db.prepare('SELECT * FROM agent_revisions WHERE agent_id=? ORDER BY version DESC LIMIT 1').get(agent.id),settings=JSON.parse(latest.settings_json);
   if(!Object.values(agentPromptFields).some(field=>Object.hasOwn(settings,field)))continue;
-  const revisionId=randomUUID();db.prepare('INSERT INTO agent_revisions VALUES(?,?,?,?,?)').run(revisionId,agent.id,latest.version+1,JSON.stringify(validateAgentRuntimeSettings(settings)),new Date().toISOString());
+  const revisionId=randomUUID();db.prepare('INSERT INTO agent_revisions VALUES(?,?,?,?,?)').run(revisionId,agent.id,latest.version+1,JSON.stringify(normalizeAgentRuntimeSettings(settings)),new Date().toISOString());
   db.prepare('INSERT INTO agent_skill_bindings SELECT ?,skill_revision_id,position FROM agent_skill_bindings WHERE agent_revision_id=?').run(revisionId,latest.id);
   db.prepare('UPDATE agent_task_defaults SET agent_revision_id=? WHERE agent_revision_id=?').run(revisionId,latest.id);
  }

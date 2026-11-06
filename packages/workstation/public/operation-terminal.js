@@ -1,7 +1,7 @@
-/** Durable execution viewer, with queued SDK messages or an explicit CLI terminal. */
+/** Read-only execution viewer with structured messages queued for the next SDK turn. */
 export function operationTerminal({api,note,onInteractions}){
   const $=s=>document.querySelector(s),active=s=>['QUEUED','RUNNING','CANCELLING'].includes(s);
-  const drafts=new Map();let current=null,terminal=null,subscription=null,observer=null,timer,library;
+  const drafts=new Map();let current=null,terminal=null,observer=null,timer,library;
   const canSend=session=>session?.status==='RUNNING'&&session.phase==='RUNNING'&&!session.sending;
   function inputState(session){
     $('#operation-sdk-input').hidden=session.sdk!==true;
@@ -23,7 +23,7 @@ export function operationTerminal({api,note,onInteractions}){
     }catch(error){if(current===session){$('#operation-sdk-input-status').textContent=error.message;note(error.message,true);}}
     finally{session.sending=false;if(current===session)inputState(session);}
   });
-  function leave(){clearTimeout(timer);current=null;subscription?.dispose();observer?.disconnect();terminal?.dispose();terminal=null;$('#development-terminal').replaceChildren();$('#development-terminal').hidden=true;$('#operation-input-help').hidden=true;$('#operation-sdk-input').hidden=true;}
+  function leave(){clearTimeout(timer);current=null;observer?.disconnect();terminal?.dispose();terminal=null;$('#development-terminal').replaceChildren();$('#development-terminal').hidden=true;$('#operation-input-help').hidden=true;$('#operation-sdk-input').hidden=true;}
   async function load(){
     if(window.Terminal)return;
     if(!library)library=new Promise((resolve,reject)=>{
@@ -38,12 +38,10 @@ export function operationTerminal({api,note,onInteractions}){
     await load();if(current!==session)return;
     const container=$('#development-terminal');container.hidden=false;
     const help=$('#operation-input-help');help.hidden=false;
-    const showInput=()=>{help.textContent=session.sdk?'下方補充訊息會在目前回合結束後交給 Agent；停止會取消整個作業。':session.sdk===false?'輸入會直接送到目前的外部 Agent。':'正在連接執行紀錄…';inputState(session);};
+    const showInput=()=>{help.textContent=session.sdk?'下方補充訊息會在目前回合結束後交給 Agent；停止會取消整個作業。':session.sdk===false?'舊版執行紀錄僅供檢視；新任務統一由 Codex SDK 執行。':'正在連接執行紀錄…';inputState(session);};
     $('#operation-sdk-message').value=drafts.get(session.id)??'';$('#operation-sdk-input-status').textContent='';showInput();
-    terminal=new window.Terminal({cols:100,rows:30,convertEol:false,scrollback:5000,fontSize:13,screenReaderMode:true});terminal.open(container);
-    const send=input=>api(`/operations/${session.id}/input`,'POST',input).then(value=>{if(current===session)onInteractions?.(value.interactions??[]);}).catch(error=>{if(current===session&&active(session.status))note(error.message,true);});
-    subscription=terminal.onData(data=>{if(session.sdk===false&&canSend(session))void send({data});});
-    observer=new ResizeObserver(()=>{if(current!==session||!terminal)return;const cols=Math.min(300,Math.max(20,Math.floor((container.clientWidth-24)/8)));terminal.resize(cols,30);if(session.sdk===false&&canSend(session))void send({cols,rows:30});});observer.observe(container);
+    terminal=new window.Terminal({cols:100,rows:30,convertEol:false,scrollback:5000,fontSize:13,screenReaderMode:true,disableStdin:true});terminal.open(container);
+    observer=new ResizeObserver(()=>{if(current!==session||!terminal)return;const cols=Math.min(300,Math.max(20,Math.floor((container.clientWidth-24)/8)));terminal.resize(cols,30);});observer.observe(container);
     async function poll(){
       if(current!==session)return;
       try{

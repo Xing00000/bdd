@@ -1,11 +1,26 @@
 import http from 'node:http';
 import {randomUUID} from 'node:crypto';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
 import type {ChatSettings} from '../../ports/chat.ts';
 import {createCopilotRuntime} from './copilot-chat.ts';
 import {providerConversationInput,providerTools,responseToolCall,type CopilotCompletion,type ProviderToolPolicy} from './chat-tool-protocol.ts';
 import {chatLimits} from '../../domain/chat.ts';
 
 export async function createChatProvider(cwd:string,toolPolicy:ProviderToolPolicy=false){
+ // Coding inference must not discover a product/spec checkout as implicit ACP
+ // context. This owned empty cwd is isolation of context, not an OS sandbox.
+ const ownedDirectory=toolPolicy==='codex'?await mkdtemp(path.join(tmpdir(),'bdd-copilot-inference-')):undefined;
+ try{
+  const provider=await openChatProvider(ownedDirectory??cwd,toolPolicy);
+  if(!ownedDirectory)return provider;
+  let closing:Promise<void>|undefined;
+  return {...provider,close:()=>closing??=provider.close().finally(()=>rm(ownedDirectory,{recursive:true,force:true}))};
+ }catch(error){if(ownedDirectory)await rm(ownedDirectory,{recursive:true,force:true});throw error;}
+}
+
+async function openChatProvider(cwd:string,toolPolicy:ProviderToolPolicy){
  type Activation={controller:AbortController;signal:AbortSignal};
  const sessions=new Map<string,{settings:ChatSettings;active?:Activation}>(),jobs=new Set<Promise<CopilotCompletion>>(),requests=new Set<AbortController>();
  const runtime=createCopilotRuntime(cwd,{toolPolicy:toolPolicy==='codex'?'codex':'workstation'});let closing=false,closePromise:Promise<void>|undefined;
@@ -80,8 +95,13 @@ export async function createChatProvider(cwd:string,toolPolicy:ProviderToolPolic
   }catch(error){signal.removeEventListener('abort',cancelled);controller.abort();if(res.headersSent){res.destroy(error instanceof Error?error:Error(String(error)));return;}res.writeHead(502,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error instanceof Error?error.message:String(error)}}));}
   finally{requests.delete(controller);signal.removeEventListener('abort',cancelled);req.off('aborted',disconnected);res.off('close',disconnected);}
  });
- await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
- const address=server.address();if(!address||typeof address==='string')throw Error('Chat provider did not bind a TCP port');
+ let address;
+ try{
+  await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
+  address=server.address();if(!address||typeof address==='string')throw Error('Chat provider did not bind a TCP port');
+ }catch(error){
+  server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await runtime.close();throw error;
+ }
  return {
   url:`http://127.0.0.1:${address.port}`,
   models(settings:ChatSettings,signal:AbortSignal){if(closing)return Promise.reject(Error('聊天 provider 已關閉'));return runtime.models(settings,signal);},

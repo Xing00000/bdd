@@ -27,11 +27,11 @@ npm start
 
 同一聊天室的連續訊息會重用 Codex 背景程序，Copilot 模型請求與模型清單查詢會重用 ACP 連線。每次推理仍使用獨立 Copilot session，由 Codex 提供當次上下文，避免重複累積歷史或混入其他聊天室。串流、取消與權限回覆均走 ACP；協定不相容時明確回報，不退回其他 CLI 模式。空閒程序會回收；設定變更或程序故障時會重新建立，並從已保存的 Codex thread 繼續。實際首字速度仍取決於所選模型、上下文與服務狀態。
 
-上方 **Gherkin** 是一直展開的正式規格編輯區，下方 **需求描述** 可直接打字或按「上傳文件」匯入。按 **LLM 生成 Gherkin** 會先預覽可修改的 Prompt，送出後才由選定的 Agent 生成草稿，預設使用 Codex SDK；新需求也能直接生成。沒有功能名稱、角色、條件或案例 ID 等額外必填欄位，名稱由 Gherkin 的 Feature 自動取得。
+上方 **Gherkin** 是一直展開的正式規格編輯區，下方 **需求描述** 可直接打字或按「上傳文件」匯入。按 **LLM 生成 Gherkin** 會先預覽可修改的 Prompt，送出後才由選定的 Agent 透過 Codex SDK 生成草稿；新需求也能直接生成。沒有功能名稱、角色、條件或案例 ID 等額外必填欄位，名稱由 Gherkin 的 Feature 自動取得。
 
 修改需求描述不會覆蓋 Gherkin。重新生成前的原稿與 Agent 生成提案保存在 SQLite 生成歷史，可以還原。「儲存」以同一筆 SQLite 交易保存描述及手動編輯的完整 Gherkin；未完成或格式有錯的草稿也可先存，只有「確認需求並繼續」才阻擋不完整規格。
 
-支援 UTF-8 TXT、Markdown、Gherkin 與 DOCX（1 MiB 內），提取文字放入需求描述；目前不支援 PDF、掃描圖片或舊 DOC。Agent 產出會經官方 Cucumber parser 與格式檢查後保存為提案，仍需人類審閱及儲存。需求、系統設計、測試計劃與開發階段共用執行紀錄；SDK 以多行輸入框補充後續回合，自訂 CLI 保留互動終端。每次派工與補充訊息都保留獨立的 SQLite 留言與 log；實際測試接線及完整 discovery 仍在測試階段驗證。
+支援 UTF-8 TXT、Markdown、Gherkin 與 DOCX（1 MiB 內），提取文字放入需求描述；目前不支援 PDF、掃描圖片或舊 DOC。Agent 產出會經官方 Cucumber parser 與格式檢查後保存為提案，仍需人類審閱及儲存。需求、系統設計、測試計劃與開發階段共用執行紀錄；以多行輸入框補充 SDK 後續回合，執行終端僅供檢視。每次派工與補充訊息都保留獨立的 SQLite 留言與 log；實際測試接線及完整 discovery 仍在測試階段驗證。
 
 系統設計頁的「LLM 生成系統文件」同樣先預覽 Prompt，再派出 Agent。Codex SDK 透過 MCP 讀取已確認需求與目前文件，生成後放入編輯區供審閱、儲存，不會自動確認設計；失敗時保留原稿。
 
@@ -43,7 +43,7 @@ npm start
 | **儲存設定／需求／產品** | SQLite 交易同時寫入內容、修訂、設定及儲存收據。與 Git、網路和遠端同步無關。 |
 | **確認需求／設計並繼續** | 以目前內容摘要記錄人工確認到 SQLite，不需要 Repo checkout。 |
 | **確認測試並繼續** | 輸出已儲存檔案、檢查必要套件、執行真實 discovery；通過才確認測試，全程不建立 Git 版本。 |
-| **確認開發** | 預設由 Codex SDK 執行並顯示結構化事件；完成後獨立執行該功能全部 BDD，通過才進入驗收。 |
+| **確認開發** | 由 Codex SDK 執行並顯示結構化事件；完成後獨立執行該功能全部 BDD，通過才進入驗收。 |
 | **驗收／問題回報** | 查看 Gherkin 步驟、截圖與 Playwright 報告；回報問題後返回開發，保留原報告。 |
 | **人工驗收通過** | 核對報告與目前內容摘要，保存人工確認後固定產品、Spec 與報告的 Git 版本。自動測試通過只進入等待人工驗收。 |
 | **遠端同步** | 明確分享已完成人工驗收的固定版本；有新草稿或驗收步驟未完成時拒絕同步，不替中間步驟建立 commit。 |
@@ -80,7 +80,7 @@ npm run test:workstation:e2e
 npm run test:ui:protocol
 ```
 
-`test:seed` 驗證首次初始化、缺少任務預設的補齊、重複執行不增加資料、舊版 Prompt 遷移、使用者自訂值保留，以及 CLI／Agent／Skill／Prompt 的關聯完整性。使用 Node.js 24 並先執行 `npm ci`，不需要瀏覽器或外部 LLM 登入。
+`test:seed` 驗證首次初始化、缺少任務預設的補齊、重複執行不增加資料、舊版 Prompt 遷移、使用者自訂值保留，以及 SDK／Agent／Skill／Prompt 的關聯完整性。使用 Node.js 24 並先執行 `npm ci`，不需要瀏覽器或外部 LLM 登入。
 
 `test:chat:runtime` 驗證聊天程序重用、串流、取消、聊天室隔離、故障與設定變更後恢復，以及專案安裝的真實 Codex app-server／Copilot ACP 協定。測試使用隔離資料與本機模型 fixture，不需要外部帳號，也不代表已量測真實模型的回答速度。CI 的 application checks 同時執行這些測試。
 
@@ -112,9 +112,9 @@ npm run bdd -- workflow regress --repo bdd-spec --spec main --project bdd=main
 
 需求、設計、測試的確認按鈕與各自「儲存」並列；本地目錄、連線及同步狀態集中在設定，不佔需求頁版面。
 
-需求生成、系統設計、測試計劃補齊與開發實作預設統一由 **Codex SDK** 執行。Codex 負責規劃、任務 MCP、檔案修改與命令執行；**Copilot ACP 只提供模型文字與工具呼叫提案**，不能操作真實工作目錄。SDK 經本機 Responses 轉接層呼叫 ACP，沿用對話設定中的 Codex／Copilot 執行檔與 Copilot 登入；Agent 的 `model: auto` 沿用對話模型，可為個別 Agent 指定模型。
+需求生成、系統設計、測試計劃補齊與開發實作一律由 **Codex SDK** 執行。Codex 負責規劃、任務 MCP、檔案修改與命令執行；**Copilot ACP 只提供模型文字與工具呼叫提案**，工作台不授予它檔案或終端工具。實作推理的 ACP 程序及 session 使用獨立空暫存目錄，不把產品或 Spec 目錄當作工作目錄；這是程序與工具分工，不是額外的 OS 沙箱。SDK 經本機 Responses 轉接層呼叫 ACP，沿用對話設定中的 Codex／Copilot 執行檔與 Copilot 登入；Agent 的 `model: auto` 沿用對話模型，可為個別 Agent 指定模型。
 
-先執行 `npm install` 與 `npm run build`，再於「Agent、Prompt 與 Skill 管理」選擇 `Codex SDK`。官方 `@openai/codex-sdk` 與 Codex 固定在相同版本；SDK 底層仍啟動原生 Codex 程序。工作台讀取 SDK 結構化事件，保留原有 sandbox、取消與作業紀錄。執行中輸入的補充文字會排入同一 thread 的後續回合，不冒充即時插話。自訂外部 CLI 僅作明確選擇的相容模式；SDK 失敗不會切換到 CLI 或 Copilot 直接執行。聊天仍使用 Codex app-server 保留即時串流、壓縮及持續程序。
+先執行 `npm install` 與 `npm run build`，再於「Agent、Prompt 與 Skill 管理」設定模型與執行限制；執行引擎固定為 `Codex SDK`。官方 `@openai/codex-sdk` 與 Codex 固定在相同版本；SDK 底層仍啟動原生 Codex 程序。工作台讀取 SDK 結構化事件，保留原有 sandbox、取消與作業紀錄。執行中輸入的補充文字會排入同一 thread 的後續回合，不冒充即時插話。已移除自訂 CLI 派工入口；舊設定在新預覽時轉成 SDK 設定，原始歷史仍保留。SDK 失敗直接回報，不改由 Copilot 執行。聊天仍使用 Codex app-server 保留即時串流、壓縮及持續程序。
 
 Agent 結束後，工作台將產品修改保存到 SQLite 與工作目錄，再以內容快照獨立執行該功能全部 BDD 案例／瀏覽器組合。失敗時將結果回交 Agent（最多三次）；開發、重試與測試不操作 Git。完整通過才進入等待人工驗收，按「驗收通過」才固定 Git 版本；不把 Agent 的結束碼當驗收成功，也不自動遠端同步。
 

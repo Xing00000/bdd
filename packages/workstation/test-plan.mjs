@@ -72,7 +72,7 @@ async function generateInView(context,snapshot,feature,root,prefix,receiptId,age
   const before=await sourceFiles(root),projectHashes=await contextHashes(root);
   const task=await writeAgentTask(parent,selectedTaskSnapshot(snapshot,context),{purpose:'testPlan',requirementId:input.requirementId,featureId:input.featureId,workspace:root,products:projects,feedback:[]});
   await atomicWrite(path.join(root,'.runtime/test-plan-prompt.txt'),prompt);
-  const result=await runAgentTask(context,{agent,prompt,spec:root,cwd:root,task});
+  const result=await runAgentTask(context,{agent,prompt,cwd:root,task});
   const outputTail=stripVTControlCharacters(result.output.slice(-12000));
   await writeJson(path.join(root,'.runtime/test-plan-agent.json'),result);
   invariant(result.exitCode===0&&!result.signal&&!result.timedOut,'TEST_PLAN_AGENT_FAILED',`測試計劃生成失敗，原內容保留。\n${outputTail}`);

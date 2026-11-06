@@ -11,6 +11,7 @@ import { createGit, execute } from '../../packages/git-core/index.mjs';
 import { writeJson, exists } from '../../packages/contracts/index.mjs';
 import { toolkitRoot } from '../workstation/helpers.mjs';
 import { docxArchive } from '../workstation/requirement-fixtures.mjs';
+import { configureSdkPeer } from '../workstation/sdk-peer.mjs';
 
 async function port() { const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const value=server.address().port;await new Promise(r=>server.close(r));return value; }
 // Fixture setup provisions only remote Git servers, a deliberately incomplete product,
@@ -20,20 +21,19 @@ test('all-UI: create → edit/review/develop without Git → verify → human ac
   const base=await mkdtemp(path.join(os.tmpdir(),'workbench-ui-')),home=path.join(base,'station');
   const artifacts=path.resolve(process.env.WB_E2E_ARTIFACTS??path.join(base,'evidence'));await mkdir(artifacts,{recursive:true});
   const driver=path.join(base,'driver');await mkdir(driver);
-  // A deterministic CLI fixture, not a simulated PTY or an external paid LLM call.
-  const agentFile=path.join(driver,'agent-fixture.mjs');
-  await writeFile(agentFile,`import fs from 'node:fs';
-import {spawnSync} from 'node:child_process';
-if(!process.stdin.isTTY||!process.stdout.isTTY)throw Error('real PTY required');
-console.log('PTY_READY real-terminal=true');
-process.stdin.setEncoding('utf8');process.stdin.on('data',x=>console.log('INPUT:'+x.trim()));
-const result=spawnSync(process.execPath,[${JSON.stringify(path.join(toolkitRoot,'scripts/mcp-agent-task.mjs'))},process.argv[2]],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'workbench_get_task',arguments:{}}})+'\\n',encoding:'utf8'});
-if(result.status!==0)throw Error(result.stderr);
-const task=JSON.parse(result.stdout).result.structuredContent;
-if(task.purpose==='gherkin'){const {artifacts}=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const {generateRequirement}=await import(${JSON.stringify(path.join(toolkitRoot,'packages/workstation/requirements.mjs'))});fs.writeFileSync(task.output,generateRequirement(artifacts['requirement-description.txt']).gherkin);console.log('CLI fixture generated Gherkin');process.exit(0);}
-if(task.feedback.some(item=>item.message.includes('feedback-pty-fixture'))){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');console.log('Agent saved agent-fixed.txt');}
-setTimeout(()=>process.exit(0),2500);
-`);
+  // The official SDK drives a controlled native exec peer. This verifies SDK
+  // dispatch and UI behavior without claiming real model inference.
+  await configureSdkPeer({home,directory:driver,source:`import fs from 'node:fs';
+if(task.purpose==='gherkin'){
+  const {generateRequirement}=await import(${JSON.stringify(path.join(toolkitRoot,'packages/workstation/requirements.mjs'))});
+  fs.writeFileSync(task.output,generateRequirement(artifacts['requirement-description.txt']).gherkin);
+  emitMessage('SDK fixture generated Gherkin');
+}else{
+  emitMessage(isResume?'INPUT:'+prompt:'SDK_READY controlled-exec-peer=true');
+  if((task.feedback??[]).some(item=>item.message.includes('feedback-sdk-fixture'))){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');emitMessage('Agent saved agent-fixed.txt');}
+  await new Promise(resolve=>setTimeout(resolve,isResume?500:5000));
+}
+`});
 
   const browsers=process.env.PLAYWRIGHT_BROWSERS_PATH??path.join(base,'browsers');
   const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:browsers};delete env.WB_ENABLE_TRUSTED_EXECUTION;const git=createGit({allowLocal:true});
@@ -122,9 +122,8 @@ const server=http.createServer(async(request,response)=>{
     await click('Agent、Prompt 與 Skill 管理');await page.getByRole('button',{name:'新增 Agent',exact:true}).click();
     const editor=page.locator('.catalog-editor');
     await editor.getByRole('textbox',{name:'名稱',exact:true}).fill(name);
-    await editor.getByRole('combobox',{name:'執行方式',exact:true}).selectOption('custom-cli');
-    await editor.getByRole('textbox',{name:'CLI 執行檔',exact:true}).fill(process.execPath);
-    await editor.getByRole('textbox',{name:'CLI 參數（每行一個）',exact:true}).fill(`${agentFile}\n{task}\n{prompt}`);
+    await expect(editor).toContainText('執行引擎：Codex SDK');
+    await expect(editor.getByRole('textbox',{name:'模型（auto 沿用對話設定）',exact:true})).toHaveValue('auto');
     await editor.getByRole('spinbutton',{name:'最大嘗試次數',exact:true}).fill('3');
     await editor.getByRole('button',{name:'儲存新版本',exact:true}).click();
     await expect(page.getByRole('button',{name:'編輯 '+name,exact:true})).toBeVisible();
@@ -206,15 +205,15 @@ const server=http.createServer(async(request,response)=>{
   await d.getByRole('textbox',{name:'派工 Prompt',exact:true}).fill(editedPrompt);
   await d.getByRole('button',{name:'送出',exact:true}).click();await expect(page.locator('#development-terminal')).toBeVisible({timeout:30000});
   assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').at(-1).body.input.prompt,editedPrompt);
-  await expect(page.locator('#development-terminal')).toContainText('PTY_READY real-terminal=true');
-  await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('terminal-probe');await page.keyboard.press('Enter');
+  await expect(page.locator('#development-terminal')).toContainText('SDK_READY controlled-exec-peer=true');
+  await page.locator('#operation-sdk-message').fill('terminal-probe');await page.locator('#operation-sdk-send').click();
   const activeDevelopmentId=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').at(-1).body.operationId;
   const inputEntries=async()=>{const value=await (await fetch(site+`/repository-api/v1/spec-repositories/${alpha}/interactions`)).json();return value.entries.filter(entry=>entry.operation==='interaction.cli.input'&&entry.parentOperationId===activeDevelopmentId);};
   await expect.poll(async()=>(await inputEntries()).length).toBe(1);
-  await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('second-probe');await page.keyboard.press('Enter');
+  await page.locator('#operation-sdk-message').fill('second-probe');await page.locator('#operation-sdk-send').click();
   await expect.poll(async()=>(await inputEntries()).length).toBe(2);
   assert.deepEqual((await inputEntries()).map(entry=>entry.message).sort(),['second-probe','terminal-probe'].sort());
-  await page.screenshot({path:path.join(artifacts,'10-real-agent-terminal.png'),fullPage:true});
+  await page.screenshot({path:path.join(artifacts,'10-sdk-agent-events.png'),fullPage:true});
   await page.waitForFunction(before=>{const n=document.querySelector('#notice');return n.dataset.operation==='workflow.develop'&&n.dataset.jobId!==before;},beforeDevelopment,{timeout:360000});await ready();
   await expect(page.locator('#implementation-panel')).toBeVisible();assert.equal(await page.getByRole('button',{name:'再次驗收',exact:true}).count(),0);
   await click('5 驗收');await expect(page.locator('#verification-panel')).toBeVisible();let run=page.locator('#feature-report-list [data-run-id]').first();const failedRunId=await run.getAttribute('data-run-id');const failedDevelopmentCount=await page.locator('#feature-report-list [data-run-id]').count();assert.equal(failedDevelopmentCount,3,'A failed full suite is retried within development, never marked accepted');await expect(run).toContainText('FAILED');await expect(run).toContainText('NOT_VERIFIED');
@@ -266,8 +265,8 @@ const server=http.createServer(async(request,response)=>{
   await tab('需求流程');await page.reload();await ready();await expect(page.locator('#feature-report-list [data-run-id]')).toHaveCount(failedDevelopmentCount+3);
   await expect(page.locator('#feature-report-list')).toContainText(cliRun.value.result.runId);await expect(page.locator('#feature-status')).toHaveText('等待人工驗收');
   await page.screenshot({path:path.join(artifacts,'09-cli-and-requirement-reports.png'),fullPage:true});
-  // Report a real acceptance issue, return to development and let the configured CLI edit the product.
-  await page.getByRole('textbox',{name:'驗收意見',exact:true}).fill('feedback-pty-fixture: add a regression marker without weakening the approved BDD');
+  // Report an acceptance issue and return to SDK development with the controlled peer.
+  await page.getByRole('textbox',{name:'驗收意見',exact:true}).fill('feedback-sdk-fixture: add a regression marker without weakening the approved BDD');
   await job(page.getByRole('button',{name:'LLM 修改實作',exact:true}),'workflow.develop','SUCCEEDED',false);await expect(page.locator('#verification-panel')).toBeVisible();
   assert.equal(await readFile(path.join(savedRoot,'projects/product/agent-fixed.txt'),'utf8'),'fixed from acceptance feedback\n');
   await expect(page.locator('#feature-status')).toHaveText('等待人工驗收');await expect(page.frameLocator('#feature-report-view iframe').getByRole('link',{name:/Passed/})).toContainText('1');await reportHistory();await page.locator('#run-list [data-run-id]').first().getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#report-view .bdd-step')).toHaveCount(3);
@@ -277,7 +276,7 @@ const server=http.createServer(async(request,response)=>{
   await page.screenshot({path:path.join(artifacts,'11-acceptance-gherkin-steps.png'),fullPage:true});
   const devJobs=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop');
   const firstTerminal=await (await fetch(site+`/repository-api/v1/operations/${devJobs[0].body.operationId}/terminal`)).json();
-  assert.match(firstTerminal.output,/PTY_READY real-terminal=true/);assert.match(firstTerminal.output,/INPUT:terminal-probe/);assert.match(firstTerminal.output,/BDD.*FAILED/);
+  assert.match(firstTerminal.output,/SDK_READY controlled-exec-peer=true/);assert.match(firstTerminal.output,/INPUT:terminal-probe/);assert.match(firstTerminal.output,/BDD.*FAILED/);
   const replies=await inputEntries(),firstReply=replies.find(entry=>entry.message==='terminal-probe'),secondReply=replies.find(entry=>entry.message==='second-probe');
   const replyLog=async id=>(await (await fetch(site+`/repository-api/v1/operations/${id}/terminal`)).json()).output;
   assert.match(await replyLog(firstReply.id),/INPUT:terminal-probe/);assert.doesNotMatch(await replyLog(firstReply.id),/INPUT:second-probe/);assert.match(await replyLog(secondReply.id),/INPUT:second-probe/);

@@ -12,7 +12,7 @@ function surface(){
   const originals={document:globalThis.document,window:globalThis.window,ResizeObserver:globalThis.ResizeObserver};
   globalThis.document={querySelector:element};
   globalThis.window={Terminal:class{
-    constructor(){terminals.push(this);}open(){}write(){}resize(){}dispose(){}
+    constructor(options){this.options=options;terminals.push(this);}open(){}write(){}resize(){}dispose(){}
     onData(handler){this.input=handler;return {dispose(){}};}
   }};
   globalThis.ResizeObserver=class{observe(){}disconnect(){}};
@@ -37,7 +37,7 @@ test('SDK input waits for readiness and sends one exact multiline message withou
   await form.events.submit({preventDefault(){}});assert.deepEqual(posts,[]);
   ready(state('codex-sdk'));await tick();
   assert.equal(element('#operation-sdk-send').disabled,false);
-  terminals[0].input('unwanted terminal input\r');assert.deepEqual(posts,[]);
+  assert.equal(terminals[0].options.disableStdin,true);assert.equal(terminals[0].input,undefined);assert.deepEqual(posts,[]);
   await form.events.submit({preventDefault(){}});
   assert.deepEqual(posts,[{path:'/operations/job-sdk/input',input:{message}}]);
   assert.deepEqual(received,[{id:'input-one'}]);assert.equal(field.value,'');
@@ -46,7 +46,7 @@ test('SDK input waits for readiness and sends one exact multiline message withou
   assert.doesNotMatch(element('#operation-sdk-input-status').textContent,/已處理/);
 });
 
-test('an explicit custom CLI keeps terminal input and hides the SDK composer',async t=>{
+test('historical CLI execution remains read-only and cannot dispatch terminal input',async t=>{
   const {element,terminals,restore}=surface(),posts=[];
   const view=operationTerminal({api:async(path,method,input)=>{
     if(method==='POST'){posts.push({path,input});return {interactions:[]};}
@@ -55,6 +55,6 @@ test('an explicit custom CLI keeps terminal input and hides the SDK composer',as
   t.after(()=>{view.leave();restore();});
   await view.open(operation('job-cli','custom-cli'));await tick();
   assert.equal(element('#operation-sdk-input').hidden,true);
-  terminals[0].input('terminal edit\r');await tick();
-  assert.deepEqual(posts,[{path:'/operations/job-cli/input',input:{data:'terminal edit\r'}}]);
+  assert.equal(terminals[0].options.disableStdin,true);assert.equal(terminals[0].input,undefined);
+  assert.deepEqual(posts,[]);assert.match(element('#operation-input-help').textContent,/僅供檢視/);
 });

@@ -12,6 +12,7 @@ import { confirm, reviewState } from '../../packages/spec-toolkit/index.mjs';
 import { validateTestImplementation } from '../../packages/spec-toolkit/engine.mjs';
 import { withProgress } from '../../packages/git-core/progress.mjs';
 import { materializeDependencies } from '../../packages/spec-toolkit/dependencies.mjs';
+import { configureSdkPeer,writeSdkPeer,readSdkPeerCalls } from './sdk-peer.mjs';
 
 const ids={requirementId:'REQ-001',featureId:'arithmetic'};
 const featurePath='spec/REQ-001/arithmetic/arithmetic.feature';
@@ -35,10 +36,9 @@ async function setup(t,{featureText=gherkin}={}) {
     const operationId=`OP-plan-${++sequence}`;operations.push({operation,operationId,input});
     return withProgress(f.home,operationId,()=>executeOperation(options,store,{schemaVersion:1,repositoryId:'SPEC-plan',operationId,operation,input}));
   };
-  const agentFile=path.join(f.base,'test-plan-agent.mjs');
-  const agentBody=`import {writeFile} from 'node:fs/promises';\nconst root=process.argv[2];\nawait writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});\nawait writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});\n`;
-  await writeFile(agentFile,agentBody);
-  await job('repository.setup',{reviewer:'Human',projects:[],agent:{runtime:'custom-cli',command:process.execPath,args:[agentFile,'{spec}','{task}'],skills:''}});
+  const agentBody=`import {writeFile} from 'node:fs/promises';\nconst root=cwd;\nif(task.purpose!=='testPlan')throw Error('Missing test-plan task');\nawait writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});\nawait writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});\n`;
+  const agentFile=await configureSdkPeer({home:f.home,directory:f.base,source:agentBody,name:'test-plan-agent.mjs'});
+  await job('repository.setup',{reviewer:'Human',projects:[],agent:{runtime:'codex-sdk',skills:''}});
   try { await job('repository.tools.prepare'); }
   catch(error) { assert.equal(error.code,'INSTALL_REQUIRED');assert.deepEqual(error.details.install.browsers,['chromium']);await job('repository.tools.prepare',{installConsent:error.details.install.digest}); }
   await job('workflow.create',{...ids,title:'Arithmetic'});
@@ -60,23 +60,24 @@ async function generate(f) {
   return f.job('workflow.tests.complete',{...ids,expectedDigest:(await f.current()).review.hashes.tests});
 }
 
-test('settings installs tools; design codegens skeleton; explicit LLM completion validates modules; rollback clears this plan',async t=>{
+test('settings installs tools; design codegens skeleton; explicit SDK completion validates modules; rollback clears this plan',async t=>{
   const f=await setup(t);
   await f.job('workflow.create',{requirementId:'REQ-OTHER',featureId:'unrelated',title:'Unrelated feature'});
   const unrelatedPath='spec/REQ-OTHER/unrelated/unrelated.feature';
   const unrelated=(await f.service.readFile('SPEC-plan',unrelatedPath)).content;
-  await writeFile(f.agentFile,`import {existsSync} from 'node:fs';\nif(existsSync(process.argv[2]+'/'+${JSON.stringify(unrelatedPath)}))throw new Error('Unrelated Gherkin leaked into the Agent context');\n`+f.agentBody);
+  await writeSdkPeer(f.agentFile,`import {existsSync} from 'node:fs';\nif(existsSync(cwd+'/'+${JSON.stringify(unrelatedPath)}))throw new Error('Unrelated Gherkin leaked into the Agent context');\n`+f.agentBody);
   assert.equal((await f.current()).testPlan.ready,false);
   await assert.rejects(f.save(featurePath,gherkin+'\n'),{code:'STAGE_READ_ONLY'});
   const generated=await generate(f);
   assert.equal(generated.nextStage,'TESTS');assert.equal(generated.testOutcome,'NOT_RUN');
   assert.equal(generated.testPlan.check.status,'CHECKED');assert.equal(generated.testPlan.check.tests,1);
+  const [sdkCall]=await readSdkPeerCalls(f.agentFile);assert.equal(sdkCall.sdkOriginator,'codex_sdk_ts');assert.equal(sdkCall.isResume,false);
   const before=await f.current();assert.equal(before.testPlan.ready,true);assert.equal(before.review.editable.sd,false);assert.equal(before.review.editable.tests,true);
   assert.equal((await f.service.readFile('SPEC-plan',stepPath)).content,steps);
   assert.equal((await f.service.readFile('SPEC-plan',hookPath)).content,hooks);
   assert.equal((await f.service.readFile('SPEC-plan',unrelatedPath)).content,unrelated);
   await f.job('repository.save',{kind:'source',path:'tests/REQ-001/arithmetic/obsolete.ts',expectedHash:null,content:'export const obsolete = true;\n'});
-  await writeFile(f.agentFile,f.agentBody+"import {unlink} from 'node:fs/promises';await unlink(process.argv[2]+'/tests/REQ-001/arithmetic/obsolete.ts');\n");
+  await writeSdkPeer(f.agentFile,f.agentBody+"import {unlink} from 'node:fs/promises';await unlink(cwd+'/tests/REQ-001/arithmetic/obsolete.ts');\n");
   await assert.rejects(f.job('workflow.tests.complete',{...ids,expectedDigest:(await f.current()).review.hashes.tests}),{code:'AGENT_DELETED_TEST_SOURCE'});
   assert.equal((await f.service.readFile('SPEC-plan','tests/REQ-001/arithmetic/obsolete.ts')).content,'export const obsolete = true;\n');
   for(const operation of f.operations.filter(op=>op.operation==='workflow.tests.complete'||op.operation==='workflow.review'&&op.input.stage==='sd')) {
@@ -157,7 +158,7 @@ test('invalid and empty handlers are rejected independently of discovery',async 
 test('a zero-exit blocked agent preserves its explanation and incomplete step locations without saving the skeleton as complete',async t=>{
   const f=await setup(t);await f.approve('sd');const before=await f.service.readFile('SPEC-plan',stepPath);
   const explanation='BLOCKED: The identity adapter and reproducible multi-host setup contracts are missing.';
-  await writeFile(f.agentFile,`console.log(${JSON.stringify('\u001b[31m'+explanation+'\u001b[0m')});\n`);
+  await writeSdkPeer(f.agentFile,`console.log(${JSON.stringify('\u001b[31m'+explanation+'\u001b[0m')});\n`);
   await assert.rejects(f.job('workflow.tests.complete',{...ids,expectedDigest:(await f.current()).review.hashes.tests}),error=>{
     assert.equal(error.code,'TEST_PLAN_INCOMPLETE');assert.equal(error.details.agent.exitCode,0);assert.ok(error.details.agent.outputTail.includes(explanation));assert.ok(error.message.includes(explanation));assert.ok(!error.message.includes('\u001b['));assert.ok(error.details.incompleteHandlers.length>0);assert.ok(error.details.incompleteHandlers.every(item=>item.path===stepPath&&item.line>0));return true;
   });
@@ -166,7 +167,7 @@ test('a zero-exit blocked agent preserves its explanation and incomplete step lo
 
 test('an agent proposal that edits approved design is rejected without changing SQLite sources or creating a plan',async t=>{
   const f=await setup(t),design=(await f.service.readFile('SPEC-plan',designPath)).content;
-  await writeFile(f.agentFile,f.agentBody+`await writeFile(root+'/'+${JSON.stringify(designPath)},'Unapproved design change');\n`);
+  await writeSdkPeer(f.agentFile,f.agentBody+`await writeFile(root+'/'+${JSON.stringify(designPath)},'Unapproved design change');\n`);
   await assert.rejects(generate(f),{code:'AGENT_CHANGED_INPUT'});
   const current=await f.current();assert.equal(current.review.confirmed.sd,true);assert.equal(current.testPlan.ready,true);
   assert.equal((await f.service.readFile('SPEC-plan',designPath)).content,design);
@@ -178,11 +179,12 @@ test('native skeleton includes every missing definition beyond the CLI ten-snipp
   const words=['alpha','bravo','charlie','delta','echo','foxtrot','golf','hotel','india','juliet','kilo','lima'];
   const featureText='Feature: Complete skeleton\n  @case:CASE-001\n  Scenario: All steps\n'+words.map((word,index)=>`    ${index===0?'Given':'And'} ${word} is available`).join('\n')+'\n';
   const f=await setup(t,{featureText});
-  await writeFile(f.agentFile,"throw new Error('Codegen must never invoke the Agent');\n");
+  await writeSdkPeer(f.agentFile,"throw new Error('Codegen must never invoke the Agent');\n");
   const result=await f.approve('sd');assert.equal(result.testPlan.skeleton,true);
   const source=(await f.service.readFile('SPEC-plan',stepPath)).content;
   assert.equal((source.match(/^Given\(/gm)??[]).length,words.length);
   for(const word of words)assert.ok(source.includes(`${word} is available`));
+  assert.deepEqual(await readSdkPeerCalls(f.agentFile),[],'Native code generation must never start a Codex SDK turn');
   await inDraftView(f.store.draft('SPEC-plan'),async root=>{
     await symlink(path.join(toolkitRoot,'node_modules'),path.join(root,'node_modules'),'dir');
     await assert.rejects(validateTestImplementation(root,ids.requirementId,ids.featureId),{code:'TEST_PLAN_INCOMPLETE'});

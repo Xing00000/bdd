@@ -43,14 +43,9 @@ export function agentCatalogView({api,el,button,note,ask,onDirty,onSaved}){
    let fields={},body,purposes,files=[];
    if(kind==='agents'){
     const settings=revision?.settings??catalog.template;
-    const runtimeLabel=el('label','執行方式'),runtime=el('select');runtime.setAttribute('aria-label','執行方式');
-    runtime.append(new Option('Codex SDK · Copilot ACP 模型','codex-sdk'),new Option('自訂 CLI（相容模式）','custom-cli'));
-    runtime.value=settings.runtime??'codex-sdk';fields.runtime=runtime;runtimeLabel.append(runtime);form.append(runtimeLabel);
-    const model=input('模型（auto 沿用對話設定）',settings.model??'auto'),command=input('CLI 執行檔',settings.command??'codex'),args=input('CLI 參數（每行一個）',(settings.args??[]).join('\n'),'textarea');
-    fields.model=model.control;fields.command=command.control;fields.args=args.control;
-    const runtimeHelp=el('p',undefined,'muted');form.append(model.wrapper,command.wrapper,args.wrapper,runtimeHelp);
-    const showRuntime=()=>{const sdk=runtime.value==='codex-sdk';model.wrapper.hidden=!sdk;command.wrapper.hidden=sdk;args.wrapper.hidden=sdk;runtimeHelp.textContent=sdk?'由 Codex 執行檔案與工具操作，Copilot ACP 提供模型。執行中補充的文字會排入後續回合；可隨時停止作業。':'使用明確指定的外部 CLI；需以 {task} 或 {mcp} 接上本次任務資料。';};
-    runtime.onchange=showRuntime;showRuntime();
+    form.append(el('p','執行引擎：Codex SDK · 模型 API：Copilot ACP','muted'));
+    const model=input('模型（auto 沿用對話設定）',settings.model??'auto');fields.model=model.control;
+    form.append(model.wrapper,el('p','所有實作任務由 Codex SDK 執行。Copilot ACP 只提供模型回答與工具提案，檔案與命令由 Codex 處理。補充訊息會排入後續回合。','muted'));
     for(const [key,label] of [['maxAttempts','最大嘗試次數'],['timeoutMs','逾時毫秒']]){const field=input(label,settings[key],'number');fields[key]=field.control;form.append(field.wrapper);}
    }else if(kind==='prompts'){
     body=input('Prompt 內容',revision?.content??catalog.promptTemplates.gherkin,'textarea');body.control.rows=12;body.control.required=true;form.append(body.wrapper);
@@ -68,7 +63,7 @@ export function agentCatalogView({api,el,button,note,ask,onDirty,onSaved}){
    const readDraft=()=>{
     const data={name:name.control.value,description:description.control.value};
     if(kind==='agents'){
-     const runtime=fields.runtime.value;data.settings={runtime,maxAttempts:Number(fields.maxAttempts.value),timeoutMs:Number(fields.timeoutMs.value),...(runtime==='codex-sdk'?{model:fields.model.value}:{command:fields.command.value,args:fields.args.value.split('\n').filter(Boolean)})};
+     data.settings={runtime:'codex-sdk',model:fields.model.value,maxAttempts:Number(fields.maxAttempts.value),timeoutMs:Number(fields.timeoutMs.value)};
     }
     else{data.content=body.control.value;data.purposes=[...purposes.querySelectorAll('input:checked')].map(n=>n.value);if(kind==='skills')data.resources=files.map(file=>({...file}));}
     return data;

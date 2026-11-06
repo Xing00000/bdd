@@ -1,6 +1,5 @@
-/** Frozen, job-scoped context shared by Codex SDK and explicitly configured CLIs. */
+/** Frozen, job-scoped context for the sole Codex SDK implementation runtime. */
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { id, identity, invariant } from '../contracts/index.mjs';
 import { validateAgentSettings, renderAgentPrompt,renderPromptTemplate,validateAgentRuntimeSettings,agentLimits } from './agent-settings.mjs';
@@ -14,14 +13,23 @@ export function gherkinInput(input){
   return {editorKey:input.editorKey,description:requirementText(input.description,'需求描述',{empty:false}),previousGherkin:requirementText(input.previousGherkin??'','Gherkin')};
 }
 
+export function assertSdkAgentSnapshot(frozen){
+  if(frozen===undefined)return;
+  invariant(frozen&&typeof frozen==='object'&&!Array.isArray(frozen)&&frozen.settings?.runtime==='codex-sdk'
+    &&!Object.hasOwn(frozen.settings,'command')&&!Object.hasOwn(frozen.settings,'args'),
+  'AGENT_PREVIEW_REQUIRED','舊派工預覽使用 CLI 執行契約，不能直接改為 SDK 執行。請重新選擇 Agent 並預覽 Codex SDK 派工。',409);
+  validateAgentRuntimeSettings(frozen.settings);
+}
+
 export function previewAgentPrompt(snapshot, repositoryId, root, input) {
+  assertSdkAgentSnapshot(input.agentSnapshot);
   const {purpose,requirementId,featureId}=input;
   invariant(['development','testPlan','gherkin','design'].includes(purpose),'INVALID_AGENT','未知 Agent 任務。');
   const source=purpose==='gherkin'?gherkinInput(input):purpose==='design'?{previousDesign:requirementText(input.previousDesign??'','系統文件')}:undefined;
   const key=source?.editorKey??`${id(requirementId)}/${id(featureId)}`;
   if(purpose!=='gherkin')invariant(snapshot.files.some(f=>f.target==='spec'&&f.path===`spec/${key}/${featureId}.feature`),'FEATURE_NOT_FOUND','找不到需求。',404);
   const separate=input.agentSnapshot?.prompt;
-  const agent=separate?validateAgentRuntimeSettings(input.agentSnapshot.settings):validateAgentSettings(input.agentSnapshot?.settings??snapshot.settings.agent);
+  const agent=separate?validateAgentRuntimeSettings(input.agentSnapshot.settings):validateAgentSettings({},input.agentSnapshot?.settings??snapshot.settings.agent);
   const values={requirementId:requirementId??'',featureId:featureId??'',spec:root,projects:'See workbench MCP task',feedback:'See workbench MCP task',previousFailure:'See workbench MCP task'};
   const skills=(input.agentSnapshot?.skills??[]).map(s=>`# Skill: ${s.name} (v${s.version})\n${s.content}${s.resources.length?'\n技能資源由 workbench_read_artifact 提供，相對基底：skills/'+s.id+'；檔案：'+s.resources.map(f=>f.path).join('、'):''}`).join('\n\n');
   const prompt=separate?renderPromptTemplate(separate.content,values)+(skills?'\n\n'+skills:''):renderAgentPrompt(agent,values,purpose);invariant(Buffer.byteLength(prompt)<=agentLimits.promptBytes,'AGENT_PROMPT_TOO_LARGE','所選內容超過 64 KiB 派工限制，請將長文放入 Skill 資源檔');
@@ -33,11 +41,10 @@ export function approvedAgentPrompt(snapshot, context, purpose) {
   const preview=previewAgentPrompt(snapshot,context.request.repositoryId,context.root,{...input,purpose});
   invariant(typeof input.prompt==='string'&&input.prompt.trim()&&Buffer.byteLength(input.prompt)<=agentLimits.promptBytes&&!input.prompt.includes('\0'),'PROMPT_REQUIRED','請先預覽 Prompt，再送出派工。',409);
   invariant(input.promptDigest===preview.promptDigest,'PROMPT_CHANGED','內容或設定已更新，請重新預覽 Prompt。',409);
-  assertTaskTransport(selectedAgent(snapshot,context));
   return input.prompt;
 }
 
-export function selectedAgent(snapshot,context){const frozen=context.request.input.agentSnapshot;return frozen?.prompt?validateAgentRuntimeSettings(frozen.settings):validateAgentSettings(frozen?.settings??snapshot.settings.agent);}
+export function selectedAgent(snapshot,context){const frozen=context.request.input.agentSnapshot;assertSdkAgentSnapshot(frozen);return frozen?.prompt?validateAgentRuntimeSettings(frozen.settings):validateAgentSettings({},frozen?.settings??snapshot.settings.agent);}
 export function selectedTaskSnapshot(snapshot,context){return {...snapshot,catalogSkills:context.request.input.agentSnapshot?.skills??[]};}
 function skillArtifacts(snapshot){return Object.fromEntries((snapshot.catalogSkills??[]).flatMap(skill=>[[`skills/${skill.id}/SKILL.md`,skill.content],...skill.resources.map(file=>[`skills/${skill.id}/${file.path}`,file.content])]));}
 
@@ -70,25 +77,6 @@ export async function writeAgentTask(directory, snapshot, {purpose,requirementId
   const file=path.join(directory,'task.json');
   await writeFile(file,JSON.stringify({task:{...task,skills:(snapshot.catalogSkills??[]).map(s=>({name:s.name,version:s.version,base:`skills/${s.id}`}))},artifacts:{...artifacts,...skillArtifacts(snapshot)}}),{mode:0o600});
   return file;
-}
-
-export function agentArguments(agent, {prompt,spec,project,task}) {
-  agent=validateAgentRuntimeSettings(agent);
-  invariant(agent.runtime==='custom-cli','AGENT_RUNTIME_MISMATCH','Codex SDK 使用結構化任務，不使用 CLI 參數。');
-  assertTaskTransport(agent);
-  const script=fileURLToPath(new URL('../../scripts/mcp-agent-task.mjs',import.meta.url));
-  const replacements={'{prompt}':prompt,'{spec}':spec,'{project}':project,'{task}':task};
-  const config=`mcp_servers.workbench_task={command=${JSON.stringify(process.execPath)},args=${JSON.stringify([script,task])},required=true,enabled=true}`;
-  const args=agent.args.flatMap(arg=>arg==='{mcp}'?['-c',config]:[Object.hasOwn(replacements,arg)?replacements[arg]:arg]);
-  if (/^codex(?:\.exe)?$/.test(path.basename(agent.command)) && args.includes('exec') && !args.includes('--skip-git-repo-check'))
-    args.splice(args.indexOf('exec') + 1, 0, '--skip-git-repo-check');
-  if(!agent.args.includes('{prompt}'))args.push(prompt);
-  return args;
-}
-
-function assertTaskTransport(agent) {
-  if(agent.runtime==='codex-sdk')return;
-  invariant(agent.args.includes('{mcp}')||agent.args.includes('{task}'),'AGENT_MCP_REQUIRED','請在 CLI 參數加入 {mcp}（Codex），或使用 {task} 接上自訂 CLI 的任務 MCP adapter。',409);
 }
 
 export function taskRpc(bundle, request) {

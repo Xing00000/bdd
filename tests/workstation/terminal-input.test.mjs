@@ -11,6 +11,7 @@ import {openStore} from '../../packages/workstation/store.mjs';
 import {runPty} from '../../packages/workstation/development.mjs';
 import {saveProgressPhase,readProgress} from '../../packages/git-core/progress-store.mjs';
 import {withProgress} from '../../packages/git-core/progress.mjs';
+import {validateAgentSettings} from '../../packages/workstation/agent-settings.mjs';
 
 // This transport fixture owns no agent process. It observes real service input
 // validation, SQLite history and the IPC boundary independently of inference.
@@ -54,7 +55,7 @@ test('structured SDK messages reject wrong runtime, raw keystrokes, invalid payl
   const f=await runningService(t,'custom-cli');
   assert.throws(()=>f.service.terminalInput('OP-parent',{message:'Hello'}),{code:'TERMINAL_RUNTIME_MISMATCH'});
   saveProgressPhase(f.home,'OP-parent',{phase:'RUNNING',runtime:'codex-sdk'});
-  assert.throws(()=>f.service.terminalInput('OP-parent',{data:'Hello\r'}),{code:'TERMINAL_RUNTIME_MISMATCH'});
+  assert.throws(()=>f.service.terminalInput('OP-parent',{data:'Hello\r'}),{code:'INVALID_TERMINAL_INPUT'});
   for(const input of [{message:''},{message:'\r\n  '},{message:'Hello',data:'ignored'},{message:'x'.repeat(65537)},{message:12},null]) {
     assert.throws(()=>f.service.terminalInput('OP-parent',input),{code:'INVALID_TERMINAL_INPUT'});
   }
@@ -65,14 +66,25 @@ test('structured SDK messages reject wrong runtime, raw keystrokes, invalid payl
   assert.equal(f.messages.length,0);assert.equal(f.service.interactions('SPEC-input').entries.length,1);
 });
 
-test('custom CLI keeps raw terminal edits, Enter submissions and resize behavior',async t=>{
+test('historical CLI operations stay readable but accept neither messages nor raw terminal input',async t=>{
   const f=await runningService(t,'custom-cli');
-  const first=f.service.terminalInput('OP-parent',{data:'abc\bD\r\n'});
-  assert.equal(first.interactions.length,1);assert.equal(first.interactions[0].request.input.message,'abD');
-  assert.deepEqual(f.messages[0],{type:'development.input',data:'abc\bD\r',interactionId:first.interactions[0].id});
-  assert.deepEqual(f.messages[1],{type:'development.input',data:'\n'});
-  f.service.terminalInput('OP-parent',{cols:120,rows:40});
-  assert.deepEqual(f.messages[2],{type:'development.input',cols:120,rows:40});
+  for(const input of [{message:'Hello'},{data:'abc\bD\r\n'},{cols:120,rows:40}])assert.throws(()=>f.service.terminalInput('OP-parent',input),{code:'TERMINAL_RUNTIME_MISMATCH'});
+  assert.equal((await f.service.terminal('OP-parent')).status,'RUNNING');assert.equal(f.messages.length,0);
+  saveProgressPhase(f.home,'OP-parent',{phase:'RUNNING',runtime:'codex-sdk'});
+  assert.throws(()=>f.service.terminalInput('OP-parent',{cols:120,rows:40}),{code:'INVALID_TERMINAL_INPUT'});
+  assert.equal(f.messages.length,0);
+});
+
+test('the queue refuses a frozen CLI contract and stale SDK selections before creating an operation',async t=>{
+  const f=await runningService(t);f.store.ensureAgentDefaults('SPEC-input',validateAgentSettings());
+  const selection=f.store.agentDefaults('SPEC-input').find(item=>item.purpose==='gherkin');
+  const current=f.store.resolveAgent('SPEC-input','gherkin',selection);
+  const submit=agentSnapshot=>f.service.enqueue({schemaVersion:1,operationId:'OP-rejected',repositoryId:'SPEC-input',operation:'workflow.gherkin.generate',input:{agentSelection:selection,agentSnapshot}});
+  for(const settings of [{runtime:'custom-cli',command:'old-cli',args:['{task}']},{command:'old-cli',args:['{task}']}]) {
+    assert.throws(()=>submit({...current,settings}),{code:'AGENT_PREVIEW_REQUIRED'});
+  }
+  assert.throws(()=>submit({...current,digest:'stale-sdk-preview'}),{code:'AGENT_PREVIEW_REQUIRED'});
+  assert.throws(()=>f.service.operation('OP-rejected'),{code:'OPERATION_NOT_FOUND'});
 });
 
 test('SDK PTY input encoding accepts ID packets and acknowledges only actual writes',async t=>{

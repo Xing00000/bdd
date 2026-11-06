@@ -6,20 +6,20 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {openStore} from '../../packages/workstation/store.mjs';
-import {validateAgentSettings,validateAgentRuntimeSettings,agentPromptFields} from '../../packages/workstation/agent-settings.mjs';
+import {validateAgentSettings,validateAgentRuntimeSettings,normalizeAgentRuntimeSettings,agentPromptFields} from '../../packages/workstation/agent-settings.mjs';
 import {previewAgentPrompt,approvedAgentPrompt} from '../../packages/workstation/agent-task.mjs';
 
 test('schema 11 migration splits Prompt versions without changing historical rows or frozen requests',async()=>{
  const home=await mkdtemp(path.join(tmpdir(),'bdd-prompt-migration-')),file=path.join(home,'metadata.sqlite');let store=openStore(home);
  store.register({id:'SPEC-migration',title:'Migration',remoteUrl:'https://github.com/example/spec'});
- const settings=validateAgentSettings({gherkinPrompt:'Exact original {featureId}\nKeep whitespace.\n'}),agentId=randomUUID(),revisionId=randomUUID(),historical={schemaVersion:1,operationId:'OP-historical',repositoryId:'SPEC-migration',operation:'workflow.gherkin.generate',input:{prompt:'Already accepted',agentSnapshot:{settings}}};
+ const settings={...validateAgentSettings({gherkinPrompt:'Exact original {featureId}\nKeep whitespace.\n'}),runtime:'custom-cli',command:'old-agent',args:['{task}','{prompt}']},agentId=randomUUID(),revisionId=randomUUID(),historical={schemaVersion:1,operationId:'OP-historical',repositoryId:'SPEC-migration',operation:'workflow.gherkin.generate',input:{prompt:'Already accepted',agentSnapshot:{settings}}};
  store.enqueue(historical);store.close();
  const db=new DatabaseSync(file);db.exec('PRAGMA foreign_keys=ON; ALTER TABLE agent_task_defaults DROP COLUMN prompt_revision_id; DROP TABLE prompt_migrations; DROP TABLE prompt_revisions; DROP TABLE prompts;');db.prepare('INSERT INTO agent_profiles VALUES(?,?,?,?)').run(agentId,'Original Agent','Existing custom settings',0);const original=JSON.stringify(settings);db.prepare('INSERT INTO agent_revisions VALUES(?,?,?,?,?)').run(revisionId,agentId,1,original,new Date().toISOString());
  for(const purpose of Object.keys(agentPromptFields))db.prepare('INSERT INTO agent_task_defaults(repository_id,purpose,agent_revision_id,skills_json) VALUES(?,?,?,?)').run('SPEC-migration',purpose,revisionId,'[]');
  const frozen=db.prepare('SELECT request_json FROM operations WHERE id=?').get('OP-historical').request_json;db.exec('PRAGMA user_version=11');db.close();
  store=openStore(home);
  try{
-  const catalog=store.agentCatalog(),latest=catalog.agents[0].revisions[0];assert.equal(catalog.prompts.length,4);assert.deepEqual(latest.settings,validateAgentRuntimeSettings(settings));assert.equal(catalog.agents[0].revisions[1].settings.gherkinPrompt,settings.gherkinPrompt);
+  const catalog=store.agentCatalog(),latest=catalog.agents[0].revisions[0];assert.equal(catalog.prompts.length,4);assert.deepEqual(latest.settings,normalizeAgentRuntimeSettings(settings));assert.equal(catalog.agents[0].revisions[1].settings.gherkinPrompt,settings.gherkinPrompt);
   const resolved=store.resolveAgent('SPEC-migration','gherkin');assert.equal(resolved.prompt.content,settings.gherkinPrompt);assert.equal(resolved.agentRevisionId,latest.id);
   const verify=new DatabaseSync(file,{readOnly:true});try{assert.equal(verify.prepare('SELECT settings_json FROM agent_revisions WHERE id=?').get(revisionId).settings_json,original);assert.equal(verify.prepare('SELECT request_json FROM operations WHERE id=?').get('OP-historical').request_json,frozen);}finally{verify.close();}
   assert((await readFile(path.join(home,'before-prompt-catalog-v12.sqlite'))).length>0);

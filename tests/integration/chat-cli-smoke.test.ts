@@ -322,8 +322,8 @@ test('the real SDK and an exec protocol peer preserve Codex function and custom 
  configureCopilotProvider(f);
  const wrapper=path.join(f.workspace,'sdk-copilot-wrapper.mjs'),copilotSpawns=path.join(f.workspace,'sdk-copilot-spawns.jsonl'),execPeer=path.join(f.workspace,'sdk-exec-peer.mjs'),callsPath=path.join(f.workspace,'sdk-proposals.json');
  await writeFile(wrapper,`
-import {spawn} from 'node:child_process';import {appendFileSync} from 'node:fs';
-appendFileSync(${JSON.stringify(copilotSpawns)},JSON.stringify({pid:process.pid,args:process.argv.slice(2)})+'\\n');
+import {spawn} from 'node:child_process';import {appendFileSync,readdirSync} from 'node:fs';
+appendFileSync(${JSON.stringify(copilotSpawns)},JSON.stringify({pid:process.pid,args:process.argv.slice(2),cwd:process.cwd(),entries:readdirSync(process.cwd())})+'\\n');
 const child=spawn(process.execPath,[${JSON.stringify(copilotLoader)},...process.argv.slice(2)],{env:${JSON.stringify(f.env)},stdio:'inherit'});
 child.on('error',error=>{process.stderr.write(error.message);process.exitCode=1;});child.on('close',code=>{process.exitCode=code??1;});
 `);
@@ -361,5 +361,6 @@ await writeFile(${JSON.stringify(callsPath)},JSON.stringify(calls));emit({type:'
  registration.close();assert.equal(thread.id,'sdk-protocol-thread');assert.equal(events.at(-1)?.type,'turn.completed');
  const calls=JSON.parse(await readFile(callsPath,'utf8'));assert.equal(calls.length,3);assert.equal(calls[1].input,patch);
  const spawns=(await readFile(copilotSpawns,'utf8')).trim().split('\n').map(line=>JSON.parse(line));assert.equal(spawns.length,1);assert(spawns[0].args.includes('--acp'));assert(!spawns[0].args.includes('--headless'));
+ assert.notEqual(spawns[0].cwd,f.workspace);assert(!spawns[0].cwd.startsWith(f.workspace+path.sep));assert.deepEqual(spawns[0].entries,[],'The installed Copilot agent starts without the coding checkout as implicit context');
  assert.equal(observed.length,4);assert.deepEqual(f.providerErrors,[]);
 });

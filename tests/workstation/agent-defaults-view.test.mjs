@@ -26,7 +26,7 @@ async function harness(t) {
   globalThis.document={querySelector:()=>root,createTextNode:text=>new Element('text',text)};
   globalThis.Option=class extends Element{constructor(text,value){super('option',text);this.value=value;}};
   t.after(()=>{globalThis.document=previousDocument;globalThis.Option=previousOption;});
-  const template={command:'node',args:[],maxAttempts:1,timeoutMs:1000};
+  const template={runtime:'codex-sdk',model:'auto',maxAttempts:1,timeoutMs:1000};
   const catalog={purposes,agents:[{id:'alternate',name:'Alternate',revisions:[{id:'alternate-v1',version:1,settings:template}]}],prompts:[],skills:[],template,promptTemplates:{gherkin:'Seed prompt'}};
   const defaults=new Map(),writes=[],catalogWrites=[],messages=[],asks=[],dirtyEvents=[],reads=new Map();let saveGate,editorGate,dirty=false,discard=false;
   function seed(repositoryId){
@@ -126,10 +126,16 @@ test('late repository defaults do not mix controls or save to the previous repos
 for(const [label,collection,bodyLabel] of [['Agent','agents','說明'],['Prompt','prompts','Prompt 內容'],['Skill','skills','Skill 內容']]){
   test(`${label} editor preserves newer input during creation and continues the same version history`,async t=>{
     const h=await harness(t);await h.openNew(label);h.fillEditor('名稱','Submitted name');h.fillEditor(bodyLabel,'Submitted body');
+    if(label==='Agent'){
+      assert.ok(h.find(n=>n.textContent==='執行引擎：Codex SDK · 模型 API：Copilot ACP'));
+      for(const field of ['執行方式','CLI 執行檔','CLI 參數（每行一個）'])assert.equal(h.editorField(field),undefined);
+      h.fillEditor('模型（auto 沿用對話設定）','selected-model');
+    }
     const gate=h.holdEditorSave(),pending=h.submitEditor();await gate.held.promise;
     h.fillEditor('名稱','Unsaved newer name');h.fillEditor(bodyLabel,'Unsaved newer body');gate.release.resolve();await pending;await new Promise(setImmediate);
     assert.equal(h.editorField('名稱').value,'Unsaved newer name');assert.equal(h.editorField(bodyLabel).value,'Unsaved newer body');assert.equal(h.dirty(),true);
     const saved=h.catalog[collection].find(item=>item.name==='Submitted name');assert.ok(saved);assert.equal(saved.revisions.length,1);
+    if(label==='Agent')assert.deepEqual(saved.revisions[0].settings,{runtime:'codex-sdk',model:'selected-model',maxAttempts:1,timeoutMs:1000});
     await h.submitEditor();await new Promise(setImmediate);
     assert.equal(h.catalogWrites[1].id,saved.id);assert.equal(h.catalogWrites[1].expectedRevision,saved.revisions[0].id);
     const latest=h.catalog[collection].find(item=>item.id===saved.id);assert.equal(latest.name,'Unsaved newer name');assert.equal(latest.revisions.length,2);assert.equal(h.dirty(),false);

@@ -65,6 +65,6 @@ Git 操作頁、分開 Clone／初始化／Commit／Push／pin、獨立套件及
 
 ## Codex SDK 任務執行
 
-Agent runtime 明確分為 `codex-sdk` 與 `custom-cli`。新設定預設 SDK，保存 `model`、`maxAttempts`、`timeoutMs`；自訂 CLI 保存 command／args 及執行限制。未標示 runtime 的舊資料只對精確 factory Codex 命令與參數套用 SDK 遷移，其餘保留自訂 CLI。既有版本原始 JSON 不重寫，讀取與派工使用同一份有效設定解析，凍結中的任務不被新設定改寫。
+Agent 唯一執行 runtime 為 `codex-sdk`，保存 `model`、`maxAttempts`、`timeoutMs`。舊版未標示 runtime 或 `custom-cli` 設定在新預覽時解析為 SDK，忽略 command／args、使用 `auto` 模型並保留有效執行限制；既有版本原始 JSON 不重寫。新保存的非 SDK runtime 或 CLI 欄位以 `AGENT_RUNTIME_UNSUPPORTED` 拒絕。凍結中的舊 CLI 派工以 `AGENT_PREVIEW_REQUIRED` 要求重新預覽，不自動執行舊命令或改寫已送出的契約。
 
 SDK 任務與聊天共用 Copilot 連線設定，但聊天的 app-server 與歷史資料不換成 SDK。SDK 沒有 app-server 的 compact 或即時插話介面，新增文字排入後續回合；不要把 SDK 結構事件宣稱為逐 token 串流。官方 SDK 仍需原生 Codex 執行環境，缺少 sandbox 能力時會明確失敗，不取消 sandbox 或改用 Copilot 工具執行。

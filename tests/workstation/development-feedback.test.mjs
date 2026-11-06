@@ -6,7 +6,7 @@ import { fixture,git,toolkitRoot,specRepository,approve,commitAll,sealedBundle,r
 import { createWorkstation } from '../../packages/workstation/service.mjs';
 import { openStore } from '../../packages/workstation/store.mjs';
 import { reviewState } from '../../packages/spec-toolkit/index.mjs';
-import { validateAgentSettings,agentExecutable,captureAgentProducts,readTerminal } from '../../packages/workstation/development.mjs';
+import { validateAgentSettings,captureAgentProducts,readTerminal } from '../../packages/workstation/development.mjs';
 import { workflowState } from '../../packages/workstation/workflow-state.mjs';
 import { digest } from '../../packages/contracts/index.mjs';
 import { workspaceModules } from '../../packages/spec-toolkit/workspace.mjs';
@@ -50,12 +50,11 @@ test('only a newer genuine passing run clears feedback; an old success or a newe
  assert.equal(state(manifest).stage,'IMPLEMENTATION');assert.equal(state({...manifest,startedAt:'2026-01-03T00:00:00Z'}).stage,'VERIFICATION');assert.equal(state({...manifest,startedAt:'2026-01-03T00:00:00Z'}).status,'AWAITING_ACCEPTANCE');
  assert.equal(state({...manifest,testOutcome:'FAILED',startedAt:'2026-01-03T00:00:00Z'}).stage,'IMPLEMENTATION');
 });
-test('development defaults to SDK and explicit custom CLIs keep executable and argument arrays',async()=>{
+test('development accepts only SDK model settings and rejects alternate executables',()=>{
  assert.equal(validateAgentSettings().runtime,'codex-sdk');assert.equal(validateAgentSettings().model,'auto');assert.equal(validateAgentSettings().args,undefined);
- assert.deepEqual(validateAgentSettings({runtime:'custom-cli',command:'custom-agent',args:['{task}','{prompt}']}).args,['{task}','{prompt}']);
- assert.equal(await agentExecutable(process.execPath),process.execPath);
- for(const value of [{command:''},{command:'x\nrm'},{args:'rm -rf'},{maxAttempts:10},{timeoutMs:0}])assert.throws(()=>validateAgentSettings(value),{code:'INVALID_AGENT'});
- await assert.rejects(()=>agentExecutable('bdd-agent-certainly-absent-123'),{code:'AGENT_NOT_INSTALLED'});
+ assert.equal(validateAgentSettings({runtime:'codex-sdk',model:'fixture-model',maxAttempts:2,timeoutMs:15000}).model,'fixture-model');
+ for(const value of [{runtime:'custom-cli'},{command:''},{command:'x\nrm'},{args:[]},{args:'rm -rf'}])assert.throws(()=>validateAgentSettings(value),{code:'AGENT_RUNTIME_UNSUPPORTED'});
+ for(const value of [{maxAttempts:10},{timeoutMs:0}])assert.throws(()=>validateAgentSettings(value),{code:'INVALID_AGENT'});
 });
 test('compact UI contains none of the removed instructional blocks and confirmation shares the Gherkin toolbar',async()=>{
  const html=await readFile(path.join(toolkitRoot,'packages/workstation/public/index.html'),'utf8');
@@ -72,7 +71,7 @@ test('development cannot start without existing human approvals and input cannot
  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
  s.register({id:'SPEC-one',title:'Spec',remoteUrl:f.remote});await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});await job(s,'workflow.create',{title:'Login',guided:true});
  const r=await job(s,'workflow.develop',{requirementId:'REQ-001',featureId:'login'});assert.equal(r.status,'FAILED');assert.equal(r.error.code,'REVIEWS_REQUIRED');
- const op=await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});const terminal=await s.terminal(op.id);assert.equal(terminal.status,op.status);assert.equal(typeof terminal.output,'string');assert.throws(()=>s.terminalInput(op.id,{data:'input'}),{code:'TERMINAL_UNAVAILABLE'});await assert.rejects(()=>s.terminal('OP-missing'),{code:'OPERATION_NOT_FOUND'});
+ const op=await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});const terminal=await s.terminal(op.id);assert.equal(terminal.status,op.status);assert.equal(typeof terminal.output,'string');assert.throws(()=>s.terminalInput(op.id,{message:'input'}),{code:'TERMINAL_UNAVAILABLE'});await assert.rejects(()=>s.terminal('OP-missing'),{code:'OPERATION_NOT_FOUND'});
 });
 
 async function captureFixture(t) {

@@ -40,9 +40,9 @@ npm start
 
 SDK 的 `turn.completed` 與程序 exit 0 都不代表產品通過測試。獨立檢查失敗時，錯誤會列出未實作 handler 的檔案、行列與步驟，並保留 Agent 最後輸出及退出資訊；Agent 回報缺少契約或 BLOCKED 時，可在相同失敗紀錄看到其原文。輸出僅作診斷資料，不用字串猜測成功、代答設計決策或放寬驗證。失敗提案不會取代 SQLite 原稿，也不會確認測試。
 
-按「LLM 生成 Gherkin」、「LLM 生成系統文件」、「LLM 生成測試計劃」或「確認開發」時，先預覽實際 Agent Prompt，可修改後按「送出」，或取消而不派工。預設只給任務及 MCP 工具入口，Agent 透過本次唯讀 MCP 按需讀取規格、設計與回報；使用者送出的文字不會再被附加說明。預覽後來源或設定變更時須重新預覽。SDK 直接以結構化設定接上本次任務 MCP；明確選用自訂 CLI 時，參數才需要 `{mcp}`（Codex）或 `{task}`（自訂 MCP adapter）。
+按「LLM 生成 Gherkin」、「LLM 生成系統文件」、「LLM 生成測試計劃」或「確認開發」時，先預覽實際 Agent Prompt，可修改後按「送出」，或取消而不派工。預設只給任務及 MCP 工具入口，Agent 透過本次唯讀 MCP 按需讀取規格、設計與回報；使用者送出的文字不會再被附加說明。預覽後來源或設定變更時須重新預覽。SDK 直接以結構化設定接上本次任務 MCP，所有派工使用同一執行引擎。
 
-每次送出 LLM 任務（生成 Gherkin、生成系統文件、補完測試計劃、實作）會在該階段下方新增一筆互動留言及可收合的執行 log，保留送出內容、時間與執行結果，不覆蓋前一次。一般儲存、匯入、本機草稿生成與測試執行不顯示為留言。各階段共用執行紀錄檢視器，每次 Enter 也各自成一筆互動。SDK 模式將文字排入後續 thread 回合；自訂 CLI 模式直接送入外部程序。未送達執行程序的輸入會明確標示失敗。重新整理或重啟後，可繼續查看 SQLite 中的紀錄，並載入更早歷程。`metadata.sqlite` 現在也包含執行輸出、程序與退出資訊；截圖、trace 等驗收附件仍須連同其檔案目錄保存。既有檔案式 log 在首次讀取時匯入 SQLite，原檔不會被刪除。
+每次送出 LLM 任務（生成 Gherkin、生成系統文件、補完測試計劃、實作）會在該階段下方新增一筆互動留言及可收合的執行 log，保留送出內容、時間與執行結果，不覆蓋前一次。一般儲存、匯入、本機草稿生成與測試執行不顯示為留言。各階段共用唯讀執行紀錄檢視器，每次送出多行補充訊息各自成一筆互動，並排入後續 SDK thread 回合。未送達執行程序的輸入會明確標示失敗。重新整理或重啟後，可繼續查看 SQLite 中的紀錄，並載入更早歷程。`metadata.sqlite` 現在也包含執行輸出、程序與退出資訊；截圖、trace 等驗收附件仍須連同其檔案目錄保存。既有檔案式 log 在首次讀取時匯入 SQLite，原檔不會被刪除。
 
 需求、系統設計、測試計劃、開發實作與驗收頁各自顯示該階段的互動，維持最新在上；補充訊息跟隨原作業的分類，切換階段不會混入其他階段的紀錄。
 
@@ -153,13 +153,13 @@ npm run bdd -- workflow regress --repo bdd-spec --spec main --project bdd=main
 
 ## Agent 開發與問題回報
 
-在「Agent、Prompt 與 Skill 管理」選擇執行方式，預設為 **Codex SDK**。只有明確選用自訂 CLI 相容模式時，才指定執行檔和逐行參數；執行檔使用本機 PATH 或完整路徑。`{prompt}`、`{spec}`、`{project}` 只能作為整個參數，會由系統替換成需求指令、Spec 目錄及產品目錄；不使用 shell 拼接。未提供 `{prompt}` 時會將指令追加為最後一個參數。登入沿用所選工具的正常機制，不在需求文件存 Token。
+「Agent、Prompt 與 Skill 管理」的執行引擎固定為 **Codex SDK**，可設定模型、最大嘗試次數及逾時。模型請求透過 Copilot ACP 轉接，檔案與命令工具由 Codex 執行。Codex 原生執行檔與 Copilot ACP 啟動器沿用對話設定；登入沿用 Copilot 的正常機制，不在需求文件存 Token。
 
 同一管理中心分別保存 Agent、Prompt 與 Skill 的不可變版本，Agent 可調整模型、最大嘗試次數與逾時毫秒。Prompt 支援 `{requirementId}`、`{featureId}`、`{spec}`、`{projects}`、`{feedback}`、`{previousFailure}`；未知變數、空白 Prompt 與超出大小限制會拒絕整次保存，已存內容保留。Skills 是附加至有效 Prompt 的文字與任務資源，可不選用。重開設定或保存其他欄位不會重設自訂內容；登入憑證不在此表單顯示。
 
-開發時按「確認開發」，執行紀錄會顯示真實輸出與 SDK 事件；SDK 的補充訊息排入下一回合，自訂 CLI 則保留終端輸入、尺寸變更，兩者皆可停止。外層 PTY 監督 SDK host 或所選 CLI 程序。首次缺少 PTY／終端元件時在流程內確認安裝；這包含 node-pty 原生編譯，主機需具備編譯工具。正常 `npm ci` 已安裝這些鎖定依賴時不會另問。安裝終端元件不代表同意更換測試依賴，測試套件仍按原有精確計畫授權。
+開發時按「確認開發」，執行紀錄會顯示真實輸出與 SDK 事件；補充訊息排入下一回合，停止會取消整個作業。外層 PTY 監督 SDK host，瀏覽器終端只呈現輸出，不直接轉送鍵盤輸入。首次缺少 PTY／終端元件時在流程內確認安裝；這包含 node-pty 原生編譯，主機需具備編譯工具。正常 `npm ci` 已安裝這些鎖定依賴時不會另問。安裝終端元件不代表同意更換測試依賴，測試套件仍按原有精確計畫授權。
 
-Agent 在關聯產品目錄內執行；多產品需求以 Spec 目錄為 cwd，任務資料列出允許的產品。SDK 保持 `workspace-write` sandbox；自訂 CLI 的執行權限由該工具管理。工作台額外核對修改範圍與 SQLite 修訂；已存在外部產品草稿時會停止，並保留原檔。Agent 修改已確認規格、測試、其他產品或遇到新的 SQLite 修訂時，不會覆蓋或代簽；必須處理實際差異。支援產品 UTF-8 文字新增、修改及刪除，二進位或超大檔案會保留在原處並回報，不冒充保存成功。
+Agent 在關聯產品目錄內執行；多產品需求以 Spec 目錄為 cwd，任務資料列出允許的產品。SDK 保持 `workspace-write` sandbox。工作台額外核對修改範圍與 SQLite 修訂；已存在外部產品草稿時會停止，並保留原檔。Agent 修改已確認規格、測試、其他產品或遇到新的 SQLite 修訂時，不會覆蓋或代簽；必須處理實際差異。支援產品 UTF-8 文字新增、修改及刪除，二進位或超大檔案會保留在原處並回報，不冒充保存成功。
 
 Agent 成功結束後仍會獨立執行該功能全部 BDD，包含覆蓋矩陣、斷言及逐步截圖證據。未通過則將失敗交給 Agent 再修正，最多三輪。任何一輪驗收結果都保留。只有完整通過才能自動跳轉報告。原有 CLI `workflow run`／`next` 保留直接驗證的相容用途，不是呼叫外部 Agent 的入口。
 
@@ -170,11 +170,11 @@ Agent 成功結束後仍會獨立執行該功能全部 BDD，包含覆蓋矩陣�
 
 ## Agent 與 Skill 管理
 
-側欄「Agent、Prompt 與 Skill 管理」可建立、編輯、封存、重新啟用及查看版本。Agent 管理執行方式、模型參數與執行限制；選用自訂 CLI 才管理其命令與參數。Prompt 獨立管理指令與適用任務。每次儲存建立不可變版本；Skill 可匯入 SKILL.md 與 UTF-8 文字資源，資源相對路徑必須有效，並可調整套用順序。內容及資源都存入同一個 `WB_HOME/metadata.sqlite`。不支援二進位 Skill 資源。
+側欄「Agent、Prompt 與 Skill 管理」可建立、編輯、封存、重新啟用及查看版本。Agent 管理 SDK 模型參數與執行限制。Prompt 獨立管理指令與適用任務。每次儲存建立不可變版本；Skill 可匯入 SKILL.md 與 UTF-8 文字資源，資源相對路徑必須有效，並可調整套用順序。內容及資源都存入同一個 `WB_HOME/metadata.sqlite`。不支援二進位 Skill 資源。
 
 選擇規格庫可設定 Gherkin、系統設計、測試計劃及實作的預設組合。各 LLM 按鈕的預覽面板可分別選本次 Agent／Prompt／Skills；變更選擇後按「更新預覽」，再送出。單次選擇不會修改預設。設定被其他畫面更新或封存時，過期版本會明確拒絕，需要重新選擇；已排入作業的設定快照不受影響。
 
-升級至 schema 11 前會保存資料庫備份，既有自訂 Agent／Skills 原文遷入；舊規格庫設定頁不再提供另一份 Agent 編輯欄位。運行中舊程序須正常停止並重啟才會使用新 schema。未完成的歷史工作沿用其已保存設定，不自動改用新的 Agent。
+升級至 schema 11 前會保存資料庫備份，既有自訂 Agent／Skills 原文遷入；舊規格庫設定頁不再提供另一份 Agent 編輯欄位。運行中舊程序須正常停止並重啟才會使用新 schema。歷史請求與設定原文不改寫。若未完成工作凍結的是舊 CLI 設定，須重新預覽並送出 SDK 作業，不會自動執行舊命令或把它替換成另一個 Agent。
 
 
 Schema 12 會先建立 `before-prompt-catalog-v12.sqlite`，再把 Agent 內原有四種 Prompt 原文遷成獨立版本；舊 Agent 版本與派工快照不改寫。切換 Agent 不會換掉已選 Prompt 或 Skills；同一 Prompt 可以交給不同 Agent 執行。Prompt 更新或封存後，舊的未送出預覽必須重新選擇；已派工的工作繼續使用凍結內容。
@@ -197,15 +197,15 @@ Schema 12 會先建立 `before-prompt-catalog-v12.sqlite`，再把 Agent 內原�
 
 ## Codex SDK 執行任務
 
-「Agent、Prompt 與 Skill 管理」的執行方式預設 `Codex SDK`。同一個 SDK runner 處理 Gherkin、系統設計、測試計劃與開發實作；Prompt 原文、凍結的任務 MCP、Skills、修改範圍檢查與獨立驗證保持相同流程。Codex 執行檔與 Copilot ACP 啟動設定沿用對話設定，`auto` 模型沿用該處的模型選擇；另填模型只覆寫本 Agent 的推論選擇。
+「Agent、Prompt 與 Skill 管理」的執行引擎固定為 `Codex SDK`。同一個 SDK runner 處理 Gherkin、系統設計、測試計劃與開發實作；Prompt 原文、凍結的任務 MCP、Skills、修改範圍檢查與獨立驗證保持相同流程。Codex 執行檔與 Copilot ACP 啟動設定沿用對話設定，`auto` 模型沿用該處的模型選擇；另填模型只覆寫本 Agent 的推論選擇。
 
-工作台將 Codex 的 Responses 請求轉為 ACP prompt，並把 ACP 工具提案轉回 Codex 的 function/custom tool call。自由文字 patch 保留原文，由 Codex 套用；Copilot 的工具執行權限不會被批准。SDK 模式沒有額外的 OpenAI 模型請求或另一份 Copilot 對話歷史。
+工作台將 Codex 的 Responses 請求轉為 ACP prompt，並把 ACP 工具提案轉回 Codex 的 function/custom tool call。自由文字 patch 保留原文，由 Codex 套用；Copilot 的檔案、終端及權限請求不會被批准。實作推理的 ACP 程序及 session 使用工作台建立的獨立空暫存目錄，關閉程序後清理，不使用產品或 Spec 工作目錄。ACP 仍是本機程序，可使用正常登入、快取與 log；此安排沒有建立額外的 OS 沙箱。SDK 模式沒有額外的 OpenAI 模型請求或另一份 Copilot 對話歷史。
 
 SDK 使用 `startThread`／`runStreamed`，收到真實 thread ID 才保存，以 SDK 的結構化事件呈現命令、修改、回覆及錯誤。執行中可在紀錄下方填寫多行補充訊息，按「排入後續回合」後等待目前回合結束，再接到同一 thread；佇列收件與實際處理結果分別記錄。停止按鈕取消整個作業。TypeScript SDK 本身仍啟動原生 Codex 程序，並非純 HTTP client，也不保證逐 token 文字事件或比 app-server 更低的延遲。聊天保留 app-server 的即時互動。
 
 模型轉接目前支援文字，以及本次 Codex 宣告的 function／custom 工具和文字結果；不支援的工具、加密歷史或結構化輸出格式會明確失敗。工具名稱以本次請求的短別名映射，保留原始命名空間與 custom 輸入原文，避免同名工具混淆。
 
-舊版 factory Codex 設定會轉為 SDK 預設；自訂命令與參數保留為 `custom-cli` 相容模式，不靜默改寫。SDK、模型或 ACP 失敗時直接回報，不退回自訂 CLI 或讓 Copilot 自行實作。官方用法見 [Codex SDK](https://developers.openai.com/codex/sdk)。
+舊版 Agent 設定在新預覽時解析為 `codex-sdk`，保留有效的執行限制並以 `auto` 使用共用模型；舊 command／args 不再執行，原始歷史版本不改寫。新保存的非 SDK runtime 或 CLI 欄位會被拒絕；凍結中的舊 CLI 作業必須重新預覽。SDK、模型或 ACP 失敗時直接回報，不改由 Copilot 自行實作。官方用法見 [Codex SDK](https://developers.openai.com/codex/sdk)。
 
 ## 聊天與 Copilot ACP
 
