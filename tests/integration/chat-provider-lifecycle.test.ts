@@ -76,32 +76,32 @@ test('HTTP provider reuses one Copilot process for multiple turns, models and to
  assert.equal(completed.response.output[0].type,'function_call');assert.equal(completed.response.output[0].name,tool.name);
  assert.equal(completed.response.output[0].namespace,'mcp__workbench');registration.deactivate();
  const trace=await f.trace();assert.equal(trace.filter(event=>event.type==='spawn').length,1);
- assert.equal(trace.filter(event=>event.method==='connect').length,1);
- assert.equal(trace.filter(event=>event.method==='session.create').length,3);
- assert.equal(new Set(trace.filter(event=>event.method==='session.create').map(event=>event.params.sessionId)).size,3);
- assert.equal(trace.filter(event=>event.method==='session.destroy').length,3);
- assert.equal(trace.filter(event=>event.method==='models.list').length,1);
+ assert.equal(trace.filter(event=>event.type==='request'&&event.method==='initialize').length,1);
+ assert.equal(trace.filter(event=>event.method==='session/new').length,4,'Three inferences plus one model catalog session');
+ assert.equal(new Set(trace.filter(event=>event.type==='session-created').map(event=>event.sessionId)).size,4);
+ assert.equal(trace.filter(event=>event.method==='session/close').length,4);
+ assert(!trace.some(event=>event.method==='models.list'));
  assert(!trace.some(event=>event.method==='session.toolCall'),'Copilot must not execute or acknowledge a workbench action');
 });
 
 test('cancelling one room leaves another room and the shared Copilot process usable',{timeout:15000},async t=>{
  const f=await fixture(t),first=f.provider.register(f.settings,new AbortController().signal),second=f.provider.register(f.settings,new AbortController().signal);
  const pending=await f.post(first.token,'[[hang]]'),cancelled=assert.rejects(()=>pending.text());
- await f.waitFor(trace=>trace.some(event=>event.method==='session.send'&&event.params.prompt.includes('[[hang]]')));
+ await f.waitFor(trace=>trace.some(event=>event.method==='session/prompt'&&event.params.prompt[0].text.includes('[[hang]]')));
  const reply=await f.post(second.token,'other room');assert.equal(f.events(await reply.text()).at(-1).type,'response.completed');
  first.deactivate();await cancelled;
- await f.waitFor(trace=>trace.filter(event=>event.method==='session.destroy').length===2);
+ await f.waitFor(trace=>trace.filter(event=>event.method==='session/close').length===2);
  const next=await f.post(second.token,'same room, next model round');assert.equal(f.events(await next.text()).at(-1).type,'response.completed');
  const trace=await f.trace();assert.equal(trace.filter(event=>event.type==='spawn').length,1);
- assert.equal(trace.filter(event=>event.method==='session.create').length,3);
+ assert.equal(trace.filter(event=>event.method==='session/new').length,3);
 });
 
 test('disconnecting an HTTP response cancels only that inference session',{timeout:15000},async t=>{
  const f=await fixture(t),registration=f.provider.register(f.settings,new AbortController().signal),request=new AbortController();
  const pending=await f.post(registration.token,'[[hang]]',{signal:request.signal}),cancelled=assert.rejects(()=>pending.text());
- await f.waitFor(trace=>trace.some(event=>event.method==='session.send'));
+ await f.waitFor(trace=>trace.some(event=>event.method==='session/prompt'));
  request.abort();await cancelled;
- await f.waitFor(trace=>trace.some(event=>event.method==='session.destroy'));
+ await f.waitFor(trace=>trace.some(event=>event.method==='session/close'));
  const next=await f.post(registration.token,'still active');assert.equal(f.events(await next.text()).at(-1).type,'response.completed');
  assert.equal((await f.trace()).filter(event=>event.type==='spawn').length,1);
 });

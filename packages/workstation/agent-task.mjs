@@ -1,4 +1,4 @@
-/** Frozen, job-scoped context. CLI processes receive tools rather than an expanded brief. */
+/** Frozen, job-scoped context shared by Codex SDK and explicitly configured CLIs. */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -8,6 +8,7 @@ import {negotiateProtocolVersion} from './mcp-protocol.mjs';
 import {requirementText} from './requirements.mjs';
 
 export const gherkinOutputFile='gherkin.feature';
+const gitBoundaryRule=' Do not run any Git commands, including read-only inspection, clone, fetch, add, commit or push. The workstation owns Git only at feature creation and completed human acceptance.';
 export function gherkinInput(input){
   invariant(typeof input.editorKey==='string'&&/^(?:new-[A-Za-z0-9-]+|[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)$/.test(input.editorKey)&&input.editorKey.length<=180,'INVALID_EDITOR','需求編輯識別無效。');
   return {editorKey:input.editorKey,description:requirementText(input.description,'需求描述',{empty:false}),previousGherkin:requirementText(input.previousGherkin??'','Gherkin')};
@@ -43,7 +44,7 @@ function skillArtifacts(snapshot){return Object.fromEntries((snapshot.catalogSki
 export async function writeAgentTask(directory, snapshot, {purpose,requirementId,featureId,workspace,products,feedback,previousFailure='',source,projectIds=[]}) {
   if(purpose==='gherkin'){
     const output=path.join(workspace,gherkinOutputFile);
-    const task={purpose,key:source.editorKey,workspace,writable:[output],output,rules:'Read the requirement description and previous Gherkin using workbench_read_artifact. Write one complete UTF-8 Gherkin feature to output. Use English Gherkin keywords, Traditional Chinese domain language, a short Feature description and minimal complete user flows. Give each Scenario a unique stable @case:<id> tag. Preserve existing case tags when revising existing scenarios. Do not modify any other files. Do not claim tests passed.'};
+    const task={purpose,key:source.editorKey,workspace,writable:[output],output,rules:'Read the requirement description and previous Gherkin using workbench_read_artifact. Write one complete UTF-8 Gherkin feature to output. Use English Gherkin keywords, Traditional Chinese domain language, a short Feature description and minimal complete user flows. Give each Scenario a unique stable @case:<id> tag. Preserve existing case tags when revising existing scenarios. Do not modify any other files. Do not claim tests passed.'+gitBoundaryRule};
     const artifacts={'requirement-description.txt':source.description,'previous.feature':source.previousGherkin};
     await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task:{...task,skills:(snapshot.catalogSkills??[]).map(s=>({name:s.name,version:s.version,base:`skills/${s.id}`}))},artifacts:{...artifacts,...skillArtifacts(snapshot)}}),{mode:0o600});return file;
   }
@@ -56,13 +57,13 @@ export async function writeAgentTask(directory, snapshot, {purpose,requirementId
     for(const artifact of Object.keys(artifacts))if(!artifact.startsWith(`spec/${key}/`))delete artifacts[artifact];
     artifacts[`spec/${key}/${featureId}.sd.md`]=source.previousDesign;
     for(const file of snapshot.files.filter(f=>projectIds.some(projectId=>f.target===`project:${projectId}`)))artifacts[`projects/${file.target.slice('project:'.length)}/${file.path}`]=file.content;
-    const task={purpose,key,workspace,output,writable:[output],decisionContract:{schemaVersion:1,format:'Exactly one fenced workbench-decisions JSON block in the Markdown; its data is {schemaVersion:1,items:[{id,question,context,options:[{id,label,description}],answer:null}]}. Use stable IDs. Each unresolved architectural or implementation contract must be a concrete question with at least one meaningful proposed option and explanation. Do not include an other option: the workstation always adds it with a custom input. All new answers must be null; never choose for the user. Preserve prior questions and human answers. If no questions remain, include items:[]. Proposed options are not claims of implemented behavior.'},rules:'Use approved Gherkin and the previous design from workbench_read_artifact. Write the complete system design as Traditional Chinese Markdown to output. Explain responsibilities, data flow, implementation and verification for the approved scenarios. Cite actual available source paths; mark missing or unverified facts explicitly instead of inventing APIs, paths or results. Preserve unrelated design content. Do not change approved behavior, other files, approvals or tests. This is a draft for human review.'};
+    const task={purpose,key,workspace,output,writable:[output],decisionContract:{schemaVersion:1,format:'Exactly one fenced workbench-decisions JSON block in the Markdown; its data is {schemaVersion:1,items:[{id,question,context,options:[{id,label,description}],answer:null}]}. Use stable IDs. Each unresolved architectural or implementation contract must be a concrete question with at least one meaningful proposed option and explanation. Do not include an other option: the workstation always adds it with a custom input. All new answers must be null; never choose for the user. Preserve prior questions and human answers. If no questions remain, include items:[]. Proposed options are not claims of implemented behavior.'},rules:'Use approved Gherkin and the previous design from workbench_read_artifact. Write the complete system design as Traditional Chinese Markdown to output. Explain responsibilities, data flow, implementation and verification for the approved scenarios. Cite actual available source paths; mark missing or unverified facts explicitly instead of inventing APIs, paths or results. Preserve unrelated design content. Do not change approved behavior, other files, approvals or tests. This is a draft for human review.'+gitBoundaryRule};
     await mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'task.json');await writeFile(file,JSON.stringify({task:{...task,skills:(snapshot.catalogSkills??[]).map(s=>({name:s.name,version:s.version,base:`skills/${s.id}`}))},artifacts:{...artifacts,...skillArtifacts(snapshot)}}),{mode:0o600});return file;
   }
   const task={purpose,key,workspace,products,writable:purpose==='testPlan'?[path.join(workspace,prefix)]:products,
     rules:purpose==='testPlan'
-      ?'Gherkin and design are approved. Complete tests with real assertions and AfterStep screenshots. Approved artifacts and products are read-only. No skipped or placeholder steps.'
-      :'Implement approved behavior. Gherkin, design, tests and reviews are read-only. Preserve unrelated work; do not push or weaken tests.',
+      ?'Gherkin and design are approved. Complete tests with real assertions and AfterStep screenshots. Approved artifacts and products are read-only. No skipped or placeholder steps.'+gitBoundaryRule
+      :'Implement approved behavior. Gherkin, design, tests and reviews are read-only. Preserve unrelated work; do not push or weaken tests.'+gitBoundaryRule,
     verification:{owner:'workstation',requirementId,featureId,entry:'.workbench-tools/spec-toolkit/cli.mjs',scope:'all selected feature cases/profiles'},
     feedback,previousFailure};
   await mkdir(directory,{recursive:true,mode:0o700});
@@ -72,16 +73,21 @@ export async function writeAgentTask(directory, snapshot, {purpose,requirementId
 }
 
 export function agentArguments(agent, {prompt,spec,project,task}) {
+  agent=validateAgentRuntimeSettings(agent);
+  invariant(agent.runtime==='custom-cli','AGENT_RUNTIME_MISMATCH','Codex SDK 使用結構化任務，不使用 CLI 參數。');
   assertTaskTransport(agent);
   const script=fileURLToPath(new URL('../../scripts/mcp-agent-task.mjs',import.meta.url));
   const replacements={'{prompt}':prompt,'{spec}':spec,'{project}':project,'{task}':task};
   const config=`mcp_servers.workbench_task={command=${JSON.stringify(process.execPath)},args=${JSON.stringify([script,task])},required=true,enabled=true}`;
   const args=agent.args.flatMap(arg=>arg==='{mcp}'?['-c',config]:[Object.hasOwn(replacements,arg)?replacements[arg]:arg]);
+  if (/^codex(?:\.exe)?$/.test(path.basename(agent.command)) && args.includes('exec') && !args.includes('--skip-git-repo-check'))
+    args.splice(args.indexOf('exec') + 1, 0, '--skip-git-repo-check');
   if(!agent.args.includes('{prompt}'))args.push(prompt);
   return args;
 }
 
 function assertTaskTransport(agent) {
+  if(agent.runtime==='codex-sdk')return;
   invariant(agent.args.includes('{mcp}')||agent.args.includes('{task}'),'AGENT_MCP_REQUIRED','請在 CLI 參數加入 {mcp}（Codex），或使用 {task} 接上自訂 CLI 的任務 MCP adapter。',409);
 }
 

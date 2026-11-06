@@ -4,11 +4,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { chromium, expect } from '@playwright/test';
-import { fixture,toolkitRoot,testBrowserRoot } from '../workstation/helpers.mjs';
+import { fixture,toolkitRoot,testBrowserRoot,git } from '../workstation/helpers.mjs';
 import { createStandaloneServer } from '../../packages/workstation/http.mjs';
 
 test('passed stages are read-only; returning from test plan clears its contents and restores design editing',async t=>{
   const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false});
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${app.server.address().port}`,service=app.service;
   service.register({id:'SPEC-ui',title:'Lifecycle',remoteUrl:f.remote});
@@ -55,6 +56,7 @@ test('passed stages are read-only; returning from test plan clears its contents 
 
 test('settings prepares packages, design confirmation codegens, and only the separate LLM button completes the plan',async t=>{
   const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,allowLocal:true,autoAcquire:false,enableExecution:true});
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${app.server.address().port}`,service=app.service;
   service.register({id:'SPEC-split',title:'Split generation',remoteUrl:f.remote});
@@ -91,7 +93,7 @@ test('settings prepares packages, design confirmation codegens, and only the sep
   await expect(page.locator('#complete-test-plan')).toBeVisible();await expect(page.locator('#generate-test-plan')).toBeHidden();
   assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);
   await page.locator('#complete-test-plan').click();
-  await expect(dialog).toContainText('預覽 CLI Prompt');
+  await expect(dialog).toContainText('預覽 Agent Prompt');
   const prompt=dialog.getByRole('textbox',{name:'派工 Prompt',exact:true});
   await expect(prompt).toHaveValue(/workbench_get_task/);
   assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);

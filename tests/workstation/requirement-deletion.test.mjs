@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {fixture,toolkitRoot,specRepository} from './helpers.mjs';
+import {fixture,git,toolkitRoot,specRepository} from './helpers.mjs';
 import {createWorkstation} from '../../packages/workstation/service.mjs';
 import {openStore} from '../../packages/workstation/store.mjs';
 import {scan,deleteFeature,confirm,restartReview,reviewState} from '../../packages/spec-toolkit/index.mjs';
@@ -10,6 +10,7 @@ import {inDraftView} from '../../packages/workstation/authoring.mjs';
 
 async function setup(t){
   const f=await fixture(t),service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false});let closed=false;t.after(()=>{if(!closed)return service.close();});
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const repositoryId='SPEC-delete';service.register({id:repositoryId,title:'Delete requirements',remoteUrl:f.remote});let sequence=0;
   const start=(operation,input={})=>{const operationId=`OP-delete-${++sequence}`;service.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});return operationId;};
   const job=async(operation,input)=>{const result=await service.wait(start(operation,input));assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));return result;};

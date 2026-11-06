@@ -1,4 +1,4 @@
-import { draftModules, workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules } from './workflow-state.mjs';
+import { draftModules, workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules, liveWorkflowSpecSourceDigest } from './workflow-state.mjs';
 import { seedAgentSettings, validateAgentSettings } from './agent-settings.mjs';
 import { saveFeedback, readFeedback } from './feedback.mjs';
 import {readAcceptance,saveAcceptance} from './acceptance.mjs';
@@ -92,18 +92,19 @@ export async function draftDetail(context) {
   const snapshot=await ensureDraft({...context,repositoryId}), projection=context.store.projection(repositoryId);
   let spec,specError;
   const workflowModules=await liveWorkflowModules(context,snapshot);
+  const specSourceDigest=await liveWorkflowSpecSourceDigest(context,snapshot);
   await inDraftView(snapshot,async root=>{
     try { spec=await scan(root); for(const f of spec.features) {
       f.review=await reviewState(root,f.requirementId,f.id); f.feedback=await readFeedback(root,f.key);
       f.acceptance=await readAcceptance(root,f.requirementId,f.id);
-      f.workflow=workflowState(f,workflowModules,context.store.runs(repositoryId),context.store.reports(repositoryId),spec.config.specRepositoryId);
+      f.workflow=workflowState(f,workflowModules,context.store.runs(repositoryId),context.store.reports(repositoryId),spec.config.specRepositoryId,projection,specSourceDigest);
       f.workflow.portableState=await recordedWorkflow(root,f,f.workflow);
     } }
     catch(error){specError={code:error.code,message:error.message};}
   });
   const modules=workflowModules;
   return {...context.repository,initialized:true,state:{head:projection?.head??null,branch:projection?.branch??null,clean:true,changes:[]},
-    spec,specError,modules,dependencies:{installed:false},preferences:snapshot.settings,
+    spec,specError,specSourceDigest,modules,dependencies:{installed:false},preferences:snapshot.settings,
     authoring:{storage:'sqlite',revision:snapshot.revision,projectedRevision:projection?.revision??null,updatedAt:snapshot.updatedAt},projection};
 }
 export async function readDraftFile(context, relative, target='spec', project=false) {
@@ -144,7 +145,7 @@ export async function draftProjectFiles(context, projectId) {
   return {projectId,files:[...files].sort(),available:await exists(root),storage:'sqlite'};
 }
 export async function editDraft(context) {
-  const {store,request,options}=context,repositoryId=request.repositoryId,input=request.input;
+  const {store,request,options}=context,repositoryId=request.repositoryId,input=context.creationInput??request.input;
   const prior=store.draftReceipt(repositoryId,request.operationId,request);if(prior)return prior;
   const snapshot=await ensureDraft({...context,repositoryId}),settings={...snapshot.settings};
   if(input.expectedRevision!==undefined)invariant(snapshot.revision===input.expectedRevision,'DRAFT_REVISION_CHANGED','內容已變更，尚未派出修改。',409);
@@ -223,9 +224,13 @@ export async function editDraft(context) {
         result={...await confirm(root,{...input,confirmedBy:settings.reviewer}),nextStage:input.stage==='gherkin'?'SD':'TESTS'};
       }
     }
+    if(context.creationEditorKey)result={...result,creationEditorKey:context.creationEditorKey,creationInputDigest:context.creationInputDigest};
     const nextFiles=[...snapshot.files.filter(f=>!extra.some(x=>fileKey(x)===fileKey(f))),...extra];
-    await refreshWorkflowFiles(root,{modules:draftModules({...snapshot,settings,files:nextFiles},store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId)});
+    const checkpoint = store.projection(repositoryId);
+    const projectedCheckpoint = request.operation === 'workflow.accept' ? { ...checkpoint, completedAcceptances: [...(checkpoint?.completedAcceptances ?? []), result.acceptance.id] } : checkpoint;
+    await refreshWorkflowFiles(root,{modules:draftModules({...snapshot,settings,files:nextFiles},checkpoint),runs:store.runs(repositoryId),reports:store.reports(repositoryId),checkpoint:projectedCheckpoint,
+      specSourceDigest:await liveWorkflowSpecSourceDigest(context,snapshot,root)});
     const after=await sourceFiles(root),changes=after.filter(f=>!snapshot.files.some(x=>fileKey(x)===fileKey(f)&&x.sha256===digest(f.content))).map(f=>({...f,baseHash:snapshot.files.find(x=>fileKey(x)===fileKey(f))?.baseHash??null}));
-    return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,files:[...changes,...extra],settings,operationId:request.operationId,request,result,proposalKey:request.operation==='workflow.requirement.save'?input.editorKey:undefined});
+    return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,files:[...changes,...extra],settings,operationId:request.operationId,request,result,proposalKey:request.operation==='workflow.requirement.save'?input.editorKey??(result.created?`new-${request.operationId}`:undefined):undefined});
   });
 }

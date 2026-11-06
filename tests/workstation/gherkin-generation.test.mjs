@@ -13,7 +13,7 @@ async function setup(t,body){
   const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false,enableExecution:true});t.after(()=>service.close());
   service.register({id:'SPEC-gherkin',title:'Gherkin',remoteUrl:f.remote});let sequence=0;
   const start=(operation,input)=>{const operationId=`OP-generation-${++sequence}`;service.enqueue({schemaVersion:1,operationId,repositoryId:'SPEC-gherkin',operation,input});return operationId;};
-  const configured=await service.wait(start('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agent,'{task}'],timeoutMs:15000}}));assert.equal(configured.status,'SUCCEEDED',JSON.stringify(configured.error));
+  const configured=await service.wait(start('repository.setup',{reviewer:'Human',projects:[],agent:{runtime:'custom-cli',command:process.execPath,args:[agent,'{task}'],timeoutMs:15000}}));assert.equal(configured.status,'SUCCEEDED',JSON.stringify(configured.error));
   const source={editorKey:'new-generation',description:'Feature 名稱為購物車，使用者可以加入商品。',previousGherkin:'Feature: 原稿\n  Scenario: 保留\n    Given 原始內容\n'};
   return {...f,service,start,source,async input(){return {...source,...await service.agentPreview('SPEC-gherkin',{purpose:'gherkin',...source})};}};
 }

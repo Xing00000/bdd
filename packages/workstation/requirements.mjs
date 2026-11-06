@@ -213,5 +213,5 @@ export async function saveComposer(root, input) {
   await atomicWrite(await safePath(root, p.gherkin), gherkin);
   await writeJson(await safePath(root, p.source), { schemaVersion: 1, description });
   await writeJson(await safePath(root, p.metadata), { ...meta, title, ...(caseIds ? { caseIds } : {}) });
-  return { ...(await readComposer(root, requirementId, featureId)), sha256: digest(gherkin) };
+  return { ...(await readComposer(root, requirementId, featureId)), sha256: digest(gherkin), created: !input.requirementId && !input.featureId };
 }

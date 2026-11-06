@@ -34,9 +34,13 @@ export const schemas = Object.freeze({
     expected: { type: 'object', properties: { head: { anyOf: [commit, { type: 'null' }] }, branch: { anyOf: [text, { type: 'null' }] }, fingerprint: hash } },
     input: { type: 'object' }, target: object({ kind: { enum: ['spec', 'project'] }, projectId: identifier }, ['kind'])
   }, ['schemaVersion', 'operationId', 'repositoryId', 'operation', 'input'])),
-  manifest: root(object({ schemaVersion: { const: 1 }, runId: identifier, requirementId: identifier, featureId: identifier, testedSpecCommit: commit,
+  manifest: root({ anyOf: [object({ schemaVersion: { const: 1 }, runId: identifier, requirementId: identifier, featureId: identifier, sourceKind: { const: 'COMMIT' }, testedSpecCommit: commit,
     artifacts: array(object({ path: text, size: { type: 'integer', minimum: 0 }, sha256: hash }))
-  }, undefined, { additionalProperties: true }))
+  }, ['schemaVersion', 'runId', 'requirementId', 'featureId', 'testedSpecCommit', 'artifacts'], { additionalProperties: true }), object({ schemaVersion: { const: 1 }, runId: identifier, requirementId: identifier, featureId: identifier,
+    sourceKind: { const: 'WORKSPACE' }, testedSpecCommit: { type: 'null' }, specDigest: hash, specSourceDigest: hash, inputDigest: hash,
+    projects: array(object({ id: identifier, path: text, contentDigest: hash })),
+    artifacts: array(object({ path: text, size: { type: 'integer', minimum: 0 }, sha256: hash }))
+  }, undefined, { additionalProperties: true })] })
 });
 // Small validator for the exact schema vocabulary above; no code execution or remote refs.
 function check(schema, value, location) {

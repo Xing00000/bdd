@@ -15,9 +15,10 @@ const priorFactory = Object.freeze({
   testPlanPrompt: `Implement the test plan for approved requirement {requirementId}/{featureId} in {spec}. Read spec/{requirementId}/{featureId}/{featureId}.feature and {featureId}.sd.md. Product context is available at {projects}. Write complete tests/{requirementId}/{featureId}/{featureId}.steps.ts and {featureId}.hooks.ts using tests/_shared/bdd.ts. You may add helpers only inside tests/{requirementId}/{featureId}/. Implement every approved Gherkin step with real operations and assertions. Hooks must capture a distinct screenshot after each step using AfterStep, $testInfo.attach and $step.title, following the existing reporter contract. Never add empty handlers, pending steps, skip/fixme, throw-only placeholders or fabricated success. Do not modify any other source, approved documents, product context, config, reviews or reports. If required information is missing, explain the exact missing facts and stop with a nonzero exit. Do not claim tests passed; the workstation independently typechecks, runs bddgen and discovers the complete case/browser matrix. Preserve existing content. {previousFailure}`,
 });
 const priorArgs=['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{prompt}'];
+const priorMcpArgs=['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}'];
 const defaults = Object.freeze({
-  command: 'codex',
-  args: Object.freeze(['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}']),
+  runtime: 'codex-sdk',
+  model: 'auto',
   prompt: promptSeed('development'),
   skills: '',
   testPlanPrompt: promptSeed('testPlan'),
@@ -36,11 +37,13 @@ export function seedAgentSettings(input = {}) {
   const settings = {...input};
   if(settings.skills===legacyBundledSkills)settings.skills='';
   for(const key of Object.keys(priorFactory))if(settings[key]===priorFactory[key])settings[key]=defaults[key];
-  if(JSON.stringify(settings.args)===JSON.stringify(priorArgs))settings.args=[...defaults.args];
   for (const [key, value] of Object.entries(defaults)) {
+    if(['runtime','model'].includes(key))continue;
     if (settings[key] === undefined) settings[key] = Array.isArray(value) ? [...value] : value;
   }
-  return settings;
+  const runtime=validateAgentRuntimeSettings(settings);
+  for(const key of ['runtime','model','command','args','maxAttempts','timeoutMs'])delete settings[key];
+  return {...settings,...runtime};
 }
 
 export function validatePromptTemplate(content,label='Prompt'){
@@ -50,19 +53,33 @@ export function validatePromptTemplate(content,label='Prompt'){
 export function renderPromptTemplate(content,values){return validatePromptTemplate(content).replace(tokenPattern,(_,name)=>{invariant(Object.hasOwn(values,name)&&typeof values[name]==='string','INVALID_AGENT',`Prompt 缺少模板變數：${name}`);return values[name];});}
 export function validateAgentRuntimeSettings(input={}){
  invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_AGENT','Agent 設定無效。');
- const {command,args,maxAttempts,timeoutMs}={...defaults,...input};
+ const factory=input.command==='codex'&&[priorArgs,priorMcpArgs].some(args=>JSON.stringify(input.args)===JSON.stringify(args));
+ const runtime=input.runtime??((Object.hasOwn(input,'command')||Object.hasOwn(input,'args'))&&!factory?'custom-cli':defaults.runtime);
+ invariant(['codex-sdk','custom-cli'].includes(runtime),'INVALID_AGENT','請選擇 Codex SDK 或自訂 CLI。');
+ const {maxAttempts,timeoutMs}={...defaults,...input};
+ invariant(Number.isInteger(maxAttempts)&&maxAttempts>=1&&maxAttempts<=3&&Number.isInteger(timeoutMs)&&timeoutMs>=1000&&timeoutMs<=1800000,'INVALID_AGENT','Agent 執行限制無效。');
+ if(runtime==='codex-sdk'){
+  const model=input.model??defaults.model;
+  invariant(typeof model==='string'&&model.trim()&&model.length<=200&&!/[\x00-\x1f]/.test(model),'INVALID_AGENT','請設定模型，或使用 auto 沿用對話模型。');
+  return {runtime,model:model.trim(),maxAttempts,timeoutMs};
+ }
+ const command=input.command??'codex',args=input.args??priorMcpArgs;
  invariant(typeof command==='string'&&command.trim()&&command.length<=2048&&!/[\x00-\x1f]/.test(command),'INVALID_AGENT','請設定 CLI 執行檔。');
  invariant(Array.isArray(args)&&args.length<=40&&args.every(x=>typeof x==='string'&&x.length<=4000&&!x.includes('\0')),'INVALID_AGENT','Agent 參數無效。');
- invariant(Number.isInteger(maxAttempts)&&maxAttempts>=1&&maxAttempts<=3&&Number.isInteger(timeoutMs)&&timeoutMs>=1000&&timeoutMs<=1800000,'INVALID_AGENT','Agent 執行限制無效。');
- return {command:command.trim(),args,maxAttempts,timeoutMs};
+ return {runtime,command:command.trim(),args:[...args],maxAttempts,timeoutMs};
 }
 
 export function validateAgentSettings(input={}, previous={}) {
   invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_AGENT','Agent 設定無效。');
-  const {command,args,prompt,testPlanPrompt,gherkinPrompt,designPrompt,skills,maxAttempts,timeoutMs}=seedAgentSettings({...previous,...input});
-  const runtime=validateAgentRuntimeSettings({command,args,maxAttempts,timeoutMs});
+  const combined={...previous,...input};
+  // Legacy clients that explicitly choose a CLI retain that choice. A saved
+  // explicit runtime always wins over unrelated, hidden form fields.
+  if(!Object.hasOwn(input,'runtime')&&(Object.hasOwn(input,'command')||Object.hasOwn(input,'args')))delete combined.runtime;
+  const settings=seedAgentSettings(combined);
+  const {prompt,testPlanPrompt,gherkinPrompt,designPrompt,skills}=settings;
+  const runtime=validateAgentRuntimeSettings(settings);
   for(const field of Object.values(agentPromptFields))validatePromptTemplate({prompt,testPlanPrompt,gherkinPrompt,designPrompt}[field]);
-  invariant(typeof skills==='string'&&Buffer.byteLength(skills)<=agentLimits.skillBytes,'INVALID_AGENT','CLI Agent Skills 必須是 256 KiB 內的文字。');
+  invariant(typeof skills==='string'&&Buffer.byteLength(skills)<=agentLimits.skillBytes,'INVALID_AGENT','Agent Skills 必須是 256 KiB 內的文字。');
   return {...runtime,prompt,testPlanPrompt,gherkinPrompt,designPrompt,skills};
 }
 

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { readFile, writeFile, readdir, symlink } from 'node:fs/promises';
-import { fixture, toolkitRoot, testBrowserRoot } from './helpers.mjs';
+import { fixture, git, toolkitRoot, testBrowserRoot } from './helpers.mjs';
 import { createWorkstation } from '../../packages/workstation/service.mjs';
 import { openStore } from '../../packages/workstation/store.mjs';
 import { executeOperation } from '../../packages/workstation/operations.mjs';
@@ -23,7 +23,8 @@ const steps="import { Given, Then } from '../../_shared/bdd';\nimport { expect }
 const hooks="import { AfterStep } from '../../_shared/bdd';\nAfterStep(async ({ page, $testInfo, $step }) => { await $testInfo.attach('step-' + $step.title, {contentType:'image/png',body:await page.screenshot()}); });\n";
 
 async function setup(t,{featureText=gherkin}={}) {
-  const f=await fixture(t),service=await createWorkstation({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,allowLocal:true,autoAcquire:false,enableExecution:true});
+  const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
+  const service=await createWorkstation({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,allowLocal:true,autoAcquire:false,enableExecution:true});
   t.after(()=>service.close());service.register({id:'SPEC-plan',title:'Plan',remoteUrl:f.remote});
   const store=openStore(f.home);t.after(()=>store.close());
   const options=service.options;
@@ -37,7 +38,7 @@ async function setup(t,{featureText=gherkin}={}) {
   const agentFile=path.join(f.base,'test-plan-agent.mjs');
   const agentBody=`import {writeFile} from 'node:fs/promises';\nconst root=process.argv[2];\nawait writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});\nawait writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});\n`;
   await writeFile(agentFile,agentBody);
-  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agentFile,'{spec}','{task}'],skills:''}});
+  await job('repository.setup',{reviewer:'Human',projects:[],agent:{runtime:'custom-cli',command:process.execPath,args:[agentFile,'{spec}','{task}'],skills:''}});
   try { await job('repository.tools.prepare'); }
   catch(error) { assert.equal(error.code,'INSTALL_REQUIRED');assert.deepEqual(error.details.install.browsers,['chromium']);await job('repository.tools.prepare',{installConsent:error.details.install.digest}); }
   await job('workflow.create',{...ids,title:'Arithmetic'});

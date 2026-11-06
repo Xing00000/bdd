@@ -41,6 +41,10 @@ export function draftMethods(db) {
       invariant(row.request_hash === identity(request), 'OPERATION_ID_CONFLICT', '操作識別碼已被其他內容使用。', 409);
       return JSON.parse(row.result_json);
     },
+    creationReceipt(repositoryId, editorKey) {
+      const row=db.prepare("SELECT result_json FROM authoring_history WHERE repository_id=? AND json_extract(result_json,'$.creationEditorKey')=? ORDER BY revision DESC LIMIT 1").get(repositoryId,editorKey);
+      return row?JSON.parse(row.result_json):null;
+    },
     /** One SQLite transaction includes content, settings, history and the durable save receipt. */
     saveDraft(repositoryId, { expectedRevision, settings, files, deleteFiles = [], operationId, request, result = {}, proposalKey, acceptIncomingBases = false }) {
       db.exec('BEGIN IMMEDIATE');
@@ -114,6 +118,16 @@ export function draftMethods(db) {
     },
     setProjection(repositoryId, receipt) {
       db.prepare('INSERT INTO repository_projection VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET receipt_json=excluded.receipt_json').run(repositoryId,JSON.stringify(receipt));
+    },
+    completeAcceptanceCheckpoint(repositoryId, expectedRevision, acceptanceId) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        invariant(read(repositoryId)?.revision === expectedRevision, 'CONTENT_CHANGED', '驗收期間已儲存新草稿；沒有標記新內容已驗收，請重新檢視後重試。', 409);
+        const checkpoint = this.projection(repositoryId);
+        invariant(checkpoint?.checkpointRevision === expectedRevision && checkpoint.head, 'ACCEPTANCE_CHECKPOINT_REQUIRED', '驗收版本尚未完成，請重試。', 409);
+        this.setProjection(repositoryId, { ...checkpoint, checkpointKind: 'ACCEPTED', completedAcceptances: [...new Set([...(checkpoint.completedAcceptances ?? []), acceptanceId])] });
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
     }
   };
 }
@@ -121,6 +135,7 @@ export function draftMethods(db) {
 export const localSaveOperations=Object.freeze(['workflow.delete','repository.setup','repository.save','repository.upgrade.apply','workflow.create','workflow.draft','workflow.requirement.save','workflow.feedback','workflow.accept','workflow.restart','interaction.requirement.generate','interaction.document.import','interaction.cli.input','interaction.cancel']);
 export const isLocalSave = request => localSaveOperations.includes(request.operation)
   || request.operation === 'workflow.review' && request.input?.stage === 'gherkin';
-const exclusiveLocalSaves=Object.freeze(['workflow.delete']);
-export const requiresRepositoryLock=request=>!isLocalSave(request)||exclusiveLocalSaves.includes(request.operation);
-export const projectionJobPredicate = `(json_extract(request_json,'$.operation') IN (${exclusiveLocalSaves.map(name=>`'${name}'`).join(',')}) OR NOT (json_extract(request_json,'$.operation') IN (${localSaveOperations.map(name=>`'${name}'`).join(',')}) OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage')='gherkin')))`;
+const exclusiveLocalSaves=Object.freeze(['workflow.delete','workflow.create','workflow.accept']);
+const createsRequirement=request=>request.operation==='workflow.requirement.save'&&!request.input?.requirementId&&!request.input?.featureId;
+export const requiresRepositoryLock=request=>!isLocalSave(request)||exclusiveLocalSaves.includes(request.operation)||createsRequirement(request);
+export const projectionJobPredicate = `(json_extract(request_json,'$.operation') IN (${exclusiveLocalSaves.map(name=>`'${name}'`).join(',')}) OR (json_extract(request_json,'$.operation')='workflow.requirement.save' AND json_extract(request_json,'$.input.requirementId') IS NULL AND json_extract(request_json,'$.input.featureId') IS NULL) OR NOT (json_extract(request_json,'$.operation') IN (${localSaveOperations.map(name=>`'${name}'`).join(',')}) OR (json_extract(request_json,'$.operation')='workflow.review' AND json_extract(request_json,'$.input.stage')='gherkin')))`;

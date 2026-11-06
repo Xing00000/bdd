@@ -3,19 +3,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {writeFile} from 'node:fs/promises';
-import {fixture,toolkitRoot} from './helpers.mjs';
+import {fixture,git,toolkitRoot} from './helpers.mjs';
 import {createWorkstation} from '../../packages/workstation/service.mjs';
 
 const document=writeDesignDecisions('# 系統設計\n\n## 責任\n依已確認需求呈現文件。\n\n## 驗證\n使用正式介面驗證情境結果。\n',{schemaVersion:1,items:[]});
 async function setup(t,body){
   const f=await fixture(t),agent=path.join(f.base,'design-peer.mjs');
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   // Controlled CLI peer verifies PTY, frozen input and persistence; not model inference.
   await writeFile(agent,`import {readFile,writeFile} from 'node:fs/promises';const {task,artifacts}=JSON.parse(await readFile(process.argv[2],'utf8'));${body}`);
   const service=await createWorkstation({home:f.home,toolkitRoot,autoAcquire:false,allowLocal:true,enableExecution:true});t.after(()=>service.close());
   const repositoryId='SPEC-design';service.register({id:repositoryId,title:'Design',remoteUrl:f.remote});let sequence=0;
   const start=(operation,input={})=>{const operationId=`OP-design-${++sequence}`;service.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});return operationId;};
   const job=async(operation,input)=>{const result=await service.wait(start(operation,input));assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));return result;};
-  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agent,'{task}'],timeoutMs:15000}});
+  await job('repository.setup',{reviewer:'Human',projects:[],agent:{runtime:'custom-cli',command:process.execPath,args:[agent,'{task}'],timeoutMs:15000}});
   const ids={requirementId:'REQ-001',featureId:'reader'};await job('workflow.create',{...ids,title:'Reader'});
   const feature=(await service.detail(repositoryId)).spec.features[0];await job('workflow.review',{...ids,stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
   const file=await service.readFile(repositoryId,'spec/REQ-001/reader/reader.sd.md');

@@ -4,16 +4,14 @@ import path from 'node:path';
 import {stripVTControlCharacters} from 'node:util';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, atomicWrite, writeJson, walk, exists } from '../contracts/index.mjs';
-import { execute, processEnvironment } from '../git-core/index.mjs';
+import { trackSourceView } from '../git-core/index.mjs';
 import { scan, reviewState } from '../spec-toolkit/index.mjs';
 import { ensureDraft, inDraftView, sourceFiles, draftProjectFiles, readDraftFile } from './authoring.mjs';
-import { validateAgentSettings } from './agent-settings.mjs';
-import { agentExecutable } from './development.mjs';
 import { useRepositoryTools } from './repository-tools.mjs';
 import { checkTests } from './repository-actions.mjs';
-import { refreshWorkflowFiles, draftModules } from './workflow-state.mjs';
-import { approvedAgentPrompt, writeAgentTask, agentArguments } from './agent-task.mjs';
-import {runInteractiveAgent} from './agent-cli.mjs';
+import { refreshWorkflowFiles, draftModules, liveWorkflowSpecSourceDigest } from './workflow-state.mjs';
+import { approvedAgentPrompt, writeAgentTask } from './agent-task.mjs';
+import {runAgentTask} from './agent-cli.mjs';
 
 export async function generateTestPlan(context) {
   const {options,store,request}=context,repositoryId=request.repositoryId,input=request.input;
@@ -36,17 +34,17 @@ export async function generateTestPlan(context) {
   invariant(input.expectedDigest===current.hashes.tests,'CONTENT_CHANGED','測試計劃已變更，請先重新讀取再交由 LLM 補齊。',409);
   invariant(options.enableExecution,'EXECUTION_DISABLED','主機尚未啟用測試計劃生成；系統設計已保存。',403);
   const prompt=approvedAgentPrompt(snapshot,context,'testPlan');
-  const agent=selectedAgent(snapshot,context),command=await agentExecutable(agent.command);
+  const agent=selectedAgent(snapshot,context);
   const parent=await safePath(options.home,`test-plans/${request.operationId}`);await mkdir(parent,{recursive:true});
   const root=await mkdtemp(path.join(parent,'attempt-'));
   try {
-    return await generateInView(context,snapshot,feature,root,prefix,receiptId,agent,command,prompt,parent);
+    return await generateInView(context,snapshot,feature,root,prefix,receiptId,agent,prompt,parent);
   } finally {
     for(const relative of ['node_modules','.generated','.runtime/dependencies/cache'])await rm(await safePath(root,relative),{recursive:true,force:true});
   }
 }
 
-async function generateInView(context,snapshot,feature,root,prefix,receiptId,agent,command,prompt,parent) {
+async function generateInView(context,snapshot,feature,root,prefix,receiptId,agent,prompt,parent) {
   const {options,store,request}=context,repositoryId=request.repositoryId,input=request.input;
   const scoped=file=>!file.path.startsWith('spec/')&&!file.path.startsWith('tests/')
     ||file.path.startsWith(`spec/${feature.key}/`)
@@ -70,15 +68,11 @@ async function generateInView(context,snapshot,feature,root,prefix,receiptId,age
     }
   }
   await useRepositoryTools(root,options,request);
-  for(const args of [['init','--quiet','--template='],['add','--all']]) {
-    const result=await execute('git',args,{cwd:root,env:processEnvironment({HOME:process.env.HOME},{git:true})});
-    invariant(result.exitCode===0&&!result.timedOut&&!result.overflow,'TEST_PLAN_WORKSPACE_FAILED',(result.stderr||result.stdout).slice(-4000));
-  }
+  await trackSourceView(root);
   const before=await sourceFiles(root),projectHashes=await contextHashes(root);
   const task=await writeAgentTask(parent,selectedTaskSnapshot(snapshot,context),{purpose:'testPlan',requirementId:input.requirementId,featureId:input.featureId,workspace:root,products:projects,feedback:[]});
   await atomicWrite(path.join(root,'.runtime/test-plan-prompt.txt'),prompt);
-  const args=agentArguments(agent,{prompt,spec:root,project:root,task});
-  const result=await runInteractiveAgent(context,command,args,root,agent.timeoutMs);
+  const result=await runAgentTask(context,{agent,prompt,spec:root,cwd:root,task});
   const outputTail=stripVTControlCharacters(result.output.slice(-12000));
   await writeJson(path.join(root,'.runtime/test-plan-agent.json'),result);
   invariant(result.exitCode===0&&!result.signal&&!result.timedOut,'TEST_PLAN_AGENT_FAILED',`測試計劃生成失敗，原內容保留。\n${outputTail}`);
@@ -95,11 +89,11 @@ async function generateInView(context,snapshot,feature,root,prefix,receiptId,age
     let check;
     try { check=await checkTests(validationRoot,input,store,repositoryId,true); }
     catch(error) {
-      error.message+=`\n\nCLI exit ${result.exitCode} 僅表示程序結束，測試計劃未通過檢查，原稿保留。\nCLI 最後輸出（包含 Agent 回報的原因）：\n${outputTail}`;
+      error.message+=`\n\nAgent exit ${result.exitCode} 僅表示程序結束，測試計劃未通過檢查，原稿保留。\nAgent 最後輸出（包含回報的原因）：\n${outputTail}`;
       error.details={...error.details,agent:{exitCode:result.exitCode,signal:result.signal,timedOut:result.timedOut,outputTail}};
       throw error;
     }
-    await refreshWorkflowFiles(validationRoot,{modules:draftModules(snapshot,store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId)});
+    await refreshWorkflowFiles(validationRoot,{modules:draftModules(snapshot,store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId),checkpoint:store.projection(repositoryId),specSourceDigest:await liveWorkflowSpecSourceDigest(context,snapshot,validationRoot)});
     const changes=(await sourceFiles(validationRoot)).filter(file=>!snapshot.files.some(old=>old.target===file.target&&old.path===file.path&&old.sha256===digest(file.content)))
       .map(file=>({...file,baseHash:snapshot.files.find(old=>old.target===file.target&&old.path===file.path)?.baseHash??null}));
     return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,operationId:receiptId,request,files:changes,

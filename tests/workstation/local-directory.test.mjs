@@ -67,7 +67,7 @@ test('a foreign clone is not adopted or imported and does not prevent SQLite sav
   const d=await f.service.detail('SPEC-local');assert.equal(d.spec.features.length,0);assert.equal(JSON.stringify(d).includes('FOREIGN PRIVATE CONTENT'),false);
   assert.equal((await job(f,'repository.setup',{reviewer:'Human',projects:[]})).status,'SUCCEEDED');assert.deepEqual(await git.inspect(local),before);
 });
-test('changing an existing binding preserves old checkout and SQL drafts and uses the new path for export',async t=>{
+test('changing a location preserves the old checkout and SQL drafts until the next feature initializes it',async t=>{
   const f=await setup(t);const {r,op}=await bind(f);assert.equal(op.status,'SUCCEEDED');const previous=r.localPath;
   await job(f,'repository.setup',{reviewer:'Human',projects:[]});
   const relative='spec/REQ-001/login/login.sd.md',file=await f.service.readFile(r.id,relative);
@@ -76,15 +76,20 @@ test('changing an existing binding preserves old checkout and SQL drafts and use
   const changed=await job(f,'repository.location',{localPath:newPath,expectedLocalPath:previous});assert.equal(changed.status,'SUCCEEDED',JSON.stringify(changed.error));
   assert.deepEqual(await git.inspect(previous),original);assert.equal((await f.service.detail(r.id)).localPath,newPath);
   assert.equal((await f.service.readFile(r.id,relative)).content,'# Saved SQLite draft');
-  assert.equal((await job(f,'repository.prepare')).status,'SUCCEEDED');assert.equal(await readFile(path.join(newPath,relative),'utf8'),'# Saved SQLite draft');
+  const deferred=await job(f,'repository.prepare');assert.equal(deferred.error.code,'FEATURE_INITIALIZATION_REQUIRED');assert.equal(await exists(newPath),false);
+  const created=await job(f,'workflow.create',{requirementId:'REQ-002',featureId:'relocated',title:'Relocated feature'});assert.equal(created.status,'SUCCEEDED',JSON.stringify(created.error));
+  assert.equal(await readFile(path.join(newPath,relative),'utf8'),'# Saved SQLite draft');
   assert.notEqual(await readFile(path.join(previous,relative),'utf8'),'# Saved SQLite draft');
   assert.equal(await git.resolve(f.source), (await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim(),'No implicit remote upload');
 });
-test('stale location settings do not replace a newer binding and mismatched clones retain the old location',async t=>{
+test('stale location settings are rejected and a foreign clone is refused at explicit acquisition',async t=>{
   const f=await setup(t);const {r}=await bind(f);const local=path.join(f.base,'bad');await specRepository(local);await git.command(local,['remote','add','origin',path.join(f.base,'other.git')]);
   const stale=await job(f,'repository.location',{localPath:local,expectedLocalPath:'/wrong'});assert.equal(stale.error.code,'LOCAL_PATH_CHANGED');
-  const bad=await job(f,'repository.location',{localPath:local,expectedLocalPath:r.localPath});assert.equal(bad.error.code,'BINDING_REMOTE_CHANGED');
-  assert.equal((await f.service.detail(r.id)).localPath,r.localPath);
+  const original=await git.inspect(r.localPath),foreign=await git.inspect(local);
+  const changed=await job(f,'repository.location',{localPath:local,expectedLocalPath:r.localPath});assert.equal(changed.status,'SUCCEEDED',JSON.stringify(changed.error));
+  assert.equal((await f.service.detail(r.id)).localPath,local);assert.equal((await f.service.detail(r.id)).connection.status,'DEFERRED');
+  const bad=await job(f,'repository.acquire');assert.equal(bad.error.code,'BINDING_REMOTE_CHANGED');
+  assert.deepEqual(await git.inspect(r.localPath),original);assert.deepEqual(await git.inspect(local),foreign);
 });
 test('paths cannot overlap another binding, its submodules, application code or operational data',async t=>{
   const f=await setup(t,{autoAcquire:false}),local=path.join(f.base,'one');await bind(f,local);
@@ -123,6 +128,7 @@ test('real HTTP registration accepts and returns the requested host-side local d
   const app=await createStandaloneServer({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>app.close());await new Promise(r=>app.server.listen(0,'127.0.0.1',r));
   const localPath=path.join(f.base,'selected'),url=`http://127.0.0.1:${app.server.address().port}/repository-api/v1/spec-repositories`;
   const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-workbench-request':'1'},body:JSON.stringify({title:'UI location',remoteUrl:source,localPath})});
-  assert.equal(response.status,201);const r=await response.json();assert.equal(r.localPath,localPath);assert.equal((await app.service.wait(r.connection.operationId)).status,'SUCCEEDED');
+  assert.equal(response.status,201);const r=await response.json();assert.equal(r.localPath,localPath);assert.equal(r.connection.status,'DEFERRED');assert.equal(r.connection.operationId,undefined);
+  assert.equal(await exists(localPath),false,'Registration does not clone the selected directory');
   assert.equal((await (await fetch(url+'/'+r.id)).json()).localPath,localPath);
 });

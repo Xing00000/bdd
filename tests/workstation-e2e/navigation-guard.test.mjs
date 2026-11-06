@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
-import {fixture,toolkitRoot} from '../workstation/helpers.mjs';
+import {fixture,toolkitRoot,git} from '../workstation/helpers.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 
 test('cancelling a requirement switch restores the selected requirement and keeps its unsaved draft',async t=>{
   const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,autoAcquire:false,allowLocal:true});t.after(()=>app.close());
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const repositoryId='SPEC-navigation-ui';app.service.register({id:repositoryId,title:'Navigation UI',remoteUrl:f.remote});let sequence=0;
   const job=async(operation,input)=>{const operationId=`OP-navigation-ui-${++sequence}`;app.service.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});const result=await app.service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));};
   await job('repository.setup',{reviewer:'Human',projects:[]});

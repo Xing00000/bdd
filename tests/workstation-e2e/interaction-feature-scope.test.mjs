@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {writeFile} from 'node:fs/promises';
 import {chromium,expect} from '@playwright/test';
-import {fixture,toolkitRoot} from '../workstation/helpers.mjs';
+import {fixture,toolkitRoot,git} from '../workstation/helpers.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 
 test('history and terminal follow the selected feature, ignore late responses, and follow a saved new draft',{timeout:60000},async t=>{
   const f=await fixture(t),agent=path.join(f.base,'history-peer.mjs');
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   // A real PTY peer supplies repeatable transcript data; this test checks history ownership, not model inference.
   await writeFile(agent,`import {readFile,writeFile} from 'node:fs/promises';const {task}=JSON.parse(await readFile(process.argv[2],'utf8'));console.log('TRANSCRIPT '+task.key);await writeFile(task.output,'Feature: History draft\\n  A user can inspect history.\\n\\n  @case:CASE-001\\n  Scenario: Read history\\n    Given history is available\\n');`);
   const app=await createStandaloneServer({home:f.home,toolkitRoot,autoAcquire:false,allowLocal:true,enableExecution:true});t.after(()=>app.close());const repositoryId='SPEC-history-ui';app.service.register({id:repositoryId,title:'Feature history',remoteUrl:f.remote});let sequence=0;

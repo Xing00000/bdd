@@ -4,14 +4,15 @@ import path from 'node:path';
 import { exists } from '../../packages/contracts/index.mjs';
 import { generateRequirement, requirementDiagnostics, requirementSuggestions } from '../../packages/workstation/requirements.mjs';
 import { createWorkstation } from '../../packages/workstation/service.mjs';
-import { fixture, toolkitRoot } from './helpers.mjs';
+import { fixture, git, toolkitRoot } from './helpers.mjs';
 
 async function authoring(t) {
   const f = await fixture(t);
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const service = await createWorkstation({autoAcquire:false, home: f.home, toolkitRoot, allowLocal: true });
   t.after(() => service.close());
   const repositoryId = 'SPEC-review';
-  service.register({ id: repositoryId, title: 'Human review', remoteUrl: path.join(f.base, 'offline.git') });
+  service.register({ id: repositoryId, title: 'Human review', remoteUrl: f.remote });
   let sequence = 0;
   const job = async (operation, input) => {
     const request = { schemaVersion: 1, operationId: `REVIEW-${++sequence}`, repositoryId, operation, input };
@@ -21,7 +22,7 @@ async function authoring(t) {
   assert.equal((await job('repository.setup', { reviewer: 'Xing', projects: [] })).status, 'SUCCEEDED');
   const save = async gherkin => {
     const saved = await job('workflow.requirement.save', {
-      description: '需求由使用者確認；儲存不依賴 Git。', gherkin,
+      description: '需求由使用者確認；建立後的編輯與審閱不操作 Git。', gherkin,
       expectedToken: null, editorKey: `new-${sequence}`,
     });
     assert.equal(saved.status, 'SUCCEEDED', JSON.stringify(saved.error));
@@ -42,14 +43,15 @@ const specification = (step = 'Then 已顯示結果', extra = '') =>
 
 test('legacy generated outcome text does not veto an explicit human approval', async t => {
   const f = await authoring(t), source = specification('Then 請補充可驗收的結果');
-  const saved = await f.save(source), result = await f.approve(saved);
+  const saved = await f.save(source), root=path.join(f.home,'repositories',f.repositoryId,'repo'), head=await git.resolve(root), result = await f.approve(saved);
   assert.equal(result.status, 'SUCCEEDED', JSON.stringify(result.error));
   const feature = (await f.service.detail(f.repositoryId)).spec.features[0];
   assert.equal(feature.review.confirmed.gherkin, true);
   assert.equal(feature.review.stage, 'SD');
   assert.equal(feature.verification.status, 'NOT_RUN', 'Human approval is not an execution or a pass');
   assert.equal((await f.service.requirement(f.repositoryId, saved.requirementId, saved.featureId)).gherkin, source);
-  assert.equal(await exists(path.join(f.home, 'repositories', f.repositoryId, 'repo')), false);
+  assert.equal(await exists(root),true);
+  assert.equal(await git.resolve(root),head,'Confirming Gherkin does not create another Git checkpoint');
 });
 
 test('quoted guard text in comments, doc strings and expected UI text never blocks confirmation', async t => {

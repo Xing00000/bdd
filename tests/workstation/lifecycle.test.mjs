@@ -38,11 +38,22 @@ test('CLI and thin Git scripts share persisted state and structured output', asy
     const result = await execute(process.execPath, [path.join(toolkitRoot, script), ...args], { cwd: toolkitRoot, env, input: JSON.stringify(input) });
     assert.equal(result.exitCode, 0, result.stderr + result.stdout); return JSON.parse(result.stdout);
   }
-  await cli('scripts/workstation.mjs', ['register'], { id: 'WS-cli', title: 'CLI fixture', remoteUrl: f.remote });
-  const inspected = await cli('scripts/git/inspect.mjs', [], { repositoryId: 'WS-cli' }); assert.match(inspected.state.head, /^[a-f0-9]{40,64}$/); assert.equal(inspected.state.clean, true);
-  assert.equal((await git.command(undefined, ['--git-dir', f.remote, 'show-ref'], { allowFailure: true })).exitCode, 1, 'Binding must not upload');
-  // Registration now creates the local checkout and initializes the empty specification.
-  const detail = await cli('scripts/workstation.mjs', ['detail'], { repositoryId: 'WS-cli' }); assert.equal(detail.initialized, true);
+  const registered = await cli('scripts/workstation.mjs', ['register'], { id: 'WS-cli', title: 'CLI fixture', remoteUrl: f.remote });
+  assert.equal(registered.connection.status, 'DEFERRED');
+  const root = path.join(f.home, 'repositories/WS-cli/repo');
+  const deferred = await cli('scripts/workstation.mjs', ['detail'], { repositoryId: 'WS-cli' });
+  assert.equal(deferred.authoring.storage, 'sqlite'); assert.equal(deferred.state.head, null); assert.equal(await exists(root), false);
+  await cli('scripts/workstation.mjs', ['repository.setup'], { repositoryId: 'WS-cli', input: { reviewer: 'CLI fixture reviewer', projects: [] } });
+  assert.equal(await exists(root), false, 'Register, detail and setup must not create a checkout');
+  // Creating a feature owns the Git checkpoint. Explicit legacy inspection
+  // remains available after initialization and reads that exact saved version.
+  const created = await cli('scripts/workstation.mjs', ['workflow.create'], { repositoryId: 'WS-cli', input: { requirementId: 'REQ-001', featureId: 'login', title: 'CLI login', guided: true } });
+  assert.equal(created.status, 'SUCCEEDED');
+  const inspected = await cli('scripts/git/inspect.mjs', [], { repositoryId: 'WS-cli' });
+  assert.match(inspected.state.head, /^[a-f0-9]{40,64}$/); assert.equal(inspected.state.clean, true); assert.equal(inspected.state.head, created.result.checkpoint.head);
+  assert.equal((await git.command(undefined, ['--git-dir', f.remote, 'show-ref'], { allowFailure: true })).exitCode, 1, 'Creating a local feature must not upload');
+  const detail = await cli('scripts/workstation.mjs', ['detail'], { repositoryId: 'WS-cli' });
+  assert.equal(detail.initialized, true); assert.equal(detail.state.head, inspected.state.head); assert.equal(detail.spec.features[0].key, 'REQ-001/login');
 });
 test('a real failed preparation command seals NOT_RUN evidence without reporting product success', async t => {
   const f = await executionFixture(t, [process.execPath, '-e', "console.error('intentional fixture failure'); process.exit(3)"]);

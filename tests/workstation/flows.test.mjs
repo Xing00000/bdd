@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { fixture, git, repository, toolkitRoot, commitAll, approve } from './helpers.mjs';
+import { fixture, git, repository, toolkitRoot, commitAll, sealedBundle } from './helpers.mjs';
 import { createWorkstation } from '../../packages/workstation/service.mjs';
 import { digest, readJson, writeJson, exists, identity } from '../../packages/contracts/index.mjs';
-import { prepareRun } from '../../packages/spec-toolkit/engine.mjs';
+import { prepareWorkspaceRun } from '../../packages/spec-toolkit/engine.mjs';
+import { confirm, reviewState } from '../../packages/spec-toolkit/index.mjs';
+import { inDraftView } from '../../packages/workstation/authoring.mjs';
+import { openStore } from '../../packages/workstation/store.mjs';
 import { ensureInstallation, installationPlan } from '../../packages/workstation/flows.mjs';
 
-async function setup(t,{product=true,prepare=true}={}) {
+async function setup(t,{product=true}={}) {
   const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const source=path.join(f.base,'product'),productRemote=path.join(f.base,'product.git');
   if(product){await repository(source,{'message.txt':'before'});await git.command(undefined,['init','--bare','--initial-branch','main',productRemote]);await git.command(source,['remote','add','origin',productRemote]);await git.push(source,{},await git.inspect(source));}
@@ -22,79 +25,108 @@ async function setup(t,{product=true,prepare=true}={}) {
   const setupInput={reviewer:'Human',projects:product?[{id:'product',url:productRemote}]:[]};
   await job('repository.setup',setupInput);
   const root=path.join(f.home,'repositories/SPEC-flow/repo');
-  if(prepare)await job('repository.prepare');
   return {...f,source,productRemote,root,service,job,setupInput};
+}
+const featureIds={requirementId:'REQ-001',featureId:'login'};
+async function createFeature(f) {
+  return f.job('workflow.create',{...featureIds,title:'Login',projectIds:f.setupInput.projects.map(project=>project.id)});
+}
+async function approveFixtureSources(f,ids=featureIds) {
+  const store=openStore(f.home);
+  try {
+    const snapshot=store.draft('SPEC-flow');
+    const files=await inDraftView(snapshot,async root=>{
+      // Protocol fixtures only: no dependency installation or passing browser run is claimed.
+      await writeJson(path.join(root,'package-lock.json'),{lockfileVersion:3,packages:{}});
+      for(const stage of ['gherkin','sd','tests']) await confirm(root,{...ids,stage,expectedDigest:(await reviewState(root,ids.requirementId,ids.featureId)).hashes[stage],confirmedBy:'Protocol fixture reviewer'});
+      return Promise.all(['package-lock.json',`spec/${ids.requirementId}/review.json`].map(async relative=>({target:'spec',path:relative,content:await readFile(path.join(root,relative),'utf8'),baseHash:snapshot.files.find(file=>file.target==='spec'&&file.path===relative)?.baseHash??null})));
+    });
+    store.saveDraft('SPEC-flow',{expectedRevision:snapshot.revision,files,operationId:`fixture-review-${crypto.randomUUID()}`,request:{operation:'fixture-review'}});
+  } finally { store.close(); }
+  await f.job('repository.prepare');
+}
+async function acceptFixture(f,ids=featureIds) {
+  await approveFixtureSources(f,ids);
+  const plan=await prepareWorkspaceRun({root:f.root,home:f.home,repositoryId:'SPEC-flow',input:ids});
+  // Synthetic sealed evidence exercises the real acceptance/checkpoint protocol, not E2E behavior.
+  const report=await sealedBundle(path.join(f.home,'executions',plan.runId,'evidence'),plan,{testOutcome:'PASSED',verification:'VERIFIED',coverageComplete:true,evidenceComplete:true,inputsUnchanged:true,finishedAt:new Date().toISOString()});
+  const store=openStore(f.home);try{store.recordRun('SPEC-flow',report,'SEALED');}finally{store.close();}
+  return f.job('workflow.accept',{...ids,runId:plan.runId,expectedManifestDigest:identity(report)});
 }
 
 test('single setup saves bindings to SQLite without cloning, pushing or installing',async t=>{
-  const f=await setup(t,{prepare:false}),d=await f.service.detail('SPEC-flow');assert.equal(await exists(f.root),false);assert.equal(d.authoring.storage,'sqlite');assert.equal(d.preferences.configured,true);assert.equal(d.state.clean,true);assert.equal(d.modules.length,1);
+  const f=await setup(t),d=await f.service.detail('SPEC-flow');assert.equal(await exists(f.root),false);assert.equal(d.authoring.storage,'sqlite');assert.equal(d.preferences.configured,true);assert.equal(d.state.clean,true);assert.equal(d.modules.length,1);
   assert.equal(d.dependencies.installed,false);assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
   const before=d.state.head;await f.job('repository.setup',f.setupInput);assert.equal((await f.service.detail('SPEC-flow')).state.head,before);
 });
-test('source save writes SQLite only; later export preserves unrelated staging',async t=>{
+test('source save writes SQLite only; materialization preserves HEAD and unrelated staging',async t=>{
   const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',projectIds:['product']});
   const relative='spec/REQ-001/login/login.sd.md',bytes=Buffer.from((await f.service.readFile('SPEC-flow',relative)).content);
+  const createdHead=await git.resolve(f.root);
   await writeFile(path.join(f.root,'external.txt'),'not selected');await git.command(f.root,['add','external.txt']);
   await f.job('repository.save',{kind:'source',path:relative,expectedHash:digest(bytes),content:'New human design'});
   assert.equal((await f.service.readFile('SPEC-flow',relative)).content,'New human design');
-  assert.equal(await exists(path.join(f.root,relative)),false,'Save does not write the checkout');
+  assert.equal(await readFile(path.join(f.root,relative),'utf8'),bytes.toString(),'Save does not write the checkout');
   await f.job('repository.prepare');
-  assert.equal((await git.command(f.root,['show',`HEAD:${relative}`])).stdout,'New human design');
+  assert.equal(await git.resolve(f.root),createdHead);
+  assert.equal((await git.command(f.root,['show',`HEAD:${relative}`])).stdout,bytes.toString());
   assert.equal((await git.command(f.root,['cat-file','-e','HEAD:external.txt'],{allowFailure:true})).exitCode,128);
   assert.equal((await git.command(f.root,['show',':external.txt'])).stdout,'not selected');
   const conflicting=await f.job('repository.save',{kind:'source',path:relative,expectedHash:digest(bytes),content:'stale'}, {fail:true});assert.equal(conflicting.error.code,'CONTENT_CHANGED');
   assert.equal(await readFile(path.join(f.root,relative),'utf8'),'New human design');
 });
-test('saving detached product uses SQLite, and explicit projection creates its Git version',async t=>{
-  const f=await setup(t),target=path.join(f.root,'projects/product'),before=(await git.modules(f.root))[0].commit;
+test('saving a detached product materializes working files without creating a Git version',async t=>{
+  const f=await setup(t);await createFeature(f);const target=path.join(f.root,'projects/product'),before=(await git.modules(f.root))[0].commit,specHead=await git.resolve(f.root);
   assert.equal((await git.inspect(target)).branch,null);
   await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'after'});
   assert.equal((await git.modules(f.root))[0].commit,before,'Save must not alter gitlinks');
   assert.equal((await f.service.readProjectFile('SPEC-flow','product','message.txt')).content,'after');
   await f.job('repository.prepare');
-  const after=(await git.modules(f.root))[0];assert.notEqual(after.commit,before);assert.equal(after.actual,after.commit);assert.equal(after.dirty,false);assert.equal((await git.inspect(f.root)).clean,true);
+  const after=(await git.modules(f.root))[0];assert.equal(after.commit,before);assert.equal(after.actual,before);assert.equal(after.dirty,true);assert.equal(await git.resolve(f.root),specHead);assert.equal(await readFile(path.join(target,'message.txt'),'utf8'),'after');
   assert.equal((await git.command(undefined,['--git-dir',f.productRemote,'show','main:message.txt'])).stdout,'before');
   assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
 });
-test('formal candidate can clone an unpushed product version without a remote sync',async t=>{
+test('formal candidate freezes uncommitted product bytes without a Git version or remote sync',async t=>{
   const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',projectIds:['product']});
   await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'local-only'});
-  await f.job('repository.prepare');
-  await writeJson(path.join(f.root,'package-lock.json'),{lockfileVersion:3,packages:{}});await approve(f.root);
-  const candidate=await prepareRun({root:f.root,home:f.home,repositoryId:'SPEC-flow',git,input:{requirementId:'REQ-001',featureId:'login',expected:await git.inspect(f.root)}});
+  await approveFixtureSources(f);
+  const specHead=await git.resolve(f.root),productHead=await git.resolve(path.join(f.root,'projects/product'));
+  const candidate=await prepareWorkspaceRun({root:f.root,home:f.home,repositoryId:'SPEC-flow',input:featureIds});
+  assert.equal(candidate.sourceKind,'WORKSPACE');assert.equal(candidate.testedSpecCommit,null);assert.match(candidate.specDigest,/^[a-f0-9]{64}$/);assert.match(candidate.projects[0].contentDigest,/^[a-f0-9]{64}$/);
   assert.equal(await readFile(path.join(f.home,'executions',candidate.runId,'repo/projects/product/message.txt'),'utf8'),'local-only');
+  assert.equal(await git.resolve(f.root),specHead);assert.equal(await git.resolve(path.join(f.root,'projects/product')),productHead);
   assert.equal((await git.command(undefined,['--git-dir',f.productRemote,'show','main:message.txt'])).stdout,'before');
 });
-test('one remote sync publishes saved products before specification references and is repeatable',async t=>{
-  const f=await setup(t);await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'synchronized'});
-  const result=(await f.job('repository.sync')).result;assert.equal(result.status,'SYNCED');assert.deepEqual(result.completed.map(x=>x.kind),['project','spec']);
+test('remote sync publishes accepted products before specification references and is repeatable',async t=>{
+  const f=await setup(t);await createFeature(f);await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'synchronized'});await acceptFixture(f);
+  const result=(await f.job('repository.sync')).result;assert.equal(result.status,'SYNCED');assert.deepEqual(result.completed.slice(0,2).map(x=>x.kind),['project','spec']);assert.ok(result.completed.some(x=>x.kind==='report'));
   const pinned=(await git.modules(f.root))[0].commit;
   assert.equal((await git.command(undefined,['--git-dir',f.productRemote,'rev-parse','main'])).stdout.trim(),pinned);
   assert.match((await git.command(undefined,['--git-dir',f.remote,'ls-tree','main','projects/product'])).stdout,new RegExp(pinned));
   const sha=await git.resolve(f.root);await f.job('repository.sync');assert.equal(await git.resolve(f.root),sha);
 });
 test('sync conflicts preserve local and remote histories and perform no product push',async t=>{
-  const f=await setup(t);await f.job('repository.sync');const other=path.join(f.base,'other');await git.clone(f.remote,other);
+  const f=await setup(t);await createFeature(f);await acceptFixture(f);await f.job('repository.sync');const other=path.join(f.base,'other');await git.clone(f.remote,other);
   await writeFile(path.join(other,'remote-change.txt'),'remote');await commitAll(other);await git.push(other,{},await git.inspect(other));
-  await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Local',projectIds:['product']});
   await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'local'});
-  await f.job('repository.prepare');
+  await acceptFixture(f);
   const before=await git.inspect(f.root),remote=(await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim();
   const result=await f.job('repository.sync',{}, {fail:true});assert.equal(result.error.code,'SYNC_CONFLICT');assert.equal(result.error.details.sync.completed.length,0);
   assert.deepEqual(await git.inspect(f.root),before);assert.equal((await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim(),remote);
   assert.equal((await git.command(undefined,['--git-dir',f.productRemote,'show','main:message.txt'])).stdout,'before');
 });
 test('sync never adopts a changed push destination without a new setup',async t=>{
-  const f=await setup(t),evil=path.join(f.base,'other.git');await git.command(undefined,['init','--bare',evil]);await git.command(f.root,['remote','set-url','--push','origin',evil]);
+  const f=await setup(t);await createFeature(f);await acceptFixture(f);const evil=path.join(f.base,'other.git');await git.command(undefined,['init','--bare',evil]);await git.command(f.root,['remote','set-url','--push','origin',evil]);
   const result=await f.job('repository.sync',{}, {fail:true});assert.equal(result.error.code,'SYNC_DESTINATION_CHANGED');assert.equal((await git.command(undefined,['--git-dir',evil,'show-ref'],{allowFailure:true})).exitCode,1);
 });
-test('uncontested incoming versions synchronize without exposing Git steps',async t=>{
-  const f=await setup(t,{product:false});await f.job('repository.sync');const other=path.join(f.base,'other');await git.clone(f.remote,other);
+test('sync leaves incoming versions untouched for explicit acquisition and review',async t=>{
+  const f=await setup(t,{product:false});await createFeature(f);await acceptFixture(f);await f.job('repository.sync');const other=path.join(f.base,'other');await git.clone(f.remote,other);
   await writeFile(path.join(other,'README.md'),'Incoming');await commitAll(other);await git.push(other,{},await git.inspect(other));
-  await f.job('repository.sync');assert.equal(await readFile(path.join(f.root,'README.md'),'utf8'),'Incoming');
+  const before=await git.inspect(f.root),saved=(await f.service.readFile('SPEC-flow','README.md')).content;
+  const result=await f.job('repository.sync',{}, {fail:true});assert.equal(result.error.code,'SYNC_REMOTE_AHEAD');assert.deepEqual(await git.inspect(f.root),before);assert.equal((await f.service.readFile('SPEC-flow','README.md')).content,saved);assert.notEqual(await readFile(path.join(f.root,'README.md'),'utf8'),'Incoming');
 });
 test('dependency plan is one consent for required packages and browsers and rejects stale consent before installation',async t=>{
-  const f=await setup(t);const options={home:f.home,enableExecution:true,browserRoot:path.join(f.home,'browsers')};const request={repositoryId:'SPEC-flow',input:{}};
+  const f=await setup(t);await createFeature(f);const options={home:f.home,enableExecution:true,browserRoot:path.join(f.home,'browsers')};const request={repositoryId:'SPEC-flow',input:{}};
   let prompt;
   try{await ensureInstallation({root:f.root,options,request,profiles:['chromium','firefox'],git});assert.fail('expected consent');}catch(error){assert.equal(error.code,'INSTALL_REQUIRED');prompt=error.details.install;}
   assert.deepEqual(prompt.browsers,['chromium','firefox']);assert.equal(prompt.lifecycleScripts,false);assert.ok(prompt.packages['playwright-bdd']);
@@ -104,7 +136,7 @@ test('dependency plan is one consent for required packages and browsers and reje
   assert.equal(await exists(path.join(f.root,'node_modules')),false);
 });
 test('recorded installation is reused, but missing browsers request a single new repair consent',async t=>{
-  const f=await setup(t),browserRoot=path.join(f.home,'browsers');await mkdir(browserRoot);const executable=path.join(browserRoot,'chromium');await writeFile(executable,'fixture only');
+  const f=await setup(t);await createFeature(f);const browserRoot=path.join(f.home,'browsers');await mkdir(browserRoot);const executable=path.join(browserRoot,'chromium');await writeFile(executable,'fixture only');
   const shell=path.join(browserRoot,'headless-shell'),ffmpeg=path.join(browserRoot,'ffmpeg');await writeFile(shell,'fixture only');await writeFile(ffmpeg,'fixture only');
   // Registry protocol fixture; all reported runtime files must actually exist.
   await writeJson(path.join(f.root,'node_modules/playwright-core/package.json'),{name:'playwright-core',main:'lib/coreBundle.js'});
@@ -129,6 +161,7 @@ test('review progresses only on human content confirmation; execution remains op
 // Regression: ordinary setup is allowed while other source files are still drafts.
 test('reconfigure after editing unrelated files keeps staged and unstaged work intact', async t => {
   const f = await setup(t);
+  await createFeature(f);
   await writeFile(path.join(f.root, 'draft.txt'), 'my ongoing draft');
   await writeFile(path.join(f.root, 'staged.txt'), 'already staged');
   await git.command(f.root, ['add', '--', 'staged.txt']);
@@ -144,6 +177,7 @@ test('reconfigure after editing unrelated files keeps staged and unstaged work i
 
 test('adding a product after starting work does not discard unrelated drafts or staged changes', async t => {
   const f = await setup(t, { product: false });
+  await createFeature(f);
   const productRoot = path.join(f.base, 'new-product'), url = path.join(f.base, 'new-product.git');
   await repository(productRoot, { 'src/feature.ts': 'export const ready = true;\n' });
   await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', url]);
@@ -155,7 +189,8 @@ test('adding a product after starting work does not discard unrelated drafts or 
   const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{id:'myproduct', url}] });
   assert.equal(result.result.ready, true);
   assert.equal((await f.service.detail('SPEC-flow')).modules[0].id, 'myproduct');
-  await f.job('repository.prepare');
+  const deferred=await f.job('repository.prepare',{}, {fail:true});assert.equal(deferred.error.code,'FEATURE_INITIALIZATION_REQUIRED');assert.equal((await git.modules(f.root)).length,0);
+  await f.job('workflow.create',{requirementId:'REQ-002',featureId:'product',title:'Product feature',projectIds:['myproduct']});
   assert.equal((await git.modules(f.root))[0].id, 'myproduct');
   const after = await git.inspect(f.root);
   assert.deepEqual(after.changes.map(x => x.path).sort(), ['draft.md', 'staged.md']);
@@ -165,6 +200,7 @@ test('adding a product after starting work does not discard unrelated drafts or 
 
 test('reviewer-only settings do not modify or commit an unrelated configuration draft', async t => {
   const f = await setup(t, { product: false });
+  await createFeature(f);
   const file = path.join(f.root, 'workbench.yaml');
   const before = await readFile(file, 'utf8');
   // A manual edit in the config must remain a draft when only the reviewer changes.
@@ -178,6 +214,7 @@ test('reviewer-only settings do not modify or commit an unrelated configuration 
 
 test('SQLite settings save accepts a new binding; export detects overlapping checkout edits', async t => {
   const f = await setup(t, { product: false });
+  await createFeature(f);
   const file = path.join(f.root, 'workbench.yaml'), before = await readFile(file, 'utf8');
   await writeFile(file, before.replace('"timeoutMs": 180000', '"timeoutMs": 210000'));
   const productRoot = path.join(f.base, 'target'), url = path.join(f.base, 'target.git');
@@ -195,12 +232,13 @@ test('SQLite settings save accepts a new binding; export detects overlapping che
 
 test('submodule registration respects an externally edited gitmodules file without clobbering it', async t => {
   const f = await setup(t, { product: false });
+  await createFeature(f);
   await writeFile(path.join(f.root, '.gitmodules'), '# pending external edit\n');
   const target = path.join(f.base, 'product-extra');
   const head = await repository(target, { 'README.md': 'sample' });
   const before = await git.inspect(f.root);
   await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'extra', url: target }] });
-  const result = await f.job('repository.prepare', {}, { fail: true });
+  const result = await f.job('workflow.create', {requirementId:'REQ-002',featureId:'extra',title:'Extra feature',projectIds:['extra']}, { fail: true });
   assert.equal(result.error.code, 'SUBMODULE_SETTINGS_CONFLICT');
   assert.deepEqual(await git.inspect(f.root), before);
   assert.equal(await readFile(path.join(f.root, '.gitmodules'), 'utf8'), '# pending external edit\n');

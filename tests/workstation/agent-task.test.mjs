@@ -37,6 +37,7 @@ test('edited prompt dispatches verbatim, while missing approval and stale previe
   assert.throws(()=>approvedAgentPrompt(snapshot,{...context,request:{...context.request,input:{...selection}}},'development'),{code:'PROMPT_REQUIRED'});
   assert.throws(()=>approvedAgentPrompt(snapshot,{...context,request:{...context.request,input:{...context.request.input,prompt:' '}}},'development'),{code:'PROMPT_REQUIRED'});
   assert.throws(()=>agentArguments({args:['exec','{prompt}']},{prompt:'do this'}),{code:'AGENT_MCP_REQUIRED'});
+  assert.throws(()=>agentArguments(validateAgentSettings(),{prompt:'do this'}),{code:'AGENT_RUNTIME_MISMATCH'});
 });
 
 test('new requirements can preview a minimal Gherkin prompt bound to unsaved composer input',()=>{
@@ -49,7 +50,7 @@ test('a real stdio task MCP exposes only frozen selected artifacts and no write 
   const directory=await mkdtemp(path.join(os.tmpdir(),'agent-task-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const file=await writeAgentTask(directory,snapshot,{...selection,workspace:'/isolated',products:['/isolated/product'],feedback:[{message:'fix layout'}],previousFailure:'last failure'});
   const bundle=JSON.parse(await readFile(file,'utf8'));
-  const args=agentArguments(validateAgentSettings(),{prompt:'exact prompt',spec:'/isolated',project:'/isolated/product',task:file});
+  const args=agentArguments(validateAgentSettings({runtime:'custom-cli'}),{prompt:'exact prompt',spec:'/isolated',project:'/isolated/product',task:file});
   assert.equal(args.at(-1),'exact prompt');assert.ok(args.some(a=>a.startsWith('mcp_servers.workbench_task=')));
   const queries=[
     {method:'initialize',params:{protocolVersion:'2025-11-25'}},
@@ -69,4 +70,13 @@ test('a real stdio task MCP exposes only frozen selected artifacts and no write 
   assert.equal(responses[3].result.structuredContent.content,'Feature: Approved login');
   assert.equal(responses[4].error.code,-32602);assert.equal(responses[5].error.code,-32602);
   assert.equal(taskRpc(bundle,{jsonrpc:'2.0',method:'notifications/initialized'}),null);
+});
+
+test('every dispatched purpose reserves all Git commands for workstation lifecycle boundaries',async t=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'agent-git-boundaries-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  for(const purpose of ['gherkin','design','testPlan','development']){
+    const source=purpose==='gherkin'?{editorKey:'new-fixture',description:'Requirement',previousGherkin:''}:purpose==='design'?{previousDesign:'# Design'}:undefined;
+    const file=await writeAgentTask(path.join(directory,purpose),snapshot,{...selection,purpose,workspace:directory,products:[path.join(directory,'product')],feedback:[],source});
+    const {task}=JSON.parse(await readFile(file,'utf8'));assert.match(task.rules,/Do not run any Git commands, including read-only inspection/);assert.match(task.rules,/feature creation and completed human acceptance/);
+  }
 });

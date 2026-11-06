@@ -3,7 +3,7 @@ import { invariant, digest } from '../contracts/index.mjs';
 import { materializeDependencies } from '../spec-toolkit/dependencies.mjs';
 import { ensureDraft, inDraftView, sourceFiles } from './authoring.mjs';
 import { ensureInstallation, repositoryToolsPath } from './flows.mjs';
-import { refreshWorkflowFiles, draftModules } from './workflow-state.mjs';
+import { refreshWorkflowFiles, draftModules, liveWorkflowSpecSourceDigest } from './workflow-state.mjs';
 import { scan, defaultProfiles } from '../spec-toolkit/index.mjs';
 
 export async function prepareRepositoryTools(context) {
@@ -15,7 +15,7 @@ export async function prepareRepositoryTools(context) {
     const features=(await scan(root)).features;
     const profiles=features.length?[...new Set(features.filter(feature=>!feature.authoringOnly).flatMap(feature=>feature.profiles))]:[...defaultProfiles];
     const installation=await ensureInstallation({...context,root,profiles,git:undefined});
-    await refreshWorkflowFiles(root,{modules:draftModules(snapshot,store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId)});
+    await refreshWorkflowFiles(root,{modules:draftModules(snapshot,store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId),checkpoint:store.projection(repositoryId),specSourceDigest:await liveWorkflowSpecSourceDigest(context,snapshot,root)});
     const files=(await sourceFiles(root)).filter(file=>!snapshot.files.some(old=>old.target===file.target&&old.path===file.path&&old.sha256===digest(file.content)))
       .map(file=>({...file,baseHash:snapshot.files.find(old=>old.target===file.target&&old.path===file.path)?.baseHash??null}));
     return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,operationId:request.operationId,request,files,result:{ready:true,...installation}});

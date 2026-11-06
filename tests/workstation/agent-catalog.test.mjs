@@ -77,15 +77,31 @@ test('default repair preserves custom revisions and does not revive archived see
  store.register({id:repositoryId,title:'Custom repair',remoteUrl:'https://github.com/example/spec'});store.ensureAgentDefaults(repositoryId,legacy);
  const initial=store.agentCatalog(),agent=initial.agents[0],skill=initial.skills[0],prompt=initial.prompts.find(item=>item.revisions[0].purposes.includes('design'));
  const changedSkill=store.saveCatalogSkill({id:skill.id,expectedRevision:skill.revisions[0].id,name:skill.name,description:skill.description,content:legacy.skills,resources:[{path:'custom.txt',content:'Keep this custom resource'}]});
- const changedAgent=store.saveCatalogAgent({id:agent.id,expectedRevision:agent.revisions[0].id,name:agent.name,description:agent.description,settings:{...agent.revisions[0].settings,command:'custom-cli'},skillRevisionIds:[changedSkill.revisions[0].id]});
+ const changedAgent=store.saveCatalogAgent({id:agent.id,expectedRevision:agent.revisions[0].id,name:agent.name,description:agent.description,settings:{...agent.revisions[0].settings,runtime:'custom-cli',command:'custom-cli',args:['{task}','{prompt}']},skillRevisionIds:[changedSkill.revisions[0].id]});
  const archivedPrompt=store.saveCatalogPrompt({id:prompt.id,expectedRevision:prompt.revisions[0].id,name:prompt.name,description:prompt.description,content:prompt.revisions[0].content,purposes:['design'],archived:true});
  const preserved=store.agentDefaults(repositoryId).filter(row=>row.purpose!=='design'),db=new DatabaseSync(path.join(home,'metadata.sqlite'));
  try{db.prepare('DELETE FROM agent_task_defaults WHERE repository_id=? AND purpose=?').run(repositoryId,'design');}finally{db.close();}
  store.ensureAgentDefaults(repositoryId,legacy);
  const repaired=store.resolveAgent(repositoryId,'design'),catalog=store.agentCatalog();
  assert.notEqual(repaired.agentId,agent.id);assert.notEqual(repaired.skills[0].id,skill.id);assert.notEqual(repaired.prompt.id,prompt.id);
- assert.equal(repaired.settings.command,legacy.command);assert.equal(repaired.skills[0].content,legacy.skills);assert.deepEqual(repaired.skills[0].resources,[]);
+ assert.deepEqual(repaired.settings,validateAgentRuntimeSettings(legacy));assert.equal(repaired.skills[0].content,legacy.skills);assert.deepEqual(repaired.skills[0].resources,[]);
  assert.deepEqual(catalog.agents.find(item=>item.id===agent.id),changedAgent);assert.deepEqual(catalog.skills.find(item=>item.id===skill.id),changedSkill);assert.deepEqual(catalog.prompts.find(item=>item.id===prompt.id),archivedPrompt);
  assert.deepEqual(store.agentDefaults(repositoryId).filter(row=>row.purpose!=='design'),preserved);
  store.ensureAgentDefaults(repositoryId,legacy);assert.deepEqual(store.agentCatalog(),catalog);
+});
+
+test('catalog display and dispatch resolve old factory settings identically without rewriting history',async t=>{
+ const home=await mkdtemp(path.join(tmpdir(),'bdd-catalog-runtime-')),store=openStore(home);t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
+ store.register({id:'SPEC-runtime',title:'Runtime',remoteUrl:'https://github.com/example/spec'});
+ const agent=store.saveCatalogAgent({name:'Legacy factory',settings:validateAgentRuntimeSettings()}),revisionId=agent.revisions[0].id;
+ const prompt=store.saveCatalogPrompt({name:'Task',content:'Implement {featureId}',purposes:['development']});
+ const legacy={command:'codex',args:['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}'],maxAttempts:2,timeoutMs:60000};
+ const db=new DatabaseSync(path.join(home,'metadata.sqlite'));t.after(()=>db.close());db.prepare('UPDATE agent_revisions SET settings_json=? WHERE id=?').run(JSON.stringify(legacy),revisionId);
+ const shown=store.agentCatalog().agents.find(item=>item.id===agent.id).revisions[0].settings;
+ const resolved=store.resolveAgent('SPEC-runtime','development',{agentRevisionId:revisionId,promptRevisionId:prompt.revisions[0].id,skillRevisionIds:[]});
+ assert.deepEqual(shown,resolved.settings);assert.deepEqual(shown,{runtime:'codex-sdk',model:'auto',maxAttempts:2,timeoutMs:60000});
+ assert.deepEqual(JSON.parse(db.prepare('SELECT settings_json FROM agent_revisions WHERE id=?').get(revisionId).settings_json),legacy);
+ const custom={...legacy,args:[...legacy.args,'--user-option']};db.prepare('UPDATE agent_revisions SET settings_json=? WHERE id=?').run(JSON.stringify(custom),revisionId);
+ assert.equal(store.agentCatalog().agents.find(item=>item.id===agent.id).revisions[0].settings.runtime,'custom-cli');
+ assert.deepEqual(store.resolveAgent('SPEC-runtime','development',{agentRevisionId:revisionId,promptRevisionId:prompt.revisions[0].id,skillRevisionIds:[]}).settings.args,custom.args);
 });

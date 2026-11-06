@@ -3,12 +3,13 @@ import {readAcceptance} from './acceptance.mjs';
 import { digest, identity, invariant } from '../contracts/index.mjs';
 import { ensureDraft, inDraftView, sourceFiles } from './authoring.mjs';
 import { scan, reviewState } from '../spec-toolkit/index.mjs';
-import { workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules } from './workflow-state.mjs';
+import { workflowState, recordedWorkflow, refreshWorkflowFiles, liveWorkflowModules, liveWorkflowSpecSourceDigest } from './workflow-state.mjs';
 
 export async function workflowStatus(context, selection) {
   const repositoryId = context.repositoryId ?? context.request?.repositoryId;
   const snapshot = await ensureDraft({ ...context, repositoryId });
   const modules = await liveWorkflowModules({...context,repositoryId},snapshot);
+  const specSourceDigest = await liveWorkflowSpecSourceDigest(context,snapshot);
   return inDraftView(snapshot, async root => {
     const data = await scan(root), workflows = [];
     for (const f of data.features) {
@@ -16,7 +17,7 @@ export async function workflowStatus(context, selection) {
       f.review = await reviewState(root, f.requirementId, f.id);
       f.feedback = await readFeedback(root,f.key);
       f.acceptance=await readAcceptance(root,f.requirementId,f.id);
-      const value = workflowState(f, modules, context.store.runs(repositoryId), context.store.reports(repositoryId), data.config.specRepositoryId);
+      const value = workflowState(f, modules, context.store.runs(repositoryId), context.store.reports(repositoryId), data.config.specRepositoryId, context.store.projection(repositoryId), specSourceDigest);
       value.portableState = await recordedWorkflow(root, f, value); value.title = f.title;
       workflows.push(value);
     }
@@ -34,9 +35,10 @@ export async function persistWorkflowState(context) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const snapshot = await ensureDraft({ ...context, repositoryId });
     const modules=await liveWorkflowModules({...context,repositoryId},snapshot);
+    const specSourceDigest=await liveWorkflowSpecSourceDigest(context,snapshot);
     const changes = await inDraftView(snapshot, async root => {
       const paths = await refreshWorkflowFiles(root, { modules,
-        runs: store.runs(repositoryId), reports: store.reports(repositoryId) });
+        runs: store.runs(repositoryId), reports: store.reports(repositoryId), checkpoint: store.projection(repositoryId), specSourceDigest });
       if (!paths.length) return [];
       return (await sourceFiles(root)).filter(f => paths.includes(f.path)).map(f => ({ ...f,
         baseHash: snapshot.files.find(x => x.target === f.target && x.path === f.path)?.baseHash ?? null }));

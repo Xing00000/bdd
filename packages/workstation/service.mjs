@@ -12,12 +12,14 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { invariant, id, exists, readJson, safePath, identity } from '../contracts/index.mjs';
 import { createGit, remoteUrl, branchName, processEnvironment } from '../git-core/index.mjs';
+import { readProgress } from '../git-core/progress-store.mjs';
 import { artifactDirectory } from './reports.mjs';
 import { projectFiles, readProjectFile } from './repository-actions.mjs';
 import { migrateCheckoutDirectory } from './migrate.mjs';
 import { listTransactions } from './transactions.mjs';
 import { openStore } from './store.mjs';
 import {llmTasks} from './interaction-types.mjs';
+import {sdkServiceShutdownGraceMs} from './agent-lifecycle.mjs';
 import {openChat} from './chat.mjs';
 import { workflowStatus } from './workflow.mjs';
 import { workflowState, recordedWorkflow } from './workflow-state.mjs';
@@ -25,10 +27,11 @@ import { validateRequest, repositoryDetail, repositoryPath, readRepositoryFile }
 
 export async function createWorkstation(configuration) {
   await mkdir(configuration.home, { recursive: true, mode: 0o700 });
-  const options = { autoAcquire: true, allowLocal: false, hosts: ['github.com'], enableExecution: false, ...configuration, home: await realpath(configuration.home) };
+  const options = { autoAcquire: false, allowLocal: false, hosts: ['github.com'], enableExecution: false, ...configuration, home: await realpath(configuration.home) };
   const store = openStore(options.home);
   try { await migrateCheckoutDirectory(options.home); } catch (error) { store.close(); throw error; }
   const children = new Map(),terminalDrafts=new Map(); let closing = false;
+  const shutdownGrace=operation=>llmTasks.includes(operation.request.operation)&&readProgress(options.home,operation.id)?.state?.runtime!=='custom-cli'?sdkServiceShutdownGraceMs:2000;
   let chatService,chatOpening;
   function recordInteraction(repositoryId,operation,input,action) {
     const operationId=`OP-${randomUUID()}`;
@@ -97,6 +100,21 @@ export async function createWorkstation(configuration) {
     terminalInput(operationId, input) {
       const operation=this.operation(operationId),child=children.get(operationId);
       invariant(llmTasks.includes(operation.request.operation)&&operation.status==='RUNNING'&&child?.connected,'TERMINAL_UNAVAILABLE','終端已結束或不屬於這個服務。',409);
+      invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_TERMINAL_INPUT','終端輸入無效。');
+      const state=readProgress(options.home,operationId)?.state;
+      if(Object.hasOwn(input,'message')) {
+        invariant(state?.runtime==='codex-sdk','TERMINAL_RUNTIME_MISMATCH','完整訊息只能傳送至正在執行的 Codex SDK 派工。',409);
+        invariant(state.phase==='RUNNING','TERMINAL_UNAVAILABLE','SDK 回合已結束或尚未開始。',409);
+        invariant(typeof input.message==='string'&&input.message.trim()&&Buffer.byteLength(input.message)<=65536&&input.data===undefined&&input.cols===undefined&&input.rows===undefined,'INVALID_TERMINAL_INPUT','SDK 訊息必須是非空白文字，且不得超過 64 KiB。');
+        const interactionId=`OP-${randomUUID()}`;
+        store.enqueue({schemaVersion:1,operationId:interactionId,repositoryId:operation.repository_id,operation:'interaction.cli.input',input:{parentOperationId:operationId,message:input.message}});
+        store.claim(interactionId);
+        // The SDK host reads this immutable message by ID. CRLF, backspace and
+        // literal control characters are message content, never terminal edits.
+        child.send({type:'development.input',interactionId},error=>{if(error)store.finish(interactionId,'FAILED',undefined,error);});
+        return {sent:true,interactions:[store.get(interactionId)]};
+      }
+      invariant(state?.runtime!=='codex-sdk'||input.data===undefined,'TERMINAL_RUNTIME_MISMATCH','Codex SDK 請使用完整訊息輸入。',409);
       invariant(typeof input.data==='string'&&Buffer.byteLength(input.data)<=4096 || input.data===undefined&&Number.isInteger(input.cols)&&input.cols>=20&&input.cols<=300&&Number.isInteger(input.rows)&&input.rows>=5&&input.rows<=150,'INVALID_TERMINAL_INPUT','終端輸入無效。');
       const interactions=[];
       if(typeof input.data==='string') {
@@ -150,14 +168,14 @@ export async function createWorkstation(configuration) {
         const operationId=`OP-${randomUUID()}`;
         store.setConnection(repositoryId,{status:'QUEUED',operationId,localPath:selected});
         store.enqueue({schemaVersion:1,operationId,repositoryId,operation:'repository.acquire',input:{}});launch(operationId);
-      }
+      } else store.setConnection(repositoryId, { status: 'DEFERRED', localPath: selected });
       return {...record,localPath:selected,connection:store.connection(repositoryId)};
     },
     async detail(repositoryId) {
       const repository = store.repository(id(repositoryId)), context = { root: await repositoryPath(options.home, repositoryId,store), repository, repositoryId, options, store };
       let connection=store.connection(repositoryId);
       if(connection?.operationId && ['QUEUED','LOADING'].includes(connection.status)) {const op=store.get(connection.operationId);if(op&&['FAILED','CANCELLED','INTERRUPTED'].includes(op.status)){connection={...connection,status:'FAILED',error:op.error};store.setConnection(repositoryId,connection);}}
-      const detail = (store.draft(repositoryId)||repository.localPath) ? await draftDetail(context) : await repositoryDetail(options, repository);
+      const detail = await draftDetail(context);
       const runs = store.runs(repositoryId), reports = store.reports(repositoryId);
       for (const run of runs) {
         const publication = await safePath(options.home, `executions/${run.id}/publication.json`);
@@ -166,7 +184,7 @@ export async function createWorkstation(configuration) {
       }
       for (const feature of detail.spec?.features ?? []) {
         feature.tooling = store.check(repositoryId, feature.key);
-        feature.workflow=workflowState(feature,detail.modules??[],runs,reports,detail.spec.config.specRepositoryId);
+        feature.workflow=workflowState(feature,detail.modules??[],runs,reports,detail.spec.config.specRepositoryId,store.projection(repositoryId),detail.specSourceDigest);
         feature.workflow.portableState=await recordedWorkflow(context.root,feature,feature.workflow).catch(()=>({state:'NOT_EXPORTED'}));
         feature.verification={status:feature.workflow.verification,...(feature.workflow.latestReport?{runId:feature.workflow.latestReport.runId,testedSpecCommit:feature.workflow.latestReport.testedSpecCommit}:{})};
         feature.review.stage=feature.workflow.stage;
@@ -192,14 +210,14 @@ export async function createWorkstation(configuration) {
     },
     async projectFiles(repositoryId, projectId) {
       store.repository(id(repositoryId)); const root=await repositoryPath(options.home,repositoryId,store);
-      return (store.draft(repositoryId)||store.repository(repositoryId).localPath) ? draftProjectFiles({root,options,store,repositoryId},projectId) : projectFiles(root,projectId,createGit(options));
+      return draftProjectFiles({root,options,store,repositoryId},projectId);
     },
     async readProjectFile(repositoryId, projectId, relative) {
       store.repository(id(repositoryId)); const root=await repositoryPath(options.home,repositoryId,store);
-      return (store.draft(repositoryId)||store.repository(repositoryId).localPath) ? readDraftFile({root,options,store,repositoryId},relative,projectId,true) : readProjectFile(root,projectId,relative,createGit(options));
+      return readDraftFile({root,options,store,repositoryId},relative,projectId,true);
     },
     async readFile(repositoryId, relative) { store.repository(id(repositoryId));
-      return (store.draft(repositoryId)||store.repository(repositoryId).localPath) ? readDraftFile({root:await repositoryPath(options.home,repositoryId,store),options,store,repositoryId},relative) : readRepositoryFile(options.home,repositoryId,relative,store.repository(repositoryId)); },
+      return readDraftFile({root:await repositoryPath(options.home,repositoryId,store),options,store,repositoryId},relative); },
     async inspect(repositoryId, projectId) {
       store.repository(id(repositoryId)); const git = createGit(options), root = await repositoryPath(options.home, repositoryId,store);
       await checkRepositoryIdentity(root,store.repository(repositoryId),git);
@@ -239,7 +257,7 @@ export async function createWorkstation(configuration) {
       if (child) store.requestCancellation(operationId);
       if (child?.pid) { try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGTERM'); else child.kill('SIGTERM'); } catch {} }
       if (child) {
-        const timer = setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch {} }, 2000);
+        const timer = setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch {} }, shutdownGrace(operation));
         child.once('close', () => clearTimeout(timer));
         return this.operation(operationId);
       }
@@ -252,9 +270,10 @@ export async function createWorkstation(configuration) {
         const operation = this.operation(operationId);
         if (['QUEUED', 'RUNNING'].includes(operation.status)) this.cancel(operationId,{record:false});
       }
-      await Promise.all(active.map(([, child]) => new Promise(resolve => {
+      await Promise.all(active.map(([operationId, child]) => new Promise(resolve => {
         if (child.exitCode !== null || child.signalCode) return resolve();
-        const timer = setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch {} }, 1500);
+        const operation=this.operation(operationId),grace=shutdownGrace(operation);
+        const timer = setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch {} }, grace===sdkServiceShutdownGraceMs?grace:1500);
         child.once('close', () => { clearTimeout(timer); resolve(); });
       })));
       try { if(chatOpening)await chatOpening; await chatService?.close(); } finally { store.close(); }

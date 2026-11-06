@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {rm,mkdir} from 'node:fs/promises';
 import {chromium,expect} from '@playwright/test';
-import {fixture,toolkitRoot} from '../workstation/helpers.mjs';
+import {fixture,toolkitRoot,git} from '../workstation/helpers.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 
 test('LLM requests retain stage-scoped collapsible logs while saves stay absent after restart', {timeout:90000},async t=>{
   const f=await fixture(t),options={home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false,enableExecution:false};
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   let app=await createStandaloneServer(options);t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
   const port=app.server.address().port,origin=`http://127.0.0.1:${port}`;
   app.service.register({id:'SPEC-history-ui',title:'History UI',remoteUrl:f.remote});

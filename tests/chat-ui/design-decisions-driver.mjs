@@ -5,6 +5,7 @@ import path from 'node:path';
 import {validateAgentRuntimeSettings} from '../../packages/workstation/agent-settings.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 import {parseDesignDecisions,writeDesignDecisions} from '../../packages/spec-toolkit/design-decisions.mjs';
+import {git} from '../workstation/helpers.mjs';
 const proposed={schemaVersion:1,items:[{id:'identity',question:'主機如何驗證身分？',options:[{id:'token',label:'每台主機獨立憑證',description:'由共同服務驗證主機歸屬。'}],answer:null},{id:'resources',question:'LLM 資源回報哪些資料？',options:[{id:'models',label:'只回報可用模型名稱'}],answer:null}]};
 export async function* designDecisionScenario(page,info,{real=false}={}){
  const directory=await mkdtemp(path.join(tmpdir(),'bdd-design-ui-')),repositoryId='SPEC-decision-ui',ids={requirementId:'REQ-001',featureId:'hosts'},file='spec/REQ-001/hosts/hosts.sd.md',home=path.join(directory,'home');
@@ -13,6 +14,7 @@ export async function* designDecisionScenario(page,info,{real=false}={}){
  const expectMode=async mode=>{const editing=mode==='edit';await expect(page.locator('#design-edit-button')).toBeVisible({visible:!editing});await expect(page.locator('#save-source')).toBeVisible({visible:editing});await expect(page.locator('#design-controls #save-source')).toHaveCount(1);};
  let seq=0;const job=async(operation,input={})=>{const id='OP-decision-'+(++seq);app.service.enqueue({schemaVersion:1,operationId:id,repositoryId,operation,input});const result=await app.service.wait(id,180000);expect(result.status,JSON.stringify(result.error)).toBe('SUCCEEDED');return result;};
  try{
+  await git.command(undefined,['init','--bare','--initial-branch','main',path.join(directory,'remote.git')]);
   app.service.register({id:repositoryId,title:'Host decisions',remoteUrl:path.join(directory,'remote.git')});
   let agent={...runtime,command:path.resolve('node_modules/@openai/codex/bin/codex.js')};
   if(!real){const peer=path.join(directory,'design-protocol-peer.mjs'),content=writeDesignDecisions('# 主機系統設計\n\n保留原始設計。<script>parent.injectionRan=true</script>\n',proposed);await writeFile(peer,`import {readFile,writeFile} from 'node:fs/promises';const {task}=JSON.parse(await readFile(process.argv[2],'utf8'));if(!task.decisionContract)throw Error('Missing decision contract');await writeFile(task.output,${JSON.stringify(content)});`);agent={command:process.execPath,args:[peer,'{task}'],timeoutMs:15000};}

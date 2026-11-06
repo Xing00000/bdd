@@ -25,7 +25,9 @@ async function bound(t,{empty=false, product=false}={}) {
     }
     await git.command(source,['remote','add','origin',f.remote]);await git.push(source,{},await git.inspect(source));
   }
-  const options={home:f.home,toolkitRoot,allowLocal:true};const service=await createWorkstation(options);t.after(()=>service.close());
+  // These fixtures explicitly import historical commits and reports. Ordinary
+  // registration stays deferred; acquisition is enabled only for this catalog fixture.
+  const options={home:f.home,toolkitRoot,allowLocal:true,autoAcquire:true};const service=await createWorkstation(options);t.after(()=>service.close());
   const registered=service.register({id:'SPEC-bound',title:'Bound Spec',remoteUrl:f.remote});
   const result=await service.wait(registered.connection.operationId);
   assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));
@@ -37,7 +39,7 @@ async function job(f,operation,input={}) {
   f.service.enqueue({schemaVersion:1,repositoryId:'SPEC-bound',operationId,operation,input});
   return f.service.wait(operationId);
 }
-test('binding alone creates the local checkout, imports all existing requirements and exposes design',async t=>{
+test('explicit catalog acquisition imports the existing checkout, requirements and design',async t=>{
   const f=await bound(t);const d=await f.service.detail('SPEC-bound');
   assert.equal(d.connection.status,'READY');assert.equal(await exists(path.join(f.root,'.git')),true);
   assert.equal(d.spec.features.length,1);assert.equal(d.spec.features[0].key,'REQ-001/login');
@@ -49,16 +51,17 @@ test('binding restores the declared submodule version instead of its newer defau
   const f=await bound(t,{product:true});const m=(await git.modules(f.root))[0];assert.equal(m.actual,f.pinned);assert.equal(m.commit,f.pinned);
   const d=await f.service.detail('SPEC-bound');assert.equal(d.preferences.projects[0].id,'product');
 });
-test('an empty bound remote is initialized without uploading or requiring separate clone/init buttons',async t=>{
+test('explicit acquisition initializes an empty workspace without committing or uploading',async t=>{
   const f=await bound(t,{empty:true});assert.equal(await exists(path.join(f.root,'workbench.yaml')),true);
-  assert.ok((await git.inspect(f.root)).head);assert.equal((await git.inspect(f.root)).clean,true);assert.equal((await f.service.detail('SPEC-bound')).spec.features.length,0);
+  assert.equal((await git.inspect(f.root)).head,null);assert.equal((await git.inspect(f.root)).clean,false);assert.equal((await f.service.detail('SPEC-bound')).spec.features.length,0);
   assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
 });
-test('unreachable binding is visibly failed but its local directory, settings and SQLite authoring survive',async t=>{
+test('a deferred binding survives a failed explicit acquisition with its settings and SQLite authoring',async t=>{
   const f=await fixture(t),service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>service.close());
   const r=service.register({id:'SPEC-bound',title:'Offline',remoteUrl:path.join(f.base,'missing.git')});
   assert.equal(await exists(path.join(f.home,'repositories/SPEC-bound')),true);
-  assert.equal((await service.wait(r.connection.operationId)).status,'FAILED');
+  assert.equal(r.connection.status,'DEFERRED');assert.equal(r.connection.operationId,undefined);
+  assert.equal((await job({service},'repository.acquire')).status,'FAILED');
   assert.equal((await service.detail('SPEC-bound')).connection.status,'FAILED');
   const out=await job({service},'repository.setup',{reviewer:'Human',projects:[]});assert.equal(out.status,'SUCCEEDED');
   assert.equal((await service.detail('SPEC-bound')).preferences.reviewer,'Human');
@@ -117,20 +120,26 @@ test('SQLite v6 migration preserves existing saved data while adding connection 
   const db=new DatabaseSync(path.join(f.home,'metadata.sqlite'));db.exec('PRAGMA user_version=6');db.close();
   const store=openStore(f.home);assert.equal(store.draft('SPEC-bound').revision,before);assert.equal(await exists(path.join(f.home,'before-catalog-regression-v7.sqlite')),true);store.close();
 });
-test('real HTTP exposes auto acquisition status and read-only version catalog without manual clone',async t=>{
+test('real HTTP defers registration and exposes history after explicit catalog acquisition',async t=>{
   const f=await fixture(t),source=path.join(f.base,'source');await specRepository(source);
   const app=await createStandaloneServer({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>app.close());
   await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${app.server.address().port}`;
   const r=await fetch(origin+'/repository-api/v1/spec-repositories',{method:'POST',headers:{'content-type':'application/json','x-workbench-request':'1'},body:JSON.stringify({title:'Catalog',remoteUrl:source})});assert.equal(r.status,201);
-  const record=await r.json();assert.equal((await app.service.wait(record.connection.operationId)).status,'SUCCEEDED');
+  const record=await r.json();assert.equal(record.connection.status,'DEFERRED');assert.equal(record.connection.operationId,undefined);
+  assert.equal(await exists(path.join(record.localPath,'.git')),false);
+  const operationId=`OP-${crypto.randomUUID()}`;
+  app.service.enqueue({schemaVersion:1,repositoryId:record.id,operationId,operation:'repository.acquire',input:{}});
+  assert.equal((await app.service.wait(operationId)).status,'SUCCEEDED');
   const list=await (await fetch(`${origin}/repository-api/v1/spec-repositories/${record.id}/versions?ref=main`)).json();assert.equal(list.spec.features.length,1);
 });
 
-test('an automatically initialized empty binding can later prepare its saved product without a false gitmodules conflict',async t=>{
+test('an explicitly acquired empty repository binds its saved product at feature creation',async t=>{
   const f=await bound(t,{empty:true}),target=path.join(f.base,'later-product');
   await repository(target,{'src/example.ts':'export const ready = true;\n'});
   const saved=await job(f,'repository.setup',{reviewer:'Human',projects:[{id:'product',url:target}]});assert.equal(saved.status,'SUCCEEDED',JSON.stringify(saved.error));
-  const prepared=await job(f,'repository.prepare');assert.equal(prepared.status,'SUCCEEDED',JSON.stringify(prepared.error));
+  const before=(await git.inspect(f.root)).head;
+  const deferred=await job(f,'repository.prepare');assert.equal(deferred.error.code,'FEATURE_INITIALIZATION_REQUIRED');assert.equal((await git.inspect(f.root)).head,before);
+  const prepared=await job(f,'workflow.create',{title:'Product binding',acceptance:'New product is initialized',guided:true,projectIds:['product']});assert.equal(prepared.status,'SUCCEEDED',JSON.stringify(prepared.error));
   assert.equal((await git.modules(f.root))[0].actual,await git.resolve(target));
   assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1,'Preparing never uploads');
 });

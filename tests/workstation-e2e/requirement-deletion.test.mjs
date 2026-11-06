@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
-import {fixture,toolkitRoot} from '../workstation/helpers.mjs';
+import {fixture,toolkitRoot,git} from '../workstation/helpers.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 
 test('UI deletion confirms, persists, selects remaining requirements and supports deleting the last one',async t=>{
   const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,autoAcquire:false,allowLocal:true});t.after(()=>app.close());
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const repositoryId='SPEC-delete-ui';app.service.register({id:repositoryId,title:'Delete UI',remoteUrl:f.remote});let sequence=0;
   const job=async(operation,input)=>{const operationId=`OP-delete-ui-${++sequence}`;app.service.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});const result=await app.service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));};
   await job('repository.setup',{reviewer:'Human',projects:[]});await job('workflow.create',{requirementId:'REQ-001',featureId:'first',title:'First'});await job('workflow.create',{requirementId:'REQ-002',featureId:'second',title:'Second'});

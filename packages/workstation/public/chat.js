@@ -63,7 +63,7 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
   }
   function settingsPanel(settings,onSave,saveSettings){
     const details=el('details',undefined,'chat-settings');details.append(el('summary','對話設定'));const form=el('form',undefined,'chat-settings-form'),fields={};
-    for(const [key,label] of [['codexExecutable','Codex 執行檔'],['copilotExecutable','Copilot 執行檔'],['copilotArgs','Copilot 參數'],['timeoutMs','逾時']]){
+    for(const [key,label] of [['codexExecutable','Codex 執行檔'],['copilotExecutable','Copilot ACP 執行檔'],['copilotArgs','Copilot ACP 啟動參數'],['timeoutMs','逾時']]){
       const wrapper=el('label',label),input=el('input');input.setAttribute('aria-label','對話 '+label);input.value=key==='copilotArgs'?JSON.stringify(settings[key]):String(settings[key]);input.required=true;fields[key]=input;wrapper.append(input);form.append(wrapper);
     }
     const save=el('button','儲存對話設定');save.type='submit';form.append(save);

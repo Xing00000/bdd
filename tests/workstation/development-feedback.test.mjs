@@ -9,6 +9,7 @@ import { reviewState } from '../../packages/spec-toolkit/index.mjs';
 import { validateAgentSettings,agentExecutable,captureAgentProducts,readTerminal } from '../../packages/workstation/development.mjs';
 import { workflowState } from '../../packages/workstation/workflow-state.mjs';
 import { digest } from '../../packages/contracts/index.mjs';
+import { workspaceModules } from '../../packages/spec-toolkit/workspace.mjs';
 
 async function job(service,operation,input={},repositoryId='SPEC-one') {
  const operationId=`OP-${crypto.randomUUID()}`;service.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});return service.wait(operationId);
@@ -17,7 +18,7 @@ async function setup(t) {
  const f=await fixture(t);await specRepository(f.repo);await approve(f.repo);
  const baseline=(await reviewState(f.repo,'REQ-001','login')).hashes.tests;
  await sealedBundle(path.join(f.repo,'reports/REQ-001/login/RUN-history'),{runId:'RUN-history',specRepositoryId:'fixture-spec',requirementId:'REQ-001',featureId:'login',testedSpecCommit:await git.resolve(f.repo),baseline,projects:[],scope:'ALL_CASES',testOutcome:'PASSED',verification:'VERIFIED',coverageComplete:true,evidenceComplete:true,startedAt:'2026-01-01T00:00:00Z',finishedAt:'2026-01-01T00:00:10Z'});
- await commitAll(f.repo);const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>service.close());
+ await commitAll(f.repo);const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:true});t.after(()=>service.close());
  const r=service.register({id:'SPEC-one',title:'Spec',remoteUrl:f.repo});assert.equal((await service.wait(r.connection.operationId)).status,'SUCCEEDED');
  assert.equal((await job(service,'repository.setup',{reviewer:'Reviewer',projects:[]})).status,'SUCCEEDED');return {...f,service};
 }
@@ -49,8 +50,9 @@ test('only a newer genuine passing run clears feedback; an old success or a newe
  assert.equal(state(manifest).stage,'IMPLEMENTATION');assert.equal(state({...manifest,startedAt:'2026-01-03T00:00:00Z'}).stage,'VERIFICATION');assert.equal(state({...manifest,startedAt:'2026-01-03T00:00:00Z'}).status,'AWAITING_ACCEPTANCE');
  assert.equal(state({...manifest,testOutcome:'FAILED',startedAt:'2026-01-03T00:00:00Z'}).stage,'IMPLEMENTATION');
 });
-test('development settings use executable and argument arrays, never a shell command or approval bypass',async()=>{
- assert.deepEqual(validateAgentSettings().args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}']);
+test('development defaults to SDK and explicit custom CLIs keep executable and argument arrays',async()=>{
+ assert.equal(validateAgentSettings().runtime,'codex-sdk');assert.equal(validateAgentSettings().model,'auto');assert.equal(validateAgentSettings().args,undefined);
+ assert.deepEqual(validateAgentSettings({runtime:'custom-cli',command:'custom-agent',args:['{task}','{prompt}']}).args,['{task}','{prompt}']);
  assert.equal(await agentExecutable(process.execPath),process.execPath);
  for(const value of [{command:''},{command:'x\nrm'},{args:'rm -rf'},{maxAttempts:10},{timeoutMs:0}])assert.throws(()=>validateAgentSettings(value),{code:'INVALID_AGENT'});
  await assert.rejects(()=>agentExecutable('bdd-agent-certainly-absent-123'),{code:'AGENT_NOT_INSTALLED'});
@@ -63,10 +65,11 @@ test('compact UI contains none of the removed instructional blocks and confirmat
  assert.ok(html.indexOf('id="binding-status"')>html.indexOf('id="settings-view"'));
  assert.ok(!html.includes('class="next-action'));
  const dev=html.slice(html.indexOf('<section id="implementation-panel"'),html.indexOf('<section id="verification-panel"'));
- assert.ok(dev.includes('確認開發'));assert.ok(html.includes('CLI Agent 終端')); assert.ok(!dev.includes('產品原始碼'));assert.ok(!dev.includes('驗收範圍'));
+ assert.ok(dev.includes('確認開發'));assert.ok(html.includes('Agent 執行紀錄')); assert.ok(!dev.includes('產品原始碼'));assert.ok(!dev.includes('驗收範圍'));
 });
 test('development cannot start without existing human approvals and input cannot target a different operation',async t=>{
  const f=await fixture(t),s=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false,enableExecution:true});t.after(()=>s.close());
+ await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
  s.register({id:'SPEC-one',title:'Spec',remoteUrl:f.remote});await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});await job(s,'workflow.create',{title:'Login',guided:true});
  const r=await job(s,'workflow.develop',{requirementId:'REQ-001',featureId:'login'});assert.equal(r.status,'FAILED');assert.equal(r.error.code,'REVIEWS_REQUIRED');
  const op=await job(s,'repository.setup',{reviewer:'Reviewer',projects:[]});const terminal=await s.terminal(op.id);assert.equal(terminal.status,op.status);assert.equal(typeof terminal.output,'string');assert.throws(()=>s.terminalInput(op.id,{data:'input'}),{code:'TERMINAL_UNAVAILABLE'});await assert.rejects(()=>s.terminal('OP-missing'),{code:'OPERATION_NOT_FOUND'});
@@ -78,13 +81,14 @@ async function captureFixture(t) {
  await mkdir(f.home,{recursive:true});const store=openStore(f.home);t.after(()=>store.close());store.register({id:'SPEC-one',title:'Spec',remoteUrl:f.repo});
  store.saveDraft('SPEC-one',{expectedRevision:null,operationId:'seed',request:{},settings:{configured:true,projects:[{id:'product',url:source}]},files:[{target:'project:product',path:'remove.txt',content:'remove',baseHash:digest('remove')}],result:{}});
  store.setProjection('SPEC-one',{files:[],modules:await git.modules(f.repo)});
- return {...f,store,product:path.join(f.repo,'projects/product'),snapshot:store.draft('SPEC-one'),modules:await git.modules(f.repo),context:{root:f.repo,store,git,request:{repositoryId:'SPEC-one',operationId:'OP-capture'}}};
+ return {...f,store,product:path.join(f.repo,'projects/product'),snapshot:store.draft('SPEC-one'),modules:await workspaceModules(f.repo,[{id:'product',path:'projects/product'}],{entries:true}),context:{root:f.repo,store,git,request:{repositoryId:'SPEC-one',operationId:'OP-capture'}}};
 }
-test('actual agent product edits and deletions are saved once to SQLite and exact local versions',async t=>{
+test('actual agent product edits and deletions are saved to SQLite without intermediate Git versions',async t=>{
  const f=await captureFixture(t);await writeFile(path.join(f.product,'old.txt'),'edited');await writeFile(path.join(f.product,'new.txt'),'created');await unlink(path.join(f.product,'remove.txt'));
  const r=await captureAgentProducts(f.context,f.snapshot,f.modules);assert.deepEqual(r,{files:2,deleted:1});
  const saved=f.store.draft('SPEC-one');assert.equal(saved.files.find(x=>x.path==='old.txt').content,'edited');assert.equal(saved.files.find(x=>x.path==='new.txt').content,'created');assert.ok(!saved.files.some(x=>x.path==='remove.txt'));
- assert.equal((await git.inspect(f.product)).clean,true);assert.equal((await git.modules(f.repo))[0].actual,(await git.modules(f.repo))[0].commit);assert.equal((await git.command(f.product,['show','HEAD:old.txt'])).stdout,'edited');
+ assert.equal((await git.inspect(f.product)).clean,false);assert.equal((await git.modules(f.repo))[0].actual,(await git.modules(f.repo))[0].commit);assert.equal((await git.command(f.product,['show','HEAD:old.txt'])).stdout,'old');
+ assert.deepEqual(f.store.projection('SPEC-one').deletedFiles,[{target:'project:product',path:'remove.txt'}]);
 });
 test('concurrent SQLite saves block agent import without erasing either new draft or on-disk work',async t=>{
  const f=await captureFixture(t);await writeFile(path.join(f.product,'old.txt'),'agent work');const before=await git.resolve(f.product);

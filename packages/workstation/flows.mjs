@@ -1,12 +1,12 @@
 import { publishRegression } from './regression-evidence.mjs';
-/** User-facing transactions. Git plumbing stays behind save/sync, not in the UI. */
+/** Ordinary workflow materializes files; explicit synchronization publishes acceptance checkpoints. */
 import path from 'node:path';
 import { mkdir, readFile, mkdtemp, rename, rm } from 'node:fs/promises';
 import { WorkstationError, invariant, id, safePath, exists, readJson, writeJson, digest, identity, atomicWrite } from '../contracts/index.mjs';
 import { branchName, remoteUrl, execute, processEnvironment } from '../git-core/index.mjs';
 import { configuration, scan, reviewState, confirm, defaultProfiles } from '../spec-toolkit/index.mjs';
 import { installDependencies, checkTests } from './repository-actions.mjs';
-import { prepareRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
+import { prepareWorkspaceRun, executeRun, publishRun } from '../spec-toolkit/engine.mjs';
 import { reindexReports } from './reports.mjs';
 import { requirementDiagnostics } from './requirements.mjs';
 import { currentProgress } from '../git-core/progress.mjs';
@@ -31,15 +31,6 @@ export async function savePaths(root, paths, git, repositoryId, message) {
   const state = await attached(root, git, repositoryId);
   if (!paths.length) return { head: state.head, noChanges: true };
   return git.commitSelected(root, { paths: [...new Set(paths)], message }, state);
-}
-async function pinSavedProducts(root, git, repositoryId) {
-  const modules = await git.modules(root);
-  for (const p of modules) {
-    invariant(p.actual && !p.dirty, 'UNSAVED_PRODUCT', `產品 ${p.id} 尚有未儲存內容，請先儲存該產品再繼續。`, 409);
-  }
-  // commitSelected writes exact gitlink paths into an isolated index. It does not
-  // detach an editing branch or include unrelated staged changes.
-  return savePaths(root, modules.filter(p => p.commit !== p.actual).map(p => p.path), git, repositoryId, 'Save product version references');
 }
 export async function defaultBranch(url, git) {
   remoteUrl(url, git.policy);
@@ -123,7 +114,6 @@ export async function ensureInstallation({ root, options, request, profiles = de
   const after = await installationPlan(root, profiles, browserRoot);
   invariant(after.definition.packageHash === plan.definition.packageHash, 'DEPENDENCIES_CHANGED', '套件定義在安裝期間改變，請重新確認。', 409);
   await writeJson(path.join(root, '.runtime/flow-installation.json'), { repositoryId:request.repositoryId,digest: after.digest, browserFiles, installedAt: new Date().toISOString() });
-  if(git&&!locked)await savePaths(root, ['package-lock.json'], git, request.repositoryId, 'Save resolved test dependencies');
   return { installed: !reusable||!browsersReady };
 }
 
@@ -141,7 +131,6 @@ export async function advanceWorkflow(context) {
   const { root, options, store, request, git } = context;
   const settings = store.preferences(request.repositoryId);
   invariant(settings?.configured, 'SETUP_REQUIRED', '請先完成一次性設定。');
-  await git.expect(root, request.expected);
   const input = request.input;
   const key = `${id(input.requirementId)}/${id(input.featureId)}`;
   const data = await scan(root), feature = data.features.find(x => x.key === key);
@@ -167,19 +156,16 @@ export async function advanceWorkflow(context) {
       review = await reviewState(root, input.requirementId, input.featureId);
     }
     const result = await confirm(root, { ...input, expectedDigest: review.hashes[input.stage], confirmedBy: settings.reviewer });
-    await savePaths(root, [`spec/${input.requirementId}/review.json`], git, request.repositoryId, `Confirm ${key} ${input.stage}`);
     return { ...result, saved: true, nextStage: { gherkin: 'SD', sd: 'TESTS', tests: 'IMPLEMENTATION' }[input.stage] };
   }
   invariant(Object.values(review.confirmed).every(Boolean), 'REVIEWS_REQUIRED', '需求、設計或測試已變更，請先完成必要的內容確認。', 409);
   await ensureInstallation({ ...context, profiles: feature.profiles });
-  await pinSavedProducts(root, git, request.repositoryId);
-  const candidate = await prepareRun({ root, home: options.home, repositoryId: request.repositoryId, input: { requirementId: input.requirementId, featureId: input.featureId, expected: await git.inspect(root) }, git });
+  const candidate = await prepareWorkspaceRun({ root, home: options.home, repositoryId: request.repositoryId, input: { requirementId: input.requirementId, featureId: input.featureId } });
   store.recordRun(request.repositoryId, candidate, 'PREPARED');
   const result = await executeRun({ home: options.home, repositoryId: request.repositoryId, runId: candidate.runId, git, enabled: true });
   store.recordRun(request.repositoryId, result, 'SEALED');
-  // Local report history is automatic. Remote exposure still requires sync.
-  const publication = await publishRun({ root, home: options.home, repositoryId: request.repositoryId, runId: candidate.runId, git, push: false });
-  return { ...result, publication, saved: true, synchronized: false };
+  // Sealed evidence stays in local storage until a human completes acceptance.
+  return { ...result, saved: true, synchronized: false };
 }
 
 async function syncPreflight(root, destination, git, label) {
@@ -200,40 +186,36 @@ async function syncPreflight(root, destination, git, label) {
 }
 export async function synchronizeRepository(context) {
   const { root, options, store, request, git } = context, repositoryId = request.repositoryId;
-  const settings = store.preferences(repositoryId);
+  const checkpoint = store.projection(repositoryId), saved = store.preferences(repositoryId);
+  const settings = { ...saved, sync: checkpoint?.destinations ?? saved?.sync };
   invariant(settings?.sync, 'SETUP_REQUIRED', '請先完成一次性設定。');
   await git.expect(root, request.expected, { clean: true });
   const journalPath = await safePath(options.home, `sync-receipts/${repositoryId}/${request.operationId}.json`);
   const receipt = { repositoryId, status: 'SYNCING', completed: [], startedAt: new Date().toISOString() };
   await writeJson(journalPath, receipt);
   try {
-    let specPlan = await syncPreflight(root, settings.sync.spec, git, '規格庫');
-    // Pull only an uncontested fast-forward. No automatic merge/conflict resolution.
-    if (specPlan.incoming) {
-      await git.command(root, ['merge', '--ff-only', specPlan.remoteSha]);
-      await git.restore(root, await git.inspect(root));
-      const config = await configuration(root);
-      invariant(config.projects.every(p => settings.sync.projects.some(s => s.id === p.id)), 'SETUP_CHANGED', '遠端新增了產品，請在集中設定確認其同步來源。', 409);
-    }
+    const specPlan = await syncPreflight(root, settings.sync.spec, git, '規格庫');
+    invariant(!specPlan.incoming, 'SYNC_REMOTE_AHEAD', '遠端已有更新；請先從版本頁檢視。同步只發布目前驗收版本，不合併或建立新版本。', 409);
     const plans = [];
     for (const module of await git.modules(root)) {
       const target = settings.sync.projects.find(x => x.id === module.id);
       invariant(target, 'SETUP_CHANGED', '產品同步位置尚未設定。', 409);
       const directory = path.join(root, module.path), { id: ignored, ...destination } = target;
-      plans.push({ directory, destination, id: ignored, ...await syncPreflight(directory, destination, git, `產品 ${module.id}`) });
+      invariant(module.actual === module.commit && !module.dirty, 'ACCEPTANCE_CHECKPOINT_REQUIRED', '產品有尚未驗收的修改，未建立同步版本。', 409);
+      const plan = { directory, destination, id: ignored, ...await syncPreflight(directory, destination, git, `產品 ${module.id}`) };
+      invariant(!plan.incoming, 'SYNC_REMOTE_AHEAD', `產品 ${module.id} 的遠端已有更新；請先檢視版本。`, 409); plans.push(plan);
     }
     // All destinations are checked before any push; a subsequent remote race is
     // still rejected by ordinary non-force push and recorded as partial progress.
     for (const plan of plans) {
-      await attached(plan.directory, git, repositoryId);
-      if (plan.incoming) await git.command(plan.directory, ['merge', '--ff-only', plan.remoteSha]);
       const result = await git.push(plan.directory, plan.destination, await git.inspect(plan.directory));
       receipt.completed.push({ kind: 'project', id: plan.id, ...result }); await writeJson(journalPath, receipt);
     }
-    await pinSavedProducts(root, git, repositoryId);
     const result = await git.push(root, settings.sync.spec, await git.inspect(root));
     receipt.completed.push({ kind: 'spec', ...result }); await writeJson(journalPath, receipt);
     for (const run of store.runs(repositoryId).filter(x => x.state === 'SEALED' && x.result.mode !== 'REGRESSION')) {
+      // Unaccepted runs have local sealed files but no Git publication checkpoint.
+      if (!await exists(await safePath(options.home, `executions/${run.id}/publication.json`))) continue;
       const publication = await publishRun({ root, home: options.home, repositoryId, runId: run.id, git, push: true });
       receipt.completed.push({ kind: 'report', runId: run.id, ...publication }); await writeJson(journalPath, receipt);
     }

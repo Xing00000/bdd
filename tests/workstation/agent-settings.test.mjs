@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { seedAgentSettings, validateAgentSettings, renderAgentPrompt } from '../../packages/workstation/agent-settings.mjs';
+import { seedAgentSettings, validateAgentSettings, validateAgentRuntimeSettings, renderAgentPrompt } from '../../packages/workstation/agent-settings.mjs';
 import { ensureDraft, editDraft } from '../../packages/workstation/authoring.mjs';
 import { openStore } from '../../packages/workstation/store.mjs';
 import { fixture, toolkitRoot } from './helpers.mjs';
 
-test('editable seed pins the model without injecting a general-purpose skill manual',async()=>{
+test('editable seed uses Codex SDK and the shared model without CLI arguments or a skill manual',async()=>{
   const seed=validateAgentSettings();
-  assert.deepEqual(seed.args,['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}']);
+  assert.equal(seed.runtime,'codex-sdk');assert.equal(seed.model,'auto');assert.equal(seed.command,undefined);assert.equal(seed.args,undefined);
   assert.equal(seed.skills,'');
   assert.equal(seed.maxAttempts,3);assert.equal(seed.timeoutMs,900000);
 });
@@ -21,7 +21,20 @@ test('legacy values and explicit empty skills survive seeding and partial settin
   const custom={...merged,prompt:'custom {spec}',skills:''};
   assert.deepEqual(seedAgentSettings(custom),custom);
   assert.deepEqual(validateAgentSettings({command:'other'},custom),{...custom,command:'other'});
-  merged.args.push('changed');assert.ok(!seedAgentSettings().args.includes('changed'));
+  merged.args.push('changed');assert.ok(!seedAgentSettings({runtime:'custom-cli'}).args.includes('changed'));
+});
+
+test('only exact legacy factory argv migrate to SDK and explicit custom execution survives',()=>{
+  const factory=['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}'];
+  for(const args of [factory,factory.filter(arg=>arg!=='{mcp}')])assert.deepEqual(validateAgentRuntimeSettings({command:'codex',args}),validateAgentRuntimeSettings());
+  for(const value of [{command:'/usr/local/bin/codex',args:factory},{command:'codex',args:[...factory,'--custom-option']},{command:'another-agent',args:factory},{command:'codex',args:['exec','--model','custom-model','{task}']}]){
+    const settings=validateAgentRuntimeSettings(value);assert.equal(settings.runtime,'custom-cli');assert.equal(settings.command,value.command);assert.deepEqual(settings.args,value.args);
+  }
+  assert.equal(validateAgentRuntimeSettings({runtime:'custom-cli',command:'codex',args:factory}).runtime,'custom-cli');
+  const sdk=validateAgentSettings({runtime:'codex-sdk',model:' selected-model ',command:'unused-missing-cli',args:['unused']});
+  assert.equal(sdk.model,'selected-model');assert.equal(sdk.command,undefined);assert.equal(sdk.args,undefined);
+  assert.equal(validateAgentSettings({command:'explicit-custom',args:['{task}']},sdk).runtime,'custom-cli');
+  for(const input of [{runtime:'unknown'},{runtime:'codex-sdk',model:''},{runtime:'codex-sdk',model:'bad\nmodel'},{runtime:'codex-sdk',model:42}])assert.throws(()=>validateAgentRuntimeSettings(input),{code:'INVALID_AGENT'});
 });
 
 test('prompt and skills enforce text, template names and UTF-8 byte limits',()=>{
@@ -63,12 +76,25 @@ test('persisted factory skill retirement changes settings once and preserves sou
   const repositoryId='SPEC-context';store.register({id:repositoryId,title:'Context',remoteUrl:f.remote});
   const context={root:f.repo,options:{toolkitRoot,allowLocal:true},store,repositoryId};
   const initial=await ensureDraft(context),legacy=await readFile(new URL('../../skills/playwright-bdd/SKILL.md',import.meta.url),'utf8');
-  const agent={...initial.settings.agent,command:'custom-cli',args:['custom-mode','{prompt}'],prompt:'Custom task {spec}',skills:legacy};
+  const agent={...validateAgentSettings({runtime:'custom-cli',command:'custom-cli',args:['custom-mode','{prompt}'],prompt:'Custom task {spec}'},initial.settings.agent),skills:legacy};
   store.saveDraft(repositoryId,{expectedRevision:initial.revision,settings:{...initial.settings,agent},files:[],operationId:'seed-factory-context',request:{fixture:'factory-context'}});
   const before=store.draft(repositoryId),migrated=await ensureDraft(context);
   assert.equal(migrated.revision,before.revision+1);
   assert.deepEqual(migrated.settings.agent,{...agent,skills:''});assert.deepEqual(migrated.files,before.files);
   assert.equal((await ensureDraft(context)).revision,migrated.revision);
+});
+
+test('a persisted factory Codex runtime upgrades once to SDK without changing authored prompts or sources',async t=>{
+  const f=await fixture(t);const {mkdir}=await import('node:fs/promises');await mkdir(f.home,{recursive:true});
+  const store=openStore(f.home);t.after(()=>store.close());const repositoryId='SPEC-factory';store.register({id:repositoryId,title:'Factory',remoteUrl:f.remote});
+  const context={root:f.repo,options:{toolkitRoot,allowLocal:true},store,repositoryId},initial=await ensureDraft(context);
+  const {runtime:ignoredRuntime,model:ignoredModel,...content}=initial.settings.agent;
+  const legacy={...content,command:'codex',args:['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}'],prompt:'Keep this exact {featureId} instruction',skills:'Keep these authored skill instructions'};
+  store.saveDraft(repositoryId,{expectedRevision:initial.revision,settings:{...initial.settings,agent:legacy},files:[],operationId:'seed-old-factory',request:{fixture:'factory-runtime'}});
+  const before=store.draft(repositoryId),migrated=await ensureDraft(context);
+  assert.equal(migrated.revision,before.revision+1);assert.equal(migrated.settings.agent.runtime,'codex-sdk');assert.equal(migrated.settings.agent.model,'auto');
+  assert.equal(migrated.settings.agent.command,undefined);assert.equal(migrated.settings.agent.args,undefined);assert.equal(migrated.settings.agent.prompt,legacy.prompt);assert.equal(migrated.settings.agent.skills,legacy.skills);
+  assert.deepEqual(migrated.files,before.files);assert.equal((await ensureDraft(context)).revision,migrated.revision);
 });
 
 test('SQLite seeds missing legacy fields once, preserves custom settings, and rejects saves atomically',async t=>{

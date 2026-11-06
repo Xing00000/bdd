@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chromium,expect} from '@playwright/test';
-import {fixture,toolkitRoot,testBrowserRoot} from '../workstation/helpers.mjs';
+import {fixture,toolkitRoot,testBrowserRoot,git} from '../workstation/helpers.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 
 test('real CLI system design previews, generates into the editor and retains SD terminal history',{timeout:180000},async t=>{
   const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,autoAcquire:false,allowLocal:true,enableExecution:true});t.after(()=>app.close());
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   const repositoryId='SPEC-design-ui',ids={requirementId:'REQ-001',featureId:'reader'};app.service.register({id:repositoryId,title:'Design UI',remoteUrl:f.remote});let sequence=0;
   const job=async(operation,input)=>{const operationId=`OP-design-ui-${++sequence}`;app.service.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});const result=await app.service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));return result;};
   await job('repository.setup',{reviewer:'UI verification',projects:[],agent:{timeoutMs:120000}});await job('workflow.create',{...ids,title:'Reader'});
