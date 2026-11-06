@@ -11,9 +11,10 @@ document.addEventListener('DOMContentLoaded',()=>{ document.querySelector('#sett
 const stages = [
   ['GHERKIN','需求確認','需求'],['SD','系統設計','設計'],['TESTS','測試計劃','測試'],['IMPLEMENTATION','開發實作','開發'],['VERIFICATION','驗收','驗收']
 ];
-const labels = { 'workflow.delete':'刪除需求', 'workflow.design.generate':'LLM 生成系統文件', 'workflow.gherkin.generate':'LLM 生成 Gherkin', 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'取得產品原始碼', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
+const labels = { 'workflow.delete':'刪除需求', 'workflow.design.generate':'LLM 生成系統文件', 'workflow.gherkin.generate':'LLM 生成 Gherkin', 'repository.tools.prepare':'準備 Spec Repo 測試套件','workflow.tests.generate':'Playwright-BDD 產生骨架','workflow.tests.complete':'LLM 生成測試計劃', 'repository.acquire':'載入規格與歷史', 'repository.location':'套用本地目錄', 'regression.start':'整庫回歸', 'repository.setup':'儲存設定', 'repository.prepare':'準備工作檔案', 'repository.save':'儲存', 'repository.sync':'遠端同步', 'workflow.create':'建立需求功能', 'workflow.requirement.save':'儲存需求', 'workflow.review':'確認並繼續', 'workflow.develop':'開發', 'workflow.feedback':'問題回報', 'workflow.verify':'執行驗收' };
 Object.assign(labels,{'interaction.requirement.generate':'產生 Gherkin','interaction.document.import':'匯入文件'});
-labels['interaction.cli.input']='CLI 回覆';
+labels['workflow.accept']='完成人工驗收';
+labels['interaction.cli.input']='補充訊息';
 labels['interaction.cancel']='停止作業';
 const state = { repositories:[], repositoryId:null, detail:null, view:'features', stage:'GHERKIN', featureKey:null, projectId:null, editor:null, composer:null, composerRequest:0, transient:false, product:null, busy:false, loading:false, epoch:0, sourceRequest:0, productRequest:0, reportRequest:0, formDirty:false, capabilities:null, scope:null };
 const acceptanceDrafts=new Map();let acceptanceBusy=false;
@@ -46,7 +47,11 @@ function block() {
   $('#home-view').inert=value;$('#repository-view').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
   const editable=feature()?.review.editable??{gherkin:true,sd:false,tests:false};
   $('#sidebar').inert=value;$('#source-editor').readOnly=value||!editable[state.stage==='SD'?'sd':'tests'];$('#hook-editor').readOnly=value||!editable.tests;$('#project-editor').readOnly=value;$('#requirement-description').readOnly=value||!editable.gherkin;$('#requirement-gherkin').readOnly=value||!editable.gherkin;$('#generate-gherkin').disabled=value||!editable.gherkin||!$('#requirement-description').value.trim();$('#upload-requirement').disabled=value||!editable.gherkin;
-  $('#sync').disabled=value||dirty()||!state.detail?.preferences?.configured;
+  const checkpoint=state.detail?.projection?.checkpointRevision;
+  const acceptancePending=state.detail?.spec?.features?.some(f=>f.workflow?.status==='ACCEPTANCE_PENDING');
+  const checkpointCurrent=state.detail?.projection?.checkpointKind==='ACCEPTED'&&checkpoint!==undefined&&checkpoint===state.detail?.authoring?.revision&&!acceptancePending;
+  $('#sync').disabled=value||dirty()||!state.detail?.preferences?.configured||!checkpointCurrent;
+  $('#sync').title=checkpointCurrent?'同步已驗收的版本':acceptancePending?'請先重試完成驗收':'請先完成人工驗收，才能同步已驗收版本';
 }
 let dialogResolve;
 function closeDialog(value=false) { $('#form-dialog').close();if(dialogResolve){const resolve=dialogResolve;dialogResolve=null;resolve(value);} }
@@ -71,7 +76,7 @@ async function previewAgent(purpose,source={}) {
     dialogResolve=resolve;
     const promptField=field('派工 Prompt','prompt',preview.prompt,{rows:12}),refreshPreview=button('更新預覽',async()=>{try{preview=await api(`/spec-repositories/${repositoryId}/agent-preview`,'POST',{purpose,...(f?{requirementId:f.requirementId,featureId:f.id}:{}),...source,agentSelection:selection.value()});promptField.querySelector('textarea').value=preview.prompt;$('#dialog-error').textContent='';}catch(error){$('#dialog-error').textContent=error.message;}});
     selection.root.onchange=()=>{$('#dialog-error').textContent='選擇已變更，請按更新預覽。';};
-    dialog('預覽 CLI Prompt','選擇本次 Agent 與 Skills；修改選擇後請更新預覽。',[selection.root,refreshPreview,promptField],'送出',async form=>{
+    dialog('預覽 Agent Prompt','選擇本次 Agent 與 Skills；修改選擇後請更新預覽。',[selection.root,refreshPreview,promptField],'送出',async form=>{
       if(JSON.stringify(selection.value())!==JSON.stringify(preview.agentSelection))throw new Error('選擇已變更，請先更新預覽。');
       const prompt=String(form.get('prompt'));if(!prompt.trim()||new TextEncoder().encode(prompt).length>65536)throw new Error('Prompt 不可為空且必須在 64 KiB 內。');
       if(repositoryId!==state.repositoryId||key!==(feature()?.key??null))throw new Error('所選功能已變更，請重新預覽。');
@@ -185,7 +190,7 @@ async function executeJob(name,input, {refreshAfter=true}={}) {
   const repositoryId=state.repositoryId, d=state.detail;
   const expected=typeof d?.state==='object'?{head:d.state.head,branch:d.state.branch,fingerprint:d.state.fingerprint}:{head:null};
   state.busy=true;block();$('#job-progress').hidden=false;$('#job-title').textContent=labels[name]??'處理中';
-  $('#job-step').textContent=name==='workflow.verify'?'自動準備版本 → 執行測試 → 儲存報告':name==='repository.sync'?'同步已儲存產品 → 規格 → 報告；不會覆寫衝突內容':name==='workflow.review'?'檢查必要環境與內容，再推進下一步':'處理中…';
+  $('#job-step').textContent=name==='workflow.verify'?'建立內容快照 → 執行測試 → 儲存報告':name==='repository.sync'?'同步已固定產品 → 規格 → 報告；不會覆寫衝突內容':name==='workflow.accept'?'記錄人工驗收並固定版本':name==='workflow.review'?'檢查必要環境與內容，再推進下一步':'處理中…';
   let result;
   try {
     result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected,interactionType:currentHistoryType()});state.jobId=result.id;
@@ -197,7 +202,7 @@ async function executeJob(name,input, {refreshAfter=true}={}) {
     }
     if(!selected&&cliOperations.has(name)){const terminal=await api(`/operations/${result.id}/terminal?offset=0`);if(terminal.hasProgress)showOperation({...result,request:{repositoryId,operation:name}});}
     if(result.status!=='SUCCEEDED')throw Object.assign(new Error(result.error?.message??'流程未完成，內容已保留。'),result.error??{});
-    note(result.result?.testOutcome==='FAILED'||result.result?.outcome==='FAILED'?'執行完成，但測試未通過。':name==='repository.sync'?'已同步至遠端。':name==='workflow.verify'?'驗收完成，報告已自動儲存。':'已儲存。');return result.result;
+    note(result.result?.testOutcome==='FAILED'||result.result?.outcome==='FAILED'?'執行完成，但測試未通過。':name==='repository.sync'?'已同步至遠端。':name==='workflow.verify'?'測試完成，報告已儲存，請進行人工驗收。':'已儲存。');return result.result;
   } finally {
     state.busy=false;$('#job-progress').hidden=true;
     try { if(refreshAfter&&repositoryId===state.repositoryId)await refresh(); } finally { state.jobId=null;block(); }
@@ -246,7 +251,7 @@ async function bindRepository() {
   const fields=[
     field('Spec Repo Git 網址','remoteUrl','',{placeholder:'https://github.com/owner/spec.git'}),
     field('Spec Repo 本地目錄','localPath','',{required:false,placeholder:'例如 ~/projects/bdd-spec；留空使用工作台資料夾'}),
-    el('p','這是執行工作台的電腦上的規格庫資料夾，不是產品 bdd 的程式目錄。空目錄會取得內容；已有相同來源的 clone 會直接使用，保留原檔。','muted'),
+    el('p','這是執行工作台的電腦上的規格庫資料夾。建立功能時才取得來源；已有相同來源的 clone 會直接使用，保留原檔。','muted'),
     field('顯示名稱（選填，自動從網址帶入）','title','',{required:false,placeholder:'不填也可以'}),
     field('需求確認者','reviewer',localStorage.getItem('bdd-reviewer')??''),
     detailGroup('有產品原始碼嗎？可以現在加入，也可以稍後設定',[productFields(),el('p','例如 https://github.com/Xing00000/bdd.git；只需貼網址。','muted')],false,'advanced-ids'),
@@ -257,7 +262,7 @@ async function bindRepository() {
     ],false,'advanced-ids')
   ];
   let registered;
-  dialog('連接規格庫','綁定後自動建立本地目錄，載入既有需求、設計、產品與歷史。設定與草稿存 SQLite；連線失敗仍會保留，日後可重試。',fields,'開始使用',async form=>{
+  dialog('連接規格庫','綁定與設定先存 SQLite；建立功能時才初始化規格庫與產品來源。編輯、確認與測試期間使用本機內容，完成人工驗收時固定版本。',fields,'開始使用',async form=>{
     const projects=formProducts(form),baseUrl=String(form.get('baseUrl')??'').trim(),remoteUrl=String(form.get('remoteUrl')).trim();
     const title=String(form.get('title')??'').trim()||guessName(remoteUrl);
     if(!title)throw new Error('無法從網址辨識名稱，請輸入顯示名稱。');
@@ -266,17 +271,6 @@ async function bindRepository() {
     const input={reviewer:form.get('reviewer'),projects};
     if(baseUrl&&projects.length)input.execution={projectId:projects[0].id,baseUrl,healthUrl:new URL('/health',baseUrl).href,command:[form.get('program'),...form.get('args').split('\n').map(x=>x.trim()).filter(Boolean)]};
     await executeJob('repository.setup',input,{refreshAfter:false});
-    if(registered.connection?.operationId) {
-      $('#dialog-description').textContent='設定已儲存；正在取得規格、產品及歷史。';
-      const panel=$('#operation-terminal-details');$('#dialog-form').insertBefore(panel,$('#dialog-error'));
-      showOperation({id:registered.connection.operationId,request:{repositoryId:registered.id,operation:'repository.acquire'}});
-      let loaded;
-      try {
-        loaded=await api(`/operations/${registered.connection.operationId}`);
-        while(['QUEUED','RUNNING','CANCELLING'].includes(loaded.status)){await new Promise(r=>setTimeout(r,350));loaded=await api(`/operations/${registered.connection.operationId}`);}
-      } finally { $('#interaction-history').append(panel); }
-      if(loaded.status!=='SUCCEEDED')note('綁定與設定已保存，內容尚未取得：'+(loaded.error?.message??'請重試'),true);
-    }
     await flow('repository.tools.prepare',{});
     localStorage.setItem('bdd-reviewer',input.reviewer);await navigate({repositoryId:registered.id,view:'features',stage:'GHERKIN',featureKey:null,projectId:null},{protect:false});
   });
@@ -336,7 +330,7 @@ async function renderWorkflow(epoch) {
   }
   if(!stages.some(x=>x[0]===state.stage)||f.authoringOnly&&!['GHERKIN','SD'].includes(state.stage))state.stage='GHERKIN';$('#stage-nav').replaceChildren();
   stages.filter(x=>!f.authoringOnly||['GHERKIN','SD'].includes(x[0])).forEach(([key,title],i)=>{const n=button('',()=>navigate({stage:key}));n.setAttribute('aria-label',`${i+1} ${title}`);n.setAttribute('aria-current',key===state.stage?'step':'false');const done=i<3?f.review.confirmed[['gherkin','sd','tests'][i]]:i===3?f.workflow.verification==='VERIFIED':i===4&&f.workflow.status==='COMPLETE';n.classList.toggle('complete',Boolean(done));n.append(el('span',done?'✓':String(i+1),'step-number'),el('span',title));$('#stage-nav').append(n);});
-  const phase=stages.find(x=>x[0]===state.stage);$('#phase-title').textContent=phase[2];$('#feature-status').replaceWith(Object.assign(badge(f.workflow.status==='COMPLETE'?'已完成':f.workflow.status==='AWAITING_ACCEPTANCE'?'等待人工驗收':f.review.stage),{id:'feature-status'}));
+  const phase=stages.find(x=>x[0]===state.stage);$('#phase-title').textContent=phase[2];$('#feature-status').replaceWith(Object.assign(badge(f.workflow.status==='COMPLETE'?'已完成':f.workflow.status==='ACCEPTANCE_PENDING'?'驗收版本待完成':f.workflow.status==='AWAITING_ACCEPTANCE'?'等待人工驗收':f.review.stage),{id:'feature-status'}));
   const editing=['SD','TESTS'].includes(state.stage);$('#requirement-panel').hidden=state.stage!=='GHERKIN';$('#source-panel').hidden=!editing;$('#implementation-panel').hidden=state.stage!=='IMPLEMENTATION';$('#verification-panel').hidden=state.stage!=='VERIFICATION';
   $('#source-picker').hidden=state.stage==='TESTS';$('#hook-panel').hidden=state.stage!=='TESTS';
   const sources=state.stage==='GHERKIN'?[`spec/${f.key}/${f.id}.feature`]:state.stage==='SD'?[`spec/${f.key}/${f.id}.sd.md`]:[`tests/${f.key}/${f.id}.steps.ts`,`tests/${f.key}/${f.id}.hooks.ts`];
@@ -452,7 +446,16 @@ async function importDocument() {
 async function saveRequirement() {
   const c=state.composer;if(!c)return;
   const input={...composerInput(),expectedToken:c.token,editorKey:c.key,...(feature()?{requirementId:feature().requirementId,featureId:feature().id}:{projectIds:(state.detail.modules??[]).map(p=>p.id)})};
-  const result=await executeJob('workflow.requirement.save',input,{refreshAfter:false});
+  let result;
+  try { result=await executeJob('workflow.requirement.save',input,{refreshAfter:false}); }
+  catch(error) {
+    if(error.details?.creationPending&&error.details.saved&&state.composer===c) {
+      $('#requirement-state').textContent='建立未完成，草稿已保留';
+      try { renderRequirementHistory(await api(`/spec-repositories/${c.repositoryId}/requirement/proposals?editorKey=${encodeURIComponent(c.key)}`)); } catch { /* Preserve the original creation error and both editor inputs. */ }
+      error.message+='；輸入已保留在草稿紀錄，可在修正問題後重試建立。';
+    }
+    throw error;
+  }
   state.composer={...c,...input,token:result.token};
   if(!c.featureKey)sessionStorage.removeItem(`bdd-new-requirement:${state.repositoryId}`);
   await navigate({view:'features',featureKey:result.key,stage:'GHERKIN'},{protect:false});return result;
@@ -513,11 +516,7 @@ async function renderProjects(epoch) {
   const p=d.modules?.find(x=>x.id===state.projectId);$('#project-editor-panel').hidden=!p;if(!p)return;
   $('#project-title').textContent=p.id;$('#product-state').textContent=p.dirty?'有本機變更':'已儲存';
   let list=await api(`/spec-repositories/${d.id}/projects/${p.id}/files`);if(epoch!==state.epoch)return;
-  if(!list.available && !p.actual) {
-    await executeJob('repository.prepare',{}, {refreshAfter:false});
-    if(epoch!==state.epoch)return;
-    list=await api(`/spec-repositories/${d.id}/projects/${p.id}/files`);
-  }
+  if(!list.available&&!list.files.length)$('#product-state').textContent='建立功能時會取得產品原始碼。';
   if(epoch!==state.epoch)return;
   const previous=state.product?.projectId===p.id?state.product.path:null;
   const selected=previous&&list.files.includes(previous)?previous:list.files[0];
@@ -568,15 +567,16 @@ function renderReports() {
   const known=new Set((d.spec?.features??[]).map(f=>f.key)),archived=new Map();
   for(const r of d.runs??[]){const m=r.result,k=`${m.requirementId}/${m.featureId}`;if(!known.has(k))archived.set(`${k}/${r.id}`,{key:`${k}/${r.id}`,runId:r.id,manifest:m,state:r.state,origin:'LOCAL',publication:r.publication});}
   for(const r of d.reports??[]){const k=`${r.requirementId}/${r.featureId}`;if(!known.has(k))archived.set(r.key,{...r,state:'SEALED',origin:'SPEC_REPO',reportKey:r.key});}
-  for(const r of archived.values()){list.append(reportCard({...r,path:`reports/${r.key}/manifest.json`,testOutcome:r.manifest.testOutcome??'NOT_RUN',verification:r.manifest.verification??'NOT_VERIFIED',testedSpecCommit:r.manifest.testedSpecCommit,finishedAt:r.manifest.finishedAt,applicability:'HISTORICAL'},null));count++;}
+  for(const r of archived.values()){list.append(reportCard({...r,path:`reports/${r.key}/manifest.json`,testOutcome:r.manifest.testOutcome??'NOT_RUN',verification:r.manifest.verification??'NOT_VERIFIED',testedSpecCommit:r.manifest.testedSpecCommit,sourceKind:r.manifest.sourceKind,specDigest:r.manifest.specDigest,inputDigest:r.manifest.inputDigest,finishedAt:r.manifest.finishedAt,applicability:'HISTORICAL'},null));count++;}
   if(!count)list.append(el('p','尚無驗收紀錄。','empty-state'));
 }
 
+function testedSource(report){return report.sourceKind==='WORKSPACE'?`受測內容摘要：${report.inputDigest??report.specDigest??'未記錄'}`:`受測版本：${report.testedSpecCommit??'未記錄'}`;}
 function reportCard(report,featureKey,inline=false) {
   const c=el('article',undefined,'card feature-report');c.dataset.runId=report.runId;c.dataset.reportKey=report.key;
   c.append(badge(report.testOutcome),document.createTextNode(' '),badge(report.applicability==='CURRENT'?'目前版本':'歷史版本'));
   if(report.finishedAt)c.append(el('time',new Date(report.finishedAt).toLocaleString()));
-  const details=el('details');details.append(el('summary','版本與來源'),el('p',report.runId,'mono'),el('p',report.path,'mono report-path'),el('p',`受測版本：${report.testedSpecCommit??'未記錄'}`,'mono report-path'),el('p',report.origin==='SPEC_REPO'?(report.ref?.startsWith('refs/remotes/')?'已同步至遠端':'規格庫報告'):report.publication?.status==='PUBLISHED'?'已同步至遠端':'本機報告'),badge(report.verification));c.append(details);
+  const details=el('details');details.append(el('summary','版本與來源'),el('p',report.runId,'mono'),el('p',report.path,'mono report-path'),el('p',testedSource(report),'mono report-path'),el('p',report.origin==='SPEC_REPO'?(report.ref?.startsWith('refs/remotes/')?'已同步至遠端':'規格庫報告'):report.publication?.status==='PUBLISHED'?'已同步至遠端':'本機報告'),badge(report.verification));c.append(details);
   if(report.invalidReason)c.append(el('p','證據錯誤：'+report.invalidReason,'error'));
   else if(report.state==='SEALED')c.append(expandableNativeReport(report),button('檢視證據',()=>showReport(report.runId,report.reportKey,inline?'feature-report-view':'report-view',inline?featureKey:null)));
   return c;
@@ -597,11 +597,12 @@ async function renderFeatureReports() {
 }
 function selectedAcceptanceReport(){const panel=$('#feature-report-view');return feature()?.workflow?.reports?.find(r=>r.runId===panel.dataset.runId&&(r.reportKey??'')===(panel.dataset.reportKey??''));}
 function renderAcceptanceActions(){
-  const workflow=feature()?.workflow,report=selectedAcceptanceReport(),complete=workflow?.status==='COMPLETE';
-  $('#acceptance-status').textContent=complete?'驗收通過，流程已完成':workflow?.status==='AWAITING_ACCEPTANCE'?'等待人工驗收':workflow?.needsChanges?'待修改後重新驗收':'';
-  $('#acceptance-opinion').readOnly=acceptanceBusy||complete;
+  const workflow=feature()?.workflow,report=selectedAcceptanceReport(),complete=workflow?.status==='COMPLETE',pending=workflow?.status==='ACCEPTANCE_PENDING';
+  $('#acceptance-status').textContent=complete?'驗收通過，流程已完成':pending?'人工確認已保存，版本尚未完成；請重試。':workflow?.status==='AWAITING_ACCEPTANCE'?'等待人工驗收':workflow?.needsChanges?'待修改後重新驗收':'';
+  $('#acceptance-opinion').readOnly=acceptanceBusy||complete||pending;
+  $('#accept-requirement').textContent=pending?'重試完成驗收':'驗收通過';
   $('#request-implementation-changes').disabled=acceptanceBusy||complete||!report||!$('#acceptance-opinion').value.trim();
-  $('#accept-requirement').disabled=acceptanceBusy||workflow?.status!=='AWAITING_ACCEPTANCE'||!report||report.runId!==workflow.latestReport?.runId||report.manifestDigest!==workflow.latestReport?.manifestDigest;
+  $('#accept-requirement').disabled=acceptanceBusy||!['AWAITING_ACCEPTANCE','ACCEPTANCE_PENDING'].includes(workflow?.status)||!report||report.runId!==workflow.latestReport?.runId||report.manifestDigest!==workflow.latestReport?.manifestDigest;
 }
 async function requestImplementationChanges(){
   const f=feature(),repositoryId=state.repositoryId,report=selectedAcceptanceReport(),message=$('#acceptance-opinion').value;
@@ -635,7 +636,7 @@ async function showReport(runId,key,panelId='report-view',expectedFeature=null) 
       panel.append(el('p',`${m.testOutcome} · ${m.verification}`,'muted'));panel.dataset.runId=runId;panel.dataset.reportKey=key??'';renderAcceptanceActions();return;
     }
     panel.replaceChildren(el('h2',`${m.requirementId} / ${m.featureId}`),badge(m.testOutcome),document.createTextNode(' '),badge(m.verification),el('p',runId,'mono muted'));
-    panel.append(el('p',`受測版本：${m.testedSpecCommit}`,'mono report-path'));
+    panel.append(el('p',testedSource(m),'mono report-path'));
     if(m.failure)panel.append(el('p',m.failure.message,'error'));
     const table=el('table',undefined,'report-table'),head=el('tr');['案例','瀏覽器','結果','斷言'].forEach(x=>head.append(el('th',x)));table.append(head);
     for(const c of m.cases??[]){const row=el('tr');[c.caseId,c.profile,c.status,String(c.assertions)].forEach(x=>row.append(el('td',x)));table.append(row);}panel.append(table);
@@ -675,7 +676,7 @@ mobileNavigation.addEventListener('change',updateNavigationToggle);updateNavigat
 on('#close-dialog','click',()=>closeDialog());on('#cancel-dialog','click',()=>closeDialog());
 $('#form-dialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog();});
 on('#cancel-job','click',()=>state.jobId&&api(`/operations/${state.jobId}/cancel`,'POST',{}));
-on('#sync','click',()=>{if(dirty())throw new Error('請先儲存畫面中的草稿，遠端同步只處理已儲存內容。');return executeJob('repository.sync',{});});
+on('#sync','click',()=>{if(dirty())throw new Error('請先儲存草稿並完成驗收，遠端同步只處理已固定版本。');return executeJob('repository.sync',{});});
 on('#new-feature','click',createFeature);on('#delete-feature','click',deleteRequirement);
 on('#upload-requirement','click',()=>$('#requirement-file').click());
 on('#requirement-file','change',importDocument);
@@ -696,13 +697,13 @@ window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.retu
 
 function renderBinding() {
   const box=$('#binding-status'), c=state.detail?.connection; box.replaceChildren();
-  if(!c){box.append(el('span','已綁定，尚未載入既有內容。'),el('span',state.detail.localPath??'','mono muted'),button('載入需求與歷史',()=>executeJob('repository.acquire',{})));return;}
-  const label={QUEUED:'綁定已保存，等待取得內容',LOADING:'正在載入需求、產品與歷史',READY:'已連接',READY_WITH_WARNINGS:'內容已載入，部分項目需要注意',FAILED:'綁定已保存，內容取得失敗'}[c.status]??c.status;
+  if(!c){box.append(el('span','綁定已保存，建立功能時初始化來源。'),el('span',state.detail.localPath??'','mono muted'));return;}
+  const label={DEFERRED:'綁定已保存，建立功能時初始化來源',QUEUED:'綁定已保存，等待取得內容',LOADING:'正在載入需求、產品與歷史',READY:'已連接',READY_WITH_WARNINGS:'內容已載入，部分項目需要注意',FAILED:'綁定已保存，內容取得失敗'}[c.status]??c.status;
   box.append(el('strong',label),el('span',state.detail.localPath??c.localPath??'','mono muted'));
   if(state.view!=='settings')box.append(button('設定本地目錄',()=>navigate({view:'settings'})));
   if(c.error)box.append(el('p',c.error.message,'error'));
   if(c.warnings?.length)box.append(detailGroup('查看載入提醒',c.warnings.map(w=>el('p',w.message))));
-  if(c.status==='FAILED')box.append(button('重試載入',()=>executeJob('repository.acquire',{})));
+  if(c.status==='FAILED')box.append(el('p','請修正來源設定後重新建立功能；已儲存內容仍保留。','muted'));
 }
 let catalogRequest=0, currentCatalog=null;
 const regressionJobs=new Map();
@@ -714,7 +715,7 @@ async function renderVersions(epoch) {
   $('#spec-versions').replaceChildren(...choices.versions.map(v=>new Option(`${v.label} · ${v.commit.slice(0,8)} (${v.kind})`,v.ref)));
   const wanted=currentCatalog?.repositoryId===repositoryId?currentCatalog.ref:state.detail.connection?.catalog?.commit;
   $('#regression-spec').value=wanted??choices.versions.find(v=>v.kind==='branch')?.ref??choices.versions[0]?.ref??'';
-  if(!$('#regression-spec').value){$('#catalog-count').textContent='規格庫尚無共享版本；先儲存需求並遠端同步，再選擇回歸基線。';return;}
+  if(!$('#regression-spec').value){$('#catalog-count').textContent='規格庫尚無固定版本；建立功能或完成人工驗收後，再選擇回歸基線。';return;}
   await loadVersion();renderRegressionHistory(state.detail.regressions??[]);
 }
 async function loadVersion() {

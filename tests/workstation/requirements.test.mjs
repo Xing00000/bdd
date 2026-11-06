@@ -7,13 +7,15 @@ import { generateRequirement, requirementDiagnostics } from '../../packages/work
 import { importRequirementDocument } from '../../packages/workstation/requirement-documents.mjs';
 import { createWorkstation } from '../../packages/workstation/service.mjs';
 import { createStandaloneServer } from '../../packages/workstation/http.mjs';
-import { fixture, toolkitRoot } from './helpers.mjs';
+import { fixture, git, toolkitRoot } from './helpers.mjs';
 import { docxArchive } from './requirement-fixtures.mjs';
 const description='使用者登入\n輸入正確帳密後，可以看到個人首頁\n輸入錯誤密碼時，畫面顯示錯誤原因';
 const manual='Feature: My exact edited spec\n\n  @case:CASE-001\n  Scenario: The actual behaviour\n    Given an account exists\n    When I sign in\n    Then the dashboard is shown\n';
 async function setup(t){
   const f=await fixture(t),options={home:f.home,toolkitRoot,allowLocal:true};let service=await createWorkstation(options);t.after(()=>service.close());
-  service.register({id:'SPEC-editor',title:'Editor',remoteUrl:path.join(f.base,'missing.git')});let n=0;
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
+  service.register({id:'SPEC-editor',title:'Editor',remoteUrl:f.remote});let n=0;
+  assert.equal(await exists(path.join(f.home,'repositories/SPEC-editor/repo')),false,'Binding defers source acquisition until feature creation');
   async function job(operation,input,fail=false){const request={schemaVersion:1,operationId:`EDIT-${++n}`,repositoryId:'SPEC-editor',operation,input};service.enqueue(request);const output=await service.wait(request.operationId);if(!fail)assert.equal(output.status,'SUCCEEDED',JSON.stringify(output.error));return output;}
   await job('repository.setup',{reviewer:'Xing',projects:[]});
   return {...f,job,get service(){return service;},async restart(){await service.close();service=await createWorkstation(options);}};
@@ -52,8 +54,9 @@ test('unsupported, invalid UTF-8, corrupt, oversized and entity-bearing imports 
     {name:'x.docx',base64:docxArchive('<w:p>oversize</w:p>',{unsafeSize:true}).toString('base64')}
   ])assert.throws(()=>importRequirementDocument(input));
 });
-test('both fields save atomically to SQLite with exact lower bytes, no Git checkout, and survive restart',async t=>{
-  const f=await setup(t),saved=await save(f);assert.equal(saved.storage,'sqlite');assert.equal(saved.key,'REQ-001/feature');assert.equal(await exists(path.join(f.home,'repositories/SPEC-editor/repo')),false);
+test('creating a feature saves both fields atomically, checkpoints its source, and survives restart',async t=>{
+  const f=await setup(t),saved=await save(f);assert.equal(saved.storage,'sqlite');assert.equal(saved.key,'REQ-001/feature');assert.equal(await exists(path.join(f.home,'repositories/SPEC-editor/repo')),true);
+  assert.ok(await git.resolve(path.join(f.home,'repositories/SPEC-editor/repo')));
   await f.restart();const value=await f.service.requirement('SPEC-editor','REQ-001','feature');assert.equal(value.description,description);assert.equal(value.gherkin,manual);
   const db=new DatabaseSync(path.join(f.home,'metadata.sqlite'),{readOnly:true});const changes=JSON.parse(db.prepare('SELECT changes_json FROM authoring_history ORDER BY revision DESC LIMIT 1').get().changes_json);db.close();assert.ok(changes.some(x=>x.path.endsWith('.feature')));assert.ok(changes.some(x=>x.path.endsWith('requirement-source.json')));
 });

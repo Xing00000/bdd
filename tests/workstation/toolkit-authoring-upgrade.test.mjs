@@ -2,22 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile,writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fixture,toolkitRoot } from './helpers.mjs';
+import { fixture,git,toolkitRoot } from './helpers.mjs';
 import { createWorkstation } from '../../packages/workstation/service.mjs';
 import { openStore } from '../../packages/workstation/store.mjs';
 import { inDraftView,sourceFiles } from '../../packages/workstation/authoring.mjs';
 import { TOOLKIT_VERSION } from '../../packages/spec-toolkit/index.mjs';
-import { digest,exists } from '../../packages/contracts/index.mjs';
+import { digest } from '../../packages/contracts/index.mjs';
 
 test('hash-verified toolkit upgrade is one SQLite authoring transaction and preserves confirmed sources',async t=>{
-  const f=await fixture(t),service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false});t.after(()=>service.close());
+  const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
+  const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false});t.after(()=>service.close());
   service.register({id:'SPEC-upgrade',title:'Upgrade',remoteUrl:f.remote});
   const store=openStore(f.home);t.after(()=>store.close());let count=0;
   const job=async(operation,input={})=>{
     const id=`UPGRADE-${++count}`;service.enqueue({schemaVersion:1,operationId:id,repositoryId:'SPEC-upgrade',operation,input});return service.wait(id);
   };
   assert.equal((await job('repository.setup',{reviewer:'Human',projects:[]})).status,'SUCCEEDED');
-  await job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',guided:true,acceptance:'Login succeeds'});
+  const created=await job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',guided:true,acceptance:'Login succeeds'});assert.equal(created.status,'SUCCEEDED',JSON.stringify(created.error));
+  const root=path.join(f.home,'repositories/SPEC-upgrade/repo'),checkpoint=await git.inspect(root);
   let feature=(await service.detail('SPEC-upgrade')).spec.features[0];
   await job('workflow.review',{requirementId:'REQ-001',featureId:'login',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
   const snapshot=store.draft('SPEC-upgrade');
@@ -41,5 +43,5 @@ test('hash-verified toolkit upgrade is one SQLite authoring transaction and pres
   assert.equal(after.review.hashes.gherkin,before.review.hashes.gherkin);assert.equal(after.review.hashes.sd,before.review.hashes.sd);
   assert.equal(JSON.parse((await service.readFile('SPEC-upgrade','workbench.yaml')).content).specRepositoryId,'SPEC-upgrade');
   assert.equal(JSON.parse(store.draft('SPEC-upgrade').files.find(file=>file.path==='.workbench-tools/manifest.json').content).version,TOOLKIT_VERSION);
-  assert.equal(await exists(path.join(f.home,'repositories/SPEC-upgrade/repo')),false,'Upgrade must not require or modify a checkout');
+  assert.deepEqual(await git.inspect(root),checkpoint,'Upgrade must not modify the creation checkout or its checkpoint');
 });

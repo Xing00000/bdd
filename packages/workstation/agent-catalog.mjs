@@ -3,7 +3,7 @@ import path from 'node:path';
 import {promptCatalogMethods} from './prompt-catalog.mjs';
 import {randomUUID} from 'node:crypto';
 import {invariant,identity} from '../contracts/index.mjs';
-import {validateAgentSettings,validateAgentRuntimeSettings,agentPromptFields,seedAgentSettings,agentLimits} from './agent-settings.mjs';
+import {validateAgentSettings,validateAgentRuntimeSettings,normalizeAgentRuntimeSettings,agentPromptFields,seedAgentSettings,agentLimits} from './agent-settings.mjs';
 
 export const agentPurposes=Object.freeze(['gherkin','design','testPlan','development']);
 export const agentOperations=Object.freeze({'workflow.gherkin.generate':'gherkin','workflow.design.generate':'design','workflow.tests.complete':'testPlan','workflow.develop':'development'});
@@ -28,7 +28,7 @@ export function installAgentCatalog(db){db.exec(`
 export function agentCatalogMethods(db,atomic){
  const prompts=promptCatalogMethods(db,atomic);
  const listSkills=()=>db.prepare('SELECT * FROM skills ORDER BY rowid').all().map(row=>({...row,archived:Boolean(row.archived),revisions:db.prepare('SELECT * FROM skill_revisions WHERE skill_id=? ORDER BY version DESC').all(row.id).map(r=>({...r,purposes:JSON.parse(r.purposes_json),resources:db.prepare('SELECT path,content FROM skill_resources WHERE revision_id=? ORDER BY path').all(r.id)}))}));
- const listAgents=()=>db.prepare('SELECT * FROM agent_profiles ORDER BY rowid').all().map(row=>({...row,archived:Boolean(row.archived),revisions:db.prepare('SELECT * FROM agent_revisions WHERE agent_id=? ORDER BY version DESC').all(row.id).map(r=>({...r,settings:JSON.parse(r.settings_json),skillRevisionIds:db.prepare('SELECT skill_revision_id FROM agent_skill_bindings WHERE agent_revision_id=? ORDER BY position').all(r.id).map(b=>b.skill_revision_id)}))}));
+ const listAgents=()=>db.prepare('SELECT * FROM agent_profiles ORDER BY rowid').all().map(row=>({...row,archived:Boolean(row.archived),revisions:db.prepare('SELECT * FROM agent_revisions WHERE agent_id=? ORDER BY version DESC').all(row.id).map((r,index)=>({...r,settings:index===0?normalizeAgentRuntimeSettings(JSON.parse(r.settings_json)):JSON.parse(r.settings_json),skillRevisionIds:db.prepare('SELECT skill_revision_id FROM agent_skill_bindings WHERE agent_revision_id=? ORDER BY position').all(r.id).map(b=>b.skill_revision_id)}))}));
  const skillVersion=(revisionId,current=true)=>{
   const row=db.prepare('SELECT r.*,s.name,s.archived FROM skill_revisions r JOIN skills s ON s.id=r.skill_id WHERE r.id=?').get(revisionId);
   invariant(row,'SKILL_NOT_FOUND','找不到技能版本',404);
@@ -70,7 +70,7 @@ export function agentCatalogMethods(db,atomic){
   invariant(row,'AGENT_NOT_FOUND','找不到 Agent 版本',404);invariant(!row.archived&&db.prepare('SELECT id FROM agent_revisions WHERE agent_id=? ORDER BY version DESC LIMIT 1').get(row.agent_id).id===row.id,'CATALOG_CHANGED','Agent 已更新或封存，請重新選擇',409);
   const ids=skillIds(selection.skillRevisionIds??db.prepare('SELECT skill_revision_id FROM agent_skill_bindings WHERE agent_revision_id=? ORDER BY position').all(row.id).map(b=>b.skill_revision_id));
   const skills=ids.map(id=>skillVersion(id));for(const skill of skills)invariant(skill.purposes.includes(purpose),'SKILL_PURPOSE_MISMATCH',`${skill.name} 不適用此任務`);
-  const prompt=prompts.resolvePrompt(selection.promptRevisionId,purpose),settings=validateAgentRuntimeSettings(JSON.parse(row.settings_json));
+  const prompt=prompts.resolvePrompt(selection.promptRevisionId,purpose),settings=normalizeAgentRuntimeSettings(JSON.parse(row.settings_json));
   const result={agentId:row.agent_id,agentRevisionId:row.id,agentName:row.name,agentVersion:row.version,promptRevisionId:prompt.revisionId,prompt,skillRevisionIds:ids,skills,settings};return {...result,digest:identity(result)};
  };
  return {
@@ -82,7 +82,7 @@ export function agentCatalogMethods(db,atomic){
    const missing=agentPurposes.filter(purpose=>!existing.has(purpose));
    if(!missing.length)return;
    const repository=db.prepare('SELECT title FROM spec_repositories WHERE id=?').get(repositoryId);invariant(repository,'REPOSITORY_NOT_FOUND','找不到規格庫',404);
-   const settings=validateAgentSettings(legacy),runtime=validateAgentRuntimeSettings(settings),bindings=[];
+   const settings=validateAgentSettings({},legacy),runtime=validateAgentRuntimeSettings(settings),bindings=[];
    const agentSeed={name:repository.title+' Agent',description:'由原有規格庫設定遷入',settings:runtime};
    // Reuse only complete, current seed revisions; never change a user-edited
    // profile or revive an archived/historical version while repairing defaults.

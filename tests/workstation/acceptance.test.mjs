@@ -12,7 +12,7 @@ async function setup(t,extra={}){
  const baseline=(await reviewState(f.repo,'REQ-001','login')).hashes.tests;
  await sealedBundle(path.join(f.repo,'reports/REQ-001/login/RUN-one'),{runId:'RUN-one',specRepositoryId:'fixture-spec',requirementId:'REQ-001',featureId:'login',testedSpecCommit:await git.resolve(f.repo),baseline,projects:[],scope:'ALL_CASES',testOutcome:'PASSED',verification:'VERIFIED',coverageComplete:true,evidenceComplete:true,finishedAt:new Date().toISOString(),...extra});
  await commitAll(f.repo,'Report fixture');
- const options={home:f.home,toolkitRoot,allowLocal:true},service=await createWorkstation(options);t.after(()=>service.close());
+ const options={home:f.home,toolkitRoot,allowLocal:true,autoAcquire:true},service=await createWorkstation(options);t.after(()=>service.close());
  const r=service.register({id:'SPEC-one',title:'Human acceptance fixture',remoteUrl:f.repo});assert.equal((await service.wait(r.connection.operationId)).status,'SUCCEEDED');
  assert.equal((await job(service,'repository.setup',{reviewer:'Human reviewer',projects:[]})).status,'SUCCEEDED');
  const state=async()=> (await service.workflow('SPEC-one','REQ-001/login')).workflows[0];

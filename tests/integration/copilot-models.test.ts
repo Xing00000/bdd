@@ -3,13 +3,32 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {listCopilotModels} from '../../src/adapters/runtime/copilot-models.ts';
+import {listCopilotModels,parseCopilotModels} from '../../src/adapters/runtime/copilot-models.ts';
+import {createCopilotRuntime} from '../../src/adapters/runtime/copilot-chat.ts';
 import {createCodexChatRuntime} from '../../src/adapters/runtime/codex-chat.ts';
 import {defaultChatSettings} from '../../src/adapters/runtime/chat-settings.ts';
 import {copilotModelPeer} from '../helpers/copilot-model-peer.ts';
+import {copilotChatPeer} from '../helpers/copilot-chat-peer.ts';
+
+test('ACP model catalogs accept grouped config options and legacy model state without inventing choices',()=>{
+ assert.deepEqual(parseCopilotModels({configOptions:[{id:'preferred_model',category:'model',type:'select',currentValue:'one',options:[{group:'Available',options:[{value:'one',name:'One'},{value:'two',name:'Two'}]}]}]}),[{id:'one',name:'One',selectable:true},{id:'two',name:'Two',selectable:true}]);
+ assert.deepEqual(parseCopilotModels({models:{currentModelId:'legacy',availableModels:[{modelId:'legacy',name:'Legacy'}]}}),[{id:'legacy',name:'Legacy',selectable:true}]);
+ assert.deepEqual(parseCopilotModels({configOptions:[{id:'mode',category:'mode',type:'select',options:[]}]}),[]);
+ for(const malformed of [{models:null},{models:{availableModels:{}}},{models:{availableModels:[null]}},{configOptions:{}},{configOptions:[{id:'model',category:'model',type:'select',options:[null]}]}])assert.throws(()=>parseCopilotModels(malformed),/格式無效/);
+});
+
+test('legacy ACP model selection works and an unavailable configured model fails before inference',async t=>{
+ const directory=await mkdtemp(path.join(tmpdir(),'bdd-acp-model-selection-')),peer=await copilotChatPeer(directory,{legacyModels:true,models:[{id:'one',name:'One'},{id:'two',name:'Two'}]}),runtime=createCopilotRuntime(directory);
+ t.after(async()=>{await runtime.close();await rm(directory,{recursive:true,force:true});});
+ const settings={...defaultChatSettings(),...peer,model:'two'},signal=new AbortController().signal;
+ assert.equal((await runtime.completion(settings,'selected legacy model',signal,[])).text,'Protocol peer text response');
+ await assert.rejects(runtime.completion({...settings,model:'missing'},'must not infer',signal,[]),/未提供模型/);
+ const {readFile}=await import('node:fs/promises'),trace=(await readFile(peer.tracePath,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+ assert.deepEqual(trace.filter(event=>event.method==='session/set_model').map(event=>event.params.modelId),['two']);assert.equal(trace.filter(event=>event.method==='session/prompt').length,1);assert.equal(trace.filter(event=>event.method==='session/close').length,2);
+});
 
 for(const [name,models,error,authenticated] of [
- ['available catalog',[{id:'fixture-a',name:'協定測試 A'},{id:'fixture-b',name:'協定測試 B',policy:{state:'disabled'}}],null,true],
+ ['available catalog',[{id:'fixture-a',name:'協定測試 A'},{id:'fixture-b',name:'協定測試 B'}],null,true],
  ['empty catalog',[],null,true],
  ['invalid catalog',[{id:'fixture-a'}],/格式無效/,true],
  ['duplicate catalog',[{id:'fixture-a',name:'A'},{id:'fixture-a',name:'A'}],/重複/,true],
@@ -18,7 +37,7 @@ for(const [name,models,error,authenticated] of [
  const directory=await mkdtemp(path.join(tmpdir(),'bdd-models-'));t.after(()=>rm(directory,{recursive:true,force:true}));
  const settings={...defaultChatSettings(),...await copilotModelPeer(directory,models,{authenticated})};
  const result=listCopilotModels(settings,directory,new AbortController().signal);
- if(error)await assert.rejects(()=>result,error);else assert.deepEqual(await result,models.map((m:any)=>({id:m.id,name:m.name,selectable:m.policy?.state!=='disabled'})));
+ if(error)await assert.rejects(()=>result,error);else assert.deepEqual(await result,models.map((m:any)=>({id:m.id,name:m.name,selectable:true})));
 });
 test('Copilot model discovery observes timeout and runtime shutdown',async t=>{
  const directory=await mkdtemp(path.join(tmpdir(),'bdd-model-cancel-'));t.after(()=>rm(directory,{recursive:true,force:true}));

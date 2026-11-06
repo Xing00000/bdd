@@ -1,12 +1,15 @@
-import { checkRepositoryIdentity, remoteIdentity } from './locations.mjs';
-/** Export a fixed SQLite revision only for repository preparation/synchronization/execution. */
+import { canonicalLocation, checkRepositoryIdentity, remoteIdentity } from './locations.mjs';
+/** Working files are a SQLite projection. Only explicit lifecycle boundaries commit. */
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { invariant, digest, identity, exists, safePath, atomicWrite } from '../contracts/index.mjs';
 import { ensureDraft, sourceFiles, inDraftView } from './authoring.mjs';
-import { configuration } from '../spec-toolkit/index.mjs';
+import { configuration, reviewState } from '../spec-toolkit/index.mjs';
 import { configureExecution } from './repository-actions.mjs';
 import { savePaths, attached, defaultBranch, targetFor } from './flows.mjs';
+import { workspaceModules, workspaceEntries, workspaceSpecSourceDigest, specSourcePath, specSourceDigest } from '../spec-toolkit/workspace.mjs';
+import { specCheckpointDigest } from '../spec-toolkit/source-checkpoint.mjs';
+import { liveWorkflowSpecSourceDigest } from './workflow-state.mjs';
 
 const key = f => `${f.target}\0${f.path}`;
 async function fileHash(root, relative) {
@@ -14,9 +17,46 @@ async function fileHash(root, relative) {
   return await exists(file)?digest(await readFile(file)):null;
 }
 export async function prepareProjection(context) {
+  const { root, store, request } = context, repositoryId = request.repositoryId;
+  const snapshot = await ensureDraft({ ...context, repositoryId }), prior = store.projection(repositoryId);
+  invariant(snapshot.settings.configured, 'SETUP_REQUIRED', '請先儲存基本設定。');
+  invariant(canonicalLocation(root) === root && await exists(root), 'FEATURE_INITIALIZATION_REQUIRED', '請先建立功能以初始化工作目錄；編輯與執行不會自動操作 Git。', 409);
+  const targets = [{ target: 'spec', directory: root }, ...(snapshot.settings.projects ?? []).map(project => ({ target: `project:${project.id}`, directory: path.join(root, 'projects', project.id) }))];
+  // All files are checked before writing any of them. External edits remain on disk.
+  for (const target of targets) {
+    invariant(await exists(target.directory), 'FEATURE_INITIALIZATION_REQUIRED', '產品原始碼尚未初始化；請在建立功能時取得產品。', 409);
+    for (const file of snapshot.files.filter(file => file.target === target.target)) {
+      const current = await fileHash(target.directory, file.path), old = prior?.files?.find(previous => key(previous) === key(file))?.sha256 ?? file.baseHash;
+      invariant(current === file.sha256 || current === old || current === null && old === null, 'EXPORT_CONFLICT',
+        `內容已存入 SQLite；工作目錄中的 ${file.path} 另有修改，原檔已保留。請先處理內容差異。`, 409);
+    }
+  }
+  for (const target of targets) for (const file of snapshot.files.filter(file => file.target === target.target))
+    if (await fileHash(target.directory, file.path) !== file.sha256) await atomicWrite(await safePath(target.directory, file.path), file.content);
+  const modules = await workspaceModules(root, snapshot.settings.projects ?? []);
+  store.setProjection(repositoryId, { ...prior, status: 'MATERIALIZED', revision: snapshot.revision,
+    files: snapshot.files.map(({ target, path, sha256 }) => ({ target, path, sha256 })),
+    modules: modules.map(module => { const previous = prior?.modules?.find(item => item.id === module.id); return { ...previous, ...module, dirty: Boolean(previous?.checkpointDigest && previous.checkpointDigest !== module.contentDigest) }; }) });
+  return snapshot;
+}
+
+/** Feature creation and completed human acceptance are the only automatic Git boundaries. */
+export async function checkpointProjection(context) {
   const {root,store,options,request,git}=context,repositoryId=request.repositoryId;
+  invariant(request.operation === 'workflow.create' || request.operation === 'workflow.accept'
+    || request.operation === 'workflow.requirement.save' && !request.input.requirementId && !request.input.featureId,
+  'GIT_BOUNDARY_REQUIRED', '只有建立功能與完成人工驗收可以建立 Git 版本。', 409);
   store.repairImportBaselines(repositoryId);
   let snapshot=await ensureDraft({...context,repositoryId});
+  if (context.expectedRevision !== undefined) invariant(snapshot.revision === context.expectedRevision, 'CONTENT_CHANGED', '驗收期間已儲存新草稿；原確認已保留，未把新草稿一起提交。', 409);
+  if (context.acceptance) {
+    const review = await inDraftView(snapshot, view => reviewState(view, request.input.requirementId, request.input.featureId));
+    invariant(identity(context.acceptance.sourceDigests) === identity({ gherkin: review.hashes.gherkin, sd: review.hashes.sd, tests: review.hashes.tests }), 'CONTENT_CHANGED', '驗收來源已改變；請重新驗證。', 409);
+    invariant(context.acceptedManifest, 'REPORT_CHANGED', '找不到這次人工驗收的完整報告。', 409);
+    if (context.acceptedManifest.sourceKind === 'WORKSPACE') invariant(typeof context.acceptedManifest.specSourceDigest === 'string'
+      && await liveWorkflowSpecSourceDigest(context, snapshot) === context.acceptedManifest.specSourceDigest,
+    'CONTENT_CHANGED', '驗收報告與目前規格來源不同；請重新驗證。', 409);
+  }
   const record=store.repository(repositoryId),prior=store.projection(repositoryId);
   invariant(snapshot.settings.configured,'SETUP_REQUIRED','請先儲存基本設定。');
   const receipt={...(prior??{}),status:'PREPARING',sourceRevision:snapshot.revision};
@@ -37,10 +77,12 @@ export async function prepareProjection(context) {
       }
     };
     await preflight(root,specFiles);
-    const modules=await git.modules(root);
+    const modules=await git.modules(root); let commitManagedGitmodules=false;
     if(snapshot.settings.projects.some(p=>!modules.some(m=>m.id===p.id))) {
       const state=await git.inspect(root);
-      invariant(!state.changes.some(c=>c.path==='.gitmodules'),'SUBMODULE_SETTINGS_CONFLICT','產品連結檔另有修改；設定已存 SQLite，尚未覆寫 Repo。',409);
+      const managed = store.connection(repositoryId)?.managedGitmodulesHash;
+      invariant(!state.changes.some(c=>c.path==='.gitmodules') || managed && await fileHash(root,'.gitmodules')===managed,'SUBMODULE_SETTINGS_CONFLICT','產品連結檔另有修改；設定已存 SQLite，尚未覆寫 Repo。',409);
+      commitManagedGitmodules = state.changes.some(c=>c.path==='.gitmodules') && Boolean(managed);
     }
     // Check all existing products before changing any source file.
     for(const p of snapshot.settings.projects??[]) {
@@ -49,7 +91,18 @@ export async function prepareProjection(context) {
       if(module?.actual)await preflight(path.join(root,module.path),snapshot.files.filter(f=>f.target===`project:${p.id}`));
     }
     for(const file of specFiles)if(await fileHash(root,file.path)!==file.sha256)await atomicWrite(await safePath(root,file.path),file.content);
-    await savePaths(root,specFiles.map(f=>f.path),git,repositoryId,`Export SQLite revision ${snapshot.revision}`);
+    const acceptedSourcePaths = [];
+    if (context.acceptedManifest?.sourceKind === 'WORKSPACE') {
+      const entries = await workspaceEntries(root, { spec: true });
+      invariant(specSourceDigest(entries) === context.acceptedManifest.specSourceDigest, 'CONTENT_CHANGED', '驗收期間規格來源已改變；沒有提交未驗證的來源。', 409);
+      acceptedSourcePaths.push(...entries.map(entry => entry.path));
+      // SQL owns its editor paths; the verified snapshot also owns external
+      // helpers and their deletions at this explicit acceptance checkpoint.
+      const changes = (await git.inspect(root)).changes;
+      for (const relative of new Set(changes.flatMap(change => [change.path, ...(change.originalPath ? [change.originalPath] : [])])))
+        if (specSourcePath(relative) && !await exists(await safePath(root, relative))) acceptedSourcePaths.push(relative);
+    }
+    await savePaths(root,[...specFiles.map(f=>f.path),...acceptedSourcePaths,...(commitManagedGitmodules?['.gitmodules']:[])],git,repositoryId,`Export SQLite revision ${snapshot.revision}`);
     // The receipt is a recoverable projection checkpoint. It never advances the saved revision.
     receipt.files=specFiles.map(({target,path,sha256})=>({target,path,sha256}));store.setProjection(repositoryId,receipt);
     if((await git.modules(root)).some(m=>!m.actual))await git.restore(root,await git.inspect(root));
@@ -64,10 +117,12 @@ export async function prepareProjection(context) {
         module=(await git.modules(root)).find(m=>m.id===p.id);
       }
       const target=path.join(root,module.path),files=snapshot.files.filter(f=>f.target===`project:${p.id}`);
+      const deleted=(prior?.deletedFiles??[]).filter(file=>file.target===`project:${p.id}`);
       await preflight(target,files);
+      for (const file of deleted) invariant(!await exists(await safePath(target,file.path)), 'EXPORT_CONFLICT', `產品 ${file.path} 已重新出現，未自動提交刪除。`, 409);
       for(const file of files)if(await fileHash(target,file.path)!==file.sha256)await atomicWrite(await safePath(target,file.path),file.content);
-      if(files.length) {
-        await savePaths(target,files.map(f=>f.path),git,repositoryId,`Export product SQLite revision ${snapshot.revision}`);
+      if(files.length||deleted.length) {
+        await savePaths(target,[...files,...deleted].map(f=>f.path),git,repositoryId,`Export product SQLite revision ${snapshot.revision}`);
         await savePaths(root,[module.path],git,repositoryId,`Record saved product ${p.id}`);
       }
       destinations.push({id:p.id,...await targetFor(target,git,branch)});
@@ -79,9 +134,18 @@ export async function prepareProjection(context) {
     if(expected)invariant(identity(expected.spec)===identity(destination)&&destinations.every(p=>{
       const old=expected.projects?.find(x=>x.id===p.id);return !old||identity(old)===identity(p);
     }),'SYNC_DESTINATION_CHANGED','同步來源被外部程式修改；SQLite 內容已保存，系統未上傳至新位置。',409);
-    Object.assign(receipt,{status:'PREPARED',revision:snapshot.revision,head:state.head,branch:state.branch,modules:await git.modules(root),destinations:{spec:destination,projects:destinations}});
+    const fingerprints = await workspaceModules(root, snapshot.settings.projects ?? []);
+    const checkpointModules = (await git.modules(root)).map(module => { const contentDigest = fingerprints.find(item => item.id === module.id)?.contentDigest; return { ...module, initialized: true, contentDigest, checkpointDigest: contentDigest }; });
+    invariant(checkpointModules.every(module => !module.dirty && module.actual === module.commit), 'ACCEPTANCE_CHECKPOINT_CHANGED', '提交期間產品又有修改；人類確認已保留，請處理差異後重試。', 409);
+    if (context.acceptedManifest) invariant(context.acceptedManifest.projects.length === checkpointModules.length && checkpointModules.every(module => context.acceptedManifest.projects.some(project => project.id === module.id && (project.contentDigest ? project.contentDigest === module.contentDigest : project.commit === module.actual))), 'CONTENT_CHANGED', '驗收報告與提交的產品來源不同；沒有標記驗收完成。', 409);
+    if (context.acceptedManifest?.sourceKind === 'WORKSPACE') invariant(await specCheckpointDigest(root, git, state.head) === context.acceptedManifest.specSourceDigest
+      && await workspaceSpecSourceDigest(root) === context.acceptedManifest.specSourceDigest,
+    'CONTENT_CHANGED', '驗收期間規格來源又有修改，或提交內容與報告不同；沒有標記驗收完成。', 409);
+    invariant(store.draft(repositoryId).revision === snapshot.revision, 'CONTENT_CHANGED', '驗收期間已儲存新草稿；原確認已保留，未標記新草稿已驗收。', 409);
+    Object.assign(receipt,{status:'PREPARED',revision:snapshot.revision,checkpointRevision:snapshot.revision,checkpointKind:context.acceptance?'ACCEPTANCE_PENDING':'CREATED',deletedFiles:[],head:state.head,branch:state.branch,modules:checkpointModules,destinations:{spec:destination,projects:destinations}});
     store.setProjection(repositoryId,receipt);
     store.setPreferences(repositoryId,{...store.draft(repositoryId).settings,sync:receipt.destinations});
+    store.setConnection(repositoryId,{...store.connection(repositoryId),status:'READY',localPath:root,validatedPath:root,managedGitmodulesHash:null,updatedAt:new Date().toISOString()});
     return snapshot;
   } catch(error) {
     store.setProjection(repositoryId,{...receipt,status:'FAILED',error:{code:error.code,message:error.message}});
@@ -104,7 +168,8 @@ export async function captureExecutionFiles(context,snapshot) {
     store.saveDraft(request.repositoryId,{expectedRevision:snapshot.revision,files,operationId:`derived-${request.operationId}`,request:{operation:request.operation,sourceRevision:snapshot.revision},result:{derived:true}});
   }
   const current=store.draft(request.repositoryId),prior=store.projection(request.repositoryId);
-  store.setProjection(request.repositoryId,{...prior,revision:files.length ? current.revision : snapshot.revision,head:await context.git.resolve(root),modules:await context.git.modules(root),
+  const modules = await workspaceModules(root, current.settings.projects ?? []);
+  store.setProjection(request.repositoryId,{...prior,revision:files.length ? current.revision : snapshot.revision,modules:modules.map(module=>({...prior?.modules?.find(item=>item.id===module.id),...module})),
     files:[...(prior?.files??[]).filter(f=>!files.some(m=>key(m)===key(f))),...files.map(f=>({target:f.target,path:f.path,sha256:digest(f.content)}))]});
 }
 

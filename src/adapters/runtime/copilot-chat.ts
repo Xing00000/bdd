@@ -1,57 +1,69 @@
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {ChatModel,ChatSettings} from '../../ports/chat.ts';
-import {chatLimits} from '../../domain/chat.ts';
-import {createCopilotConnection,asError,copilotCancelled} from './copilot-rpc.ts';
-import {parseCopilotModels} from './copilot-models.ts';
-import {workstationNamespace,type CopilotTool,type CopilotCall,type CopilotCompletion} from './chat-tool-protocol.ts';
+import {automaticChatModel,chatLimits} from '../../domain/chat.ts';
+import {createCopilotConnection,asError,copilotCancelled,validateCopilotArgs} from './copilot-rpc.ts';
+import {modelConfigOption,parseCopilotModels} from './copilot-models.ts';
+import {createCopilotToolBridge} from './copilot-tools.ts';
+import {workstationNamespace,codexProposalNamespace,type CopilotTool,type CopilotCall,type CopilotCompletion} from './chat-tool-protocol.ts';
 
-interface RuntimeOptions {idleMs?:number;startupTimeoutMs?:number;cleanupTimeoutMs?:number}
-type Collector={event:(event:any)=>void;fail:(error:Error)=>void};
+interface RuntimeOptions {idleMs?:number;startupTimeoutMs?:number;cleanupTimeoutMs?:number;toolPolicy?:'workstation'|'codex'}
+type Collector=ReturnType<typeof collectCompletion>;
 type Connection=ReturnType<typeof createCopilotConnection>;
-type Server={key:string;connection:Connection;ready:Promise<void>;sessions:Map<string,Collector>;active:number;idle?:ReturnType<typeof setTimeout>;closing?:Promise<void>};
+type Server={key:string;connection:Connection;ready:Promise<any>;sessions:Map<string,Collector>;owned:Set<string>;active:number;reusable:boolean;idle?:ReturnType<typeof setTimeout>;closing?:Promise<void>};
 
-/** One inference server, with isolated disposable sessions for Codex-owned history. */
+/** Reuse the ACP server; each inference receives one isolated Codex-owned history. */
 export function createCopilotRuntime(cwd:string,options:RuntimeOptions={}){
  const idleMs=options.idleMs??300000,cleanupMs=options.cleanupTimeoutMs??2000,startupMs=options.startupTimeoutMs??10000;
+ // Copilot truncates model-visible MCP names at 64 characters. Keep enough
+ // space for every workstation name while retaining a private random prefix.
+ const mcpName='bdd_'+randomUUID().replaceAll('-','').slice(0,24);
  const servers=new Map<string,Server>(),allServers=new Set<Server>(),jobs=new Set<Promise<unknown>>(),controllers=new Set<AbortController>();
  const shutdownFailures:Error[]=[];
- let closed=false,closing:Promise<void>|undefined;
+ let closed=false,closing:Promise<void>|undefined,bridge:ReturnType<typeof createCopilotToolBridge>|undefined;
 
  function retire(server:Server){
   if(server.closing)return server.closing;
   clearTimeout(server.idle);if(servers.get(server.key)===server)servers.delete(server.key);
-  server.closing=(async()=>{
-   try{await server.connection.close();}finally{allServers.delete(server);}
-  })();
+  server.closing=(async()=>{try{await server.connection.close();}finally{allServers.delete(server);}})();
   void server.closing.catch(error=>{shutdownFailures.push(asError(error));});return server.closing;
  }
  function acquire(settings:ChatSettings){
+  validateCopilotArgs(settings.copilotArgs);
   const key=JSON.stringify([settings.copilotExecutable,settings.copilotArgs]);let server=servers.get(key);
-  if(server&&!server.connection.usable){void retire(server);server=undefined;}
+  if(server&&(!server.connection.usable||!server.reusable)){if(server.active===0)void retire(server);server=undefined;}
   if(!server){
-   // Settings changes may overlap an active old turn, but cannot accumulate an
-   // unbounded number of child processes. Idle configurations retire at once.
    for(const previous of servers.values())if(previous.active===0)void retire(previous);
    if(allServers.size>=4)throw Error('Copilot 同時使用的執行設定過多，請稍後再試');
    const sessions=new Map<string,Collector>();
-   const connection=createCopilotConnection(settings,cwd,{
+   const connection=createCopilotConnection(settings,cwd,mcpName,{
     event:(id,event)=>sessions.get(id)?.event(event),
-    request:id=>{const error=Error('Copilot 不得執行工作站工具或要求客戶端權限');if(id&&sessions.has(id))sessions.get(id)!.fail(error);else connection.fail(error);},
+    request:(id,method,params)=>{
+     const collector=id?sessions.get(id):undefined;
+     // The transport refuses every client request. Late requests from a
+     // closed session must not cancel a different room on this shared server.
+     collector?.request(method,params);
+    },
     failure:error=>{for(const session of sessions.values())session.fail(error);},
    });
    const ready=(async()=>{
-    try{const result=await connection.rpc('connect',{},undefined,startupMs);if(result?.ok!==true||result.protocolVersion!==3)throw Error('Copilot headless 協定版本不相容（需要 v3）');}
-    catch(error){connection.fail(asError(error));throw error;}
+    try{
+     const result=await connection.rpc('initialize',{protocolVersion:1,clientInfo:{name:'bdd-codex-inference',version:'1.0.0'},clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false}},undefined,startupMs);
+     if(result?.protocolVersion!==1)throw Error('Copilot ACP 協定版本不相容（需要 v1）');
+     return result.agentCapabilities??{};
+    }catch(error){connection.fail(asError(error));throw error;}
    })();
-   server={key,connection,ready,sessions,active:0};servers.set(key,server);allServers.add(server);
+   server={key,connection,ready,sessions,owned:new Set(),active:0,reusable:true};servers.set(key,server);allServers.add(server);
    void ready.catch(()=>{void retire(server!);});
   }
   clearTimeout(server.idle);server.active++;return server;
  }
  function release(server:Server){
   server.active--;
-  if(server.active===0&&!server.closing){server.idle=setTimeout(()=>{void retire(server);},idleMs);server.idle.unref();}
+  if(server.active===0&&!server.closing){
+   if(!server.reusable){void retire(server);return;}
+   server.idle=setTimeout(()=>{void retire(server);},idleMs);server.idle.unref();
+  }
  }
  function run<T>(settings:ChatSettings,signal:AbortSignal,operation:(server:Server,signal:AbortSignal,snapshot:ChatSettings)=>Promise<T>):Promise<T>{
   if(closed)return Promise.reject(Error('Copilot runtime 已關閉'));
@@ -69,66 +81,116 @@ export function createCopilotRuntime(cwd:string,options:RuntimeOptions={}){
   })();
   jobs.add(job);void job.then(()=>jobs.delete(job),()=>jobs.delete(job));return job;
  }
- return {
-  models(settings:ChatSettings,signal:AbortSignal):Promise<ChatModel[]>{return run(settings,signal,async(server,current,snapshot)=>{
-   await authenticated(server.connection,current,snapshot.timeoutMs);
-   return parseCopilotModels(await server.connection.rpc('models.list',{},current,snapshot.timeoutMs));
-  });},
-  completion(settings:ChatSettings,prompt:string,signal:AbortSignal,tools:CopilotTool[],onDelta?:(delta:string)=>void):Promise<CopilotCompletion>{
-   let declared:CopilotTool[];try{declared=validateTools(tools);}catch(error){return Promise.reject(error);}
-   return run(settings,signal,async(server,requestSignal,snapshot)=>{
-    const sessionId=randomUUID(),controller=new AbortController(),current=AbortSignal.any([requestSignal,controller.signal]);
-    const collector=collectCompletion(declared,sessionId,onDelta,()=>controller.abort());server.sessions.set(sessionId,collector);
-    const abort=()=>collector.fail(copilotCancelled());current.addEventListener('abort',abort,{once:true});
-    let requested=false,result:CopilotCompletion|undefined,error:Error|undefined;
-    try{
-     if(current.aborted)throw copilotCancelled();
-     await authenticated(server.connection,current,snapshot.timeoutMs);
-     if(current.aborted)throw copilotCancelled();
-     requested=true;
-     const created=await server.connection.rpc('session.create',{
-      // Preserve the CLI's existing credential/config directory. Explicit
-      // feature restrictions isolate execution without changing login lookup.
-      sessionId,model:snapshot.model,clientName:'bdd-codex-inference',workingDirectory:cwd,
-      streaming:true,availableTools:declared.map(tool=>tool.name),toolFilterPrecedence:'excluded',
-      tools:declared.map(({name,description,parameters})=>({name,description,parameters,skipPermission:true})),
-      mcpServers:{},requestPermission:true,requestUserInput:false,requestElicitation:false,hooks:false,
-      enableConfigDiscovery:false,enableOnDemandInstructionDiscovery:false,customAgents:[],customAgentsLocalOnly:true,
-      enableSkills:false,enableFileHooks:false,enableHostGitOperations:false,enableSessionStore:false,enableSessionTelemetry:false,
-      skipEmbeddingRetrieval:true,embeddingCacheStorage:'in-memory',mcpOAuthTokenStorage:'in-memory',
-      infiniteSessions:{enabled:false},memory:{enabled:false},
-     },current,snapshot.timeoutMs);
-     if(created?.sessionId!==sessionId)throw Error('Copilot 回傳了錯誤的工作階段');
-     await server.connection.rpc('session.options.update',{sessionId,skipCustomInstructions:true,customAgentsLocalOnly:true,coauthorEnabled:false,manageScheduleEnabled:false,installedPlugins:[],includedBuiltinSkills:[]},current,snapshot.timeoutMs);
-     const sent=await server.connection.rpc('session.send',{sessionId,prompt},current,snapshot.timeoutMs);
-     if(typeof sent?.messageId!=='string'||!sent.messageId)throw Error('Copilot 缺少訊息識別');
-     result=await collector.result;
-    }catch(reason){error=collector.failure??asError(reason);}
-    finally{
-     current.removeEventListener('abort',abort);
-     if(requested&&server.connection.usable){
-      try{
-       // Never return an external-tool success to Copilot. Abort its pending
-       // request, detach, and delete only our newly minted ephemeral session.
-       for(const method of ['session.abort','session.destroy','session.delete']){
-        const response=await server.connection.rpc(method,{sessionId},undefined,cleanupMs);
-        if(response?.success!==true)throw Error(`Copilot ${method} 未完成`);
-       }
-      }catch(reason){error??=asError(reason);server.connection.fail(asError(reason));try{await retire(server);}catch(reason){error??=asError(reason);}}
-     }
-     server.sessions.delete(sessionId);
+ async function closeSession(server:Server,sessionId:string){
+  server.sessions.delete(sessionId);server.owned.delete(sessionId);
+  if(!server.connection.usable)return;
+  const capabilities=await server.ready;
+  const method=capabilities.sessionCapabilities?.close?'session/close':capabilities.sessionCapabilities?.delete?'session/delete':undefined;
+  if(!method){
+   // Older ACP servers cannot release sessions. Drain this process instead of
+   // accumulating history indefinitely or falling back to a private protocol.
+   server.reusable=false;if(servers.get(server.key)===server)servers.delete(server.key);return;
+  }
+  try{await server.connection.rpc(method,{sessionId},undefined,cleanupMs);}
+  catch(error){server.connection.fail(asError(error));await retire(server);throw error;}
+ }
+ async function session<T>(server:Server,current:AbortSignal,snapshot:ChatSettings,mcpServers:object[],operation:(created:any)=>Promise<T>):Promise<T>{
+  let sessionId:string|undefined,error:unknown;
+  const adopt=(response:any)=>{
+   if(typeof response?.sessionId!=='string'||!response.sessionId||server.owned.has(response.sessionId)){
+    server.reusable=false;if(servers.get(server.key)===server)servers.delete(server.key);
+    throw Error('Copilot ACP 回傳了無效或重複的工作階段');
+   }
+   sessionId=response.sessionId;server.owned.add(sessionId!);
+  };
+  const created=server.connection.rpc('session/new',{cwd,mcpServers},undefined,snapshot.timeoutMs+cleanupMs);
+  try{
+   let response:any;
+   try{response=await cancellable(created,current);}
+   catch(reason){
+    // A cancelled session/new may still create a session. Receive its id and
+    // close it; if the agent never answers, retire that process within a bound.
+    if(current.aborted&&server.connection.usable){
+     try{response=await bounded(created,cleanupMs,'session/new 取消後未完成');}
+     catch(cleanup){server.connection.fail(asError(cleanup));await retire(server);}
+     // Never close another room's session if a broken agent reuses its id.
+     // Drain the server after its existing rooms finish instead.
+     if(response)try{adopt(response);}catch{ /* Preserve the original cancellation. */ }
     }
-    if(error)throw error;if(collector.failure)throw collector.failure;if(current.aborted)throw copilotCancelled();
-    return result!;
+    throw reason;
+   }
+   adopt(response);
+   if(current.aborted)throw copilotCancelled();
+   return await operation(response);
+  }catch(reason){error=reason;throw reason;}
+  finally{if(sessionId)try{await closeSession(server,sessionId);}catch(cleanup){if(!error)throw cleanup;}}
+ }
+ return {
+  models(settings:ChatSettings,signal:AbortSignal):Promise<ChatModel[]>{
+   return run(settings,signal,(server,current,snapshot)=>session(server,current,snapshot,[],async created=>parseCopilotModels(created)));
+  },
+  completion(settings:ChatSettings,prompt:string,signal:AbortSignal,tools:CopilotTool[],onDelta?:(delta:string)=>void):Promise<CopilotCompletion>{
+   let declared:CopilotTool[];try{declared=validateTools(tools,options.toolPolicy??'workstation');}catch(error){return Promise.reject(error);}
+   return run(settings,signal,async(server,current,snapshot)=>{
+    let sessionId:string|undefined,running=false,settled=false,cancelled=false;
+    const cancel=()=>{if(running&&!settled&&!cancelled&&server.connection.usable&&sessionId){cancelled=true;server.connection.notify('session/cancel',{sessionId});}};
+    const collector=collectCompletion(declared,mcpName,onDelta,cancel);
+    let registration:ReturnType<Awaited<ReturnType<typeof createCopilotToolBridge>>['register']>|undefined;
+    if(declared.length){
+     const capabilities=await server.ready;
+     if(capabilities.mcpCapabilities?.http!==true)throw Error('Copilot ACP 不支援 HTTP MCP 工具提案，請更新 Copilot');
+     const toolBridge=await cancellable(bridge??=createCopilotToolBridge(mcpName),current);
+     registration=toolBridge.register(declared,(name,args)=>collector.propose(name,args),error=>collector.fail(error));
+    }
+    try{return await session(server,current,snapshot,registration?[registration.server]:[],async created=>{
+     sessionId=created.sessionId;server.sessions.set(sessionId!,collector);
+     await selectModel(server.connection,created,snapshot.model,current,snapshot.timeoutMs);
+     if(current.aborted)throw copilotCancelled();
+     const pending=server.connection.rpc('session/prompt',{sessionId,prompt:[{type:'text',text:prompt}]},undefined,snapshot.timeoutMs+cleanupMs);
+     running=true;void pending.then(()=>{settled=true;},()=>{settled=true;});
+     try{
+      const outcome=await cancellable(Promise.race([pending.then(response=>({kind:'response' as const,response})),collector.handoff.then(()=>({kind:'handoff' as const}))]),current);
+      let response:any;
+      if(outcome.kind==='handoff'){
+       cancel();response=await bounded(pending,cleanupMs,'session/prompt 取消後未完成');
+       if(!['cancelled','end_turn'].includes(response?.stopReason))throw Error('Copilot ACP 工具提案未完成取消');
+      }else{
+       response=outcome.response;
+       if(response?.stopReason!=='end_turn')throw Error(response?.stopReason==='cancelled'?'Copilot 請求已取消或逾時':`Copilot ACP 回覆未完成（${String(response?.stopReason)}）`);
+      }
+      if(current.aborted)throw copilotCancelled();
+      return collector.finish();
+     }catch(reason){
+      const error=collector.failure??asError(reason);cancel();
+      if(!settled&&server.connection.usable){
+       try{await bounded(pending,cleanupMs,'session/prompt 取消後未完成');}
+       catch(cleanup){server.connection.fail(asError(cleanup));await retire(server);}
+      }
+      throw error;
+     }finally{running=false;}
+    });}finally{registration?.close();}
    });
   },
-  close(){return closing??=(async()=>{closed=true;for(const controller of controllers)controller.abort();const stopped=Promise.allSettled([...allServers].map(retire));await Promise.allSettled(jobs);await stopped;if(shutdownFailures.length)throw shutdownFailures[0];})();},
+  close(){return closing??=(async()=>{
+   closed=true;for(const controller of controllers)controller.abort();
+   const stopped=Promise.allSettled([...allServers].map(retire));await Promise.allSettled(jobs);await stopped;
+   if(bridge)await (await bridge).close();if(shutdownFailures.length)throw shutdownFailures[0];
+  })();},
  };
 }
 
-async function authenticated(connection:Connection,signal:AbortSignal,timeout:number){
- const auth=await connection.rpc('auth.getStatus',{},signal,timeout);
- if(auth?.isAuthenticated!==true)throw Error('GitHub Copilot 尚未登入，請先執行 copilot login');
+async function selectModel(connection:Connection,created:any,model:string,signal:AbortSignal,timeoutMs:number){
+ const models=parseCopilotModels(created),option=modelConfigOption(created);
+ if(model===automaticChatModel&&!models.some(candidate=>candidate.id===model))return;
+ if(!models.some(candidate=>candidate.id===model))throw Error(`Copilot ACP 未提供模型「${model}」，請重新取得模型清單`);
+ if(option){
+  if(option.currentValue===model)return;
+  const changed=await connection.rpc('session/set_config_option',{sessionId:created.sessionId,configId:option.id,value:model},signal,timeoutMs);
+  if(modelConfigOption(changed)?.currentValue!==model)throw Error('Copilot ACP 未套用選取的模型');
+ }else{
+  if(created.models?.currentModelId===model)return;
+  await connection.rpc('session/set_model',{sessionId:created.sessionId,modelId:model},signal,timeoutMs);
+ }
 }
 function cancellable<T>(promise:Promise<T>,signal:AbortSignal):Promise<T>{
  if(signal.aborted)return Promise.reject(copilotCancelled());
@@ -137,55 +199,64 @@ function cancellable<T>(promise:Promise<T>,signal:AbortSignal):Promise<T>{
   promise.then(value=>{signal.removeEventListener('abort',abort);resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});
  });
 }
-function validateTools(tools:CopilotTool[]){
- if(!Array.isArray(tools)||tools.some(tool=>tool.namespace!==workstationNamespace||!/^workbench_[a-zA-Z0-9_]+$/.test(tool.name)||typeof tool.description!=='string'||tool.parameters?.type!=='object')||new Set(tools.map(tool=>tool.name)).size!==tools.length)throw Error('Copilot 工具宣告未授權或無效');
+function bounded<T>(promise:Promise<T>,timeoutMs:number,message:string):Promise<T>{
+ let timer:ReturnType<typeof setTimeout>;
+ return Promise.race([promise,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(Error(`Copilot ACP ${message}（取消或逾時）`)),timeoutMs);})]).finally(()=>clearTimeout(timer));
+}
+function validateTools(tools:CopilotTool[],policy:'workstation'|'codex'){
+ const namespace=policy==='codex'?codexProposalNamespace:workstationNamespace,pattern=policy==='codex'?/^codex_tool_[0-9]+$/:/^workbench_[a-zA-Z0-9_]+$/;
+ if(!Array.isArray(tools)||tools.some(tool=>tool.namespace!==namespace||!pattern.test(tool.name)||tool.name.length>35||typeof tool.description!=='string'||tool.parameters?.type!=='object')||new Set(tools.map(tool=>tool.name)).size!==tools.length)throw Error('Copilot 工具宣告未授權或無效（工具名稱最多 35 字元）');
  return tools.map(tool=>({...tool,parameters:structuredClone(tool.parameters)}));
 }
-function collectCompletion(tools:CopilotTool[],sessionId:string,onDelta:((delta:string)=>void)|undefined,onFailure:()=>void){
- let text='',bytes=0,failure:Error|undefined,done=false,resolve!:(result:CopilotCompletion)=>void,reject!:(error:Error)=>void;
- const deltas=new Map<string,string>(),completed=new Set<string>(),calls:CopilotCall[]=[];
- const result=new Promise<CopilotCompletion>((yes,no)=>{resolve=yes;reject=no;});void result.catch(()=>{});
- const fail=(error:Error)=>{if(failure)return;failure=error;reject(error);onFailure();};
- const finish=()=>{done=true;resolve({text,calls});};
- const append=(delta:string)=>{bytes+=Buffer.byteLength(delta);if(bytes>chatLimits.providerRequest)throw Error('Copilot 回覆超過大小限制');onDelta?.(delta);};
- return {result,fail,get failure(){return failure;},event(event:any){
-  if(failure)return;
+function collectCompletion(tools:CopilotTool[],mcpName:string,onDelta:((delta:string)=>void)|undefined,onCancel:()=>void){
+ let text='',bytes=0,failure:Error|undefined,handedOff=false,finished=false,resolve!:()=>void,reject!:(error:Error)=>void;
+ const calls:CopilotCall[]=[],declared=new Map<string,{name:string;args:Record<string,unknown>}>();
+ const handoff=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});void handoff.catch(()=>{});
+ const fail=(error:Error)=>{if(failure||finished)return;failure=error;reject(error);onCancel();};
+ const object=(value:any):value is Record<string,unknown>=>Boolean(value&&typeof value==='object'&&!Array.isArray(value));
+ const propose=(name:string,args:Record<string,unknown>,toolCallId?:string)=>{
+  if(failure||finished)return;
   try{
-   const data=event.data??{};
-   if(event.type==='session.error')throw Error(typeof data.message==='string'?data.message:'Copilot 工作階段失敗');
-   if(event.type==='permission.requested')throw Error('Copilot 不得執行工作站工具或要求權限');
-   if(event.type==='tool.execution_start'||event.type==='external_tool.requested'){
-    const call=calls.find(call=>call.toolCallId===data.toolCallId);
-    if(!call||data.toolName!==call.mcpToolName||data.mcpServerName!==undefined||(data.sessionId!==undefined&&data.sessionId!==sessionId)||!isDeepStrictEqual(data.arguments,call.arguments))throw Error('Copilot 不得執行工作站工具');
-    return;
-   }
-   if(event.type==='tool.execution_complete'){
-    // The CLI may report an aborted external declaration while cleanup runs;
-    // an actual completed execution is never accepted as a model reply.
-    if(!done||!calls.some(call=>call.toolCallId===data.toolCallId)||data.success===true)throw Error('Copilot 不得執行工作站工具');
-    return;
-   }
-   if(done)return;
-   if(event.type==='assistant.message_delta'){
-    if(typeof data.messageId!=='string'||!data.messageId||typeof data.deltaContent!=='string'||completed.has(data.messageId))throw Error('Copilot 增量格式錯誤');
-    deltas.set(data.messageId,(deltas.get(data.messageId)??'')+data.deltaContent);append(data.deltaContent);
-   }
-   if(event.type==='assistant.message'){
-    if(typeof data.messageId!=='string'||!data.messageId||typeof data.content!=='string'||completed.has(data.messageId))throw Error('Copilot 回覆格式錯誤');
-    const streamed=deltas.get(data.messageId);
-    if(streamed!==undefined&&streamed!==data.content)throw Error('Copilot 增量與完成訊息不一致');
-    if(streamed===undefined&&data.content)append(data.content);
-    deltas.delete(data.messageId);completed.add(data.messageId);text+=data.content;
-    if(data.toolRequests!==undefined&&!Array.isArray(data.toolRequests))throw Error('Copilot 工具呼叫格式錯誤');
-    for(const call of data.toolRequests??[]){
-     if(call.type!=='function'||typeof call.toolCallId!=='string'||!call.toolCallId||calls.some(previous=>previous.toolCallId===call.toolCallId)||!tools.some(tool=>tool.name===call.name)||call.mcpServerName!==undefined||!call.arguments||typeof call.arguments!=='object'||Array.isArray(call.arguments))throw Error('Copilot 要求未授權或無效的工具呼叫');
-     calls.push({toolCallId:call.toolCallId,mcpServerName:'codex_handoff',mcpToolName:call.name,arguments:call.arguments});
-    }
-    if(calls.length){if(deltas.size)throw Error('Copilot 訊息串流未完成');finish();}
-   }
-   if(event.type==='session.idle'){
-    if(!completed.size||!text.trim()||deltas.size)throw Error('Copilot 未完成回覆');finish();
-   }
+   if(!tools.some(tool=>tool.name===name)||!object(args))throw Error('Copilot 要求未授權或無效的工具提案');
+   const previous=[...declared].find(([,call])=>call.name===name&&isDeepStrictEqual(call.args,args));
+   const id=toolCallId??previous?.[0]??'call_'+randomUUID();
+   if(!calls.some(call=>call.toolCallId===id))calls.push({toolCallId:id,mcpServerName:'codex_handoff',mcpToolName:name,arguments:structuredClone(args)});
+   if(calls.length>32)throw Error('Copilot 工具提案超過數量限制');
+   handedOff=true;onCancel();resolve();
   }catch(error){fail(asError(error));}
- }};
+ };
+ return {handoff,fail,propose,get failure(){return failure;},
+  finish(){if(failure)throw failure;if(!text.trim()&&!calls.length)throw Error('Copilot 未完成回覆');finished=true;return {text,calls:structuredClone(calls)};},
+  request(method:string,params:any){
+   if(failure||finished)return;
+   const call=params?.toolCall,known=declared.get(call?.toolCallId);
+   if(method!=='session/request_permission'||!known||![known.name,`${mcpName}-${known.name}`].includes(call.title)||!isDeepStrictEqual(known.args,call.rawInput)){
+    fail(Error('Copilot 不得執行工作站工具或要求客戶端權限'));return;
+   }
+   propose(known.name,known.args,call.toolCallId);
+  },
+  event(update:any){
+   if(failure||finished)return;
+   try{
+    if(update.sessionUpdate==='agent_message_chunk'){
+     if(update.content?.type!=='text'||typeof update.content.text!=='string')throw Error('Copilot ACP 文字增量格式錯誤');
+     if(handedOff)return;
+     bytes+=Buffer.byteLength(update.content.text);if(bytes>chatLimits.providerRequest)throw Error('Copilot 回覆超過大小限制');
+     text+=update.content.text;onDelta?.(update.content.text);
+    }
+    if(update.sessionUpdate==='tool_call'){
+     const tool=tools.find(tool=>`${mcpName}-${tool.name}`===update.title);
+     if(!tool||typeof update.toolCallId!=='string'||!update.toolCallId||!object(update.rawInput))throw Error('Copilot 不得執行未授權的工作站工具');
+     if(update.status==='completed')throw Error('Copilot 不得執行工作站工具');
+     if(declared.has(update.toolCallId))throw Error('Copilot ACP 工具提案識別重複');
+     declared.set(update.toolCallId,{name:tool.name,args:structuredClone(update.rawInput)});
+    }
+    if(update.sessionUpdate==='tool_call_update'){
+     const known=declared.get(update.toolCallId);if(!known)throw Error('Copilot 不得執行未授權的工作站工具');
+     if(update.rawInput!==undefined&&!isDeepStrictEqual(update.rawInput,known.args))throw Error('Copilot ACP 工具提案參數不一致');
+     if(update.status==='completed')throw Error('Copilot 不得執行工作站工具');
+    }
+   }catch(error){fail(asError(error));}
+  },
+ };
 }

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, cp, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, cp, rm, readdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createServer } from 'node:net';
@@ -11,29 +11,29 @@ import { createGit, execute } from '../../packages/git-core/index.mjs';
 import { writeJson, exists } from '../../packages/contracts/index.mjs';
 import { toolkitRoot } from '../workstation/helpers.mjs';
 import { docxArchive } from '../workstation/requirement-fixtures.mjs';
+import { configureSdkPeer } from '../workstation/sdk-peer.mjs';
 
 async function port() { const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const value=server.address().port;await new Promise(r=>server.close(r));return value; }
 // Fixture setup provisions only remote Git servers, a deliberately incomplete product,
 // browser dependencies and the actual production entry point. No Spec Repo, review,
 // operation, candidate or report is populated through a service/API/filesystem shortcut.
-test('all-UI: two textareas → upload/generate/edit/restore → SQLite save → failure/fix/verification → sync and offline save', { timeout: 900000 }, async t => {
+test('all-UI: create → edit/review/develop without Git → verify → human acceptance → sync and offline save', { timeout: 900000 }, async t => {
   const base=await mkdtemp(path.join(os.tmpdir(),'workbench-ui-')),home=path.join(base,'station');
   const artifacts=path.resolve(process.env.WB_E2E_ARTIFACTS??path.join(base,'evidence'));await mkdir(artifacts,{recursive:true});
   const driver=path.join(base,'driver');await mkdir(driver);
-  // A deterministic CLI fixture, not a simulated PTY or an external paid LLM call.
-  const agentFile=path.join(driver,'agent-fixture.mjs');
-  await writeFile(agentFile,`import fs from 'node:fs';
-import {spawnSync} from 'node:child_process';
-if(!process.stdin.isTTY||!process.stdout.isTTY)throw Error('real PTY required');
-console.log('PTY_READY real-terminal=true');
-process.stdin.setEncoding('utf8');process.stdin.on('data',x=>console.log('INPUT:'+x.trim()));
-const result=spawnSync(process.execPath,[${JSON.stringify(path.join(toolkitRoot,'scripts/mcp-agent-task.mjs'))},process.argv[2]],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'workbench_get_task',arguments:{}}})+'\\n',encoding:'utf8'});
-if(result.status!==0)throw Error(result.stderr);
-const task=JSON.parse(result.stdout).result.structuredContent;
-if(task.purpose==='gherkin'){const {artifacts}=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const {generateRequirement}=await import(${JSON.stringify(path.join(toolkitRoot,'packages/workstation/requirements.mjs'))});fs.writeFileSync(task.output,generateRequirement(artifacts['requirement-description.txt']).gherkin);console.log('CLI fixture generated Gherkin');process.exit(0);}
-if(task.feedback.some(item=>item.message.includes('feedback-pty-fixture'))){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');console.log('Agent saved agent-fixed.txt');}
-setTimeout(()=>process.exit(0),2500);
-`);
+  // The official SDK drives a controlled native exec peer. This verifies SDK
+  // dispatch and UI behavior without claiming real model inference.
+  await configureSdkPeer({home,directory:driver,source:`import fs from 'node:fs';
+if(task.purpose==='gherkin'){
+  const {generateRequirement}=await import(${JSON.stringify(path.join(toolkitRoot,'packages/workstation/requirements.mjs'))});
+  fs.writeFileSync(task.output,generateRequirement(artifacts['requirement-description.txt']).gherkin);
+  emitMessage('SDK fixture generated Gherkin');
+}else{
+  emitMessage(isResume?'INPUT:'+prompt:'SDK_READY controlled-exec-peer=true');
+  if((task.feedback??[]).some(item=>item.message.includes('feedback-sdk-fixture'))){fs.writeFileSync('agent-fixed.txt','fixed from acceptance feedback\\n');emitMessage('Agent saved agent-fixed.txt');}
+  await new Promise(resolve=>setTimeout(resolve,isResume?500:5000));
+}
+`});
 
   const browsers=process.env.PLAYWRIGHT_BROWSERS_PATH??path.join(base,'browsers');
   const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:browsers};delete env.WB_ENABLE_TRUSTED_EXECUTION;const git=createGit({allowLocal:true});
@@ -42,8 +42,12 @@ setTimeout(()=>process.exit(0),2500);
   const product=path.join(base,'product-source');await git.init(product);
   await writeFile(path.join(product,'server.mjs'),`import http from 'node:http';
 import { readFileSync } from 'node:fs';
-const server=http.createServer((request,response)=>{
-  if(request.url==='/health'){response.setHeader('content-type','application/json');response.end(JSON.stringify({commit:process.env.WB_SOURCE_COMMIT}));return;}
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { entriesDigest, workspaceEntries, workingCommit } from '../../.workbench-tools/spec-toolkit/workspace.mjs';
+const root=path.dirname(fileURLToPath(import.meta.url));
+const server=http.createServer(async(request,response)=>{
+  if(request.url==='/health'){response.setHeader('content-type','application/json');response.end(JSON.stringify({sourceDigest:entriesDigest(await workspaceEntries(root)),commit:await workingCommit(root)}));return;}
   const message=JSON.stringify(readFileSync(new URL('./message.txt',import.meta.url),'utf8').trim());
   response.setHeader('content-type','text/html; charset=utf-8');
   response.end('<!doctype html><html><title>Versioned product</title><button id="login">Sign in</button><output role="status">Signed out</output><script>document.querySelector("#login").onclick=()=>{document.querySelector("output").textContent='+message+'};</script></html>');
@@ -81,7 +85,7 @@ const server=http.createServer((request,response)=>{
   page.on('pageerror',e=>browserErrors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().startsWith(site))events.push({url:new URL(r.url()).pathname,body:r.postDataJSON()});});
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   const click=async name=>{await page.getByRole('button',{name,exact:true}).click();await ready();};
-  async function job(locator,name,outcome='SUCCEEDED',preview=true) { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();if(preview&&['workflow.develop','workflow.gherkin.generate'].includes(name)){await expect(page.getByRole('dialog')).toContainText('預覽 CLI Prompt');await page.getByRole('dialog').getByRole('button',{name:'送出',exact:true}).click();}await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
+  async function job(locator,name,outcome='SUCCEEDED',preview=true) { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();if(preview&&['workflow.develop','workflow.gherkin.generate'].includes(name)){await expect(page.getByRole('dialog')).toContainText('預覽 Agent Prompt');await page.getByRole('dialog').getByRole('button',{name:'送出',exact:true}).click();}await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
   async function repositoryMenu(){if(!await page.locator('#sidebar').isVisible())await page.locator('#menu-toggle').click();const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();return group;}
   // The reports view remains a supported evidence deep link; its sidebar entry was removed.
   async function reportHistory(){
@@ -102,7 +106,7 @@ const server=http.createServer((request,response)=>{
       await d.getByLabel('啟動參數（每行一個）',{exact:true}).fill(`server.mjs\n${productPort}`);
     }
     else await expect(d.getByLabel('需求確認者',{exact:true})).toHaveValue('UI Acceptance Reviewer');
-    // Acquisition finishes before tools preparation can request installation consent.
+    // Tool preparation reads SQL and does not acquire the deferred Git source.
     await job(d.getByRole('button',{name:'開始使用',exact:true}),'repository.tools.prepare','FAILED');await expect(d).toContainText('安裝必要套件並繼續');await expect(d).toContainText('@playwright/test');
     if(withProduct) {
       await d.getByRole('button',{name:'取消',exact:true}).click();await expect(d).not.toBeVisible();await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();
@@ -118,8 +122,8 @@ const server=http.createServer((request,response)=>{
     await click('Agent、Prompt 與 Skill 管理');await page.getByRole('button',{name:'新增 Agent',exact:true}).click();
     const editor=page.locator('.catalog-editor');
     await editor.getByRole('textbox',{name:'名稱',exact:true}).fill(name);
-    await editor.getByRole('textbox',{name:'CLI 執行檔',exact:true}).fill(process.execPath);
-    await editor.getByRole('textbox',{name:'CLI 參數（每行一個）',exact:true}).fill(`${agentFile}\n{task}\n{prompt}`);
+    await expect(editor).toContainText('執行引擎：Codex SDK');
+    await expect(editor.getByRole('textbox',{name:'模型（auto 沿用對話設定）',exact:true})).toHaveValue('auto');
     await editor.getByRole('spinbutton',{name:'最大嘗試次數',exact:true}).fill('3');
     await editor.getByRole('button',{name:'儲存新版本',exact:true}).click();
     await expect(page.getByRole('button',{name:'編輯 '+name,exact:true})).toBeVisible();
@@ -143,7 +147,8 @@ const server=http.createServer((request,response)=>{
   await configureFixtureAgent();
   await click('開啟規格庫 Alpha 規格庫');
   await configureFixtureAgent();
-  const acquiredHead=(await git.inspect(path.join(home,'repositories',alpha,'repo'))).head;
+  const savedRoot=path.join(home,'repositories',alpha,'repo');
+  assert.equal(await exists(savedRoot),false,'Binding and settings defer Git until feature creation');
   assert.equal(await page.getByRole('button',{name:/Commit|Push|Clone|安裝 Chromium|檢查測試接線|準備驗收候選/}).count(),0);
   await click('＋ 新增需求');let d=page.getByRole('dialog');
   await expect(d).not.toBeVisible();
@@ -160,7 +165,7 @@ const server=http.createServer((request,response)=>{
   await upper.fill(sourceDescription+'\n上方修改不應蓋掉下方手動編輯');await expect(lower).toHaveValue(manual);
   await page.locator('#generate-gherkin').click();await expect(d).toContainText('重新產生');await d.getByRole('button',{name:'取消',exact:true}).click();await expect(lower).toHaveValue(manual);
   const beforeGeneration=await page.locator('#requirement-panel').getAttribute('data-generation');
-  await page.locator('#generate-gherkin').click();await d.getByRole('button',{name:'保留原稿並產生',exact:true}).click();await expect(d).toContainText('預覽 CLI Prompt');await d.getByRole('button',{name:'送出',exact:true}).click();
+  await page.locator('#generate-gherkin').click();await d.getByRole('button',{name:'保留原稿並產生',exact:true}).click();await expect(d).toContainText('預覽 Agent Prompt');await d.getByRole('button',{name:'送出',exact:true}).click();
   await page.waitForFunction(id=>document.querySelector('#requirement-panel').dataset.generation!==id,beforeGeneration);await ready();
   await expect(lower).not.toHaveValue(manual);assert.ok(parse(await lower.inputValue()).feature);
   await page.getByText('先前的生成草稿',{exact:true}).click();
@@ -168,14 +173,13 @@ const server=http.createServer((request,response)=>{
   await job(page.locator('#save-requirement'),'workflow.requirement.save');
   await expect(page.locator('#phase-title')).toHaveText('需求');
   await page.screenshot({path:path.join(artifacts,'00-two-input-requirement.png'),fullPage:true});
-  const savedRoot=path.join(home,'repositories',alpha,'repo');
-  assert.equal(await exists(savedRoot),true,'Binding automatically created the checkout');
-  assert.equal((await git.inspect(savedRoot)).head,acquiredHead,'Saving still writes only SQLite, not a Git commit');
+  assert.equal(await exists(savedRoot),true,'The first feature save initializes its source');
+  const creationHead=await git.resolve(savedRoot);assert.ok(creationHead,'Creating a feature records its Git checkpoint');
   const readSaved=(repo,path)=>{const db=new DatabaseSync(`${home}/metadata.sqlite`,{readOnly:true});try{return db.prepare('SELECT content FROM authoring_files WHERE repository_id=? AND path=?').get(repo,path)?.content;}finally{db.close();}};
   assert.match(readSaved(alpha,'spec/REQ-001/feature/feature.feature'),/Sign in to the actual product/);
   await page.reload();await ready();await expect(lower).toHaveValue(manual);await expect(upper).toHaveValue(sourceDescription+'\n上方修改不應蓋掉下方手動編輯');
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1,'Save must not upload');
-  // Revisit settings without publishing any content; the automatically acquired checkout is unchanged.
+  // Revisit settings without publishing or creating another Git checkpoint.
   await tab('設定');await page.getByRole('textbox',{name:'確認者名稱',exact:true}).fill('UI Acceptance Reviewer Updated');
   await job(page.getByRole('button',{name:'儲存設定',exact:true}),'repository.tools.prepare');
   assert.equal(await exists(savedRoot),true);
@@ -187,11 +191,12 @@ const server=http.createServer((request,response)=>{
   await editSource(`import { Given, When, Then } from '../../_shared/bdd';\nimport { expect } from '@playwright/test';\nGiven('the product is open', async ({ page }) => { await page.goto('/'); });\nWhen('I sign in', async ({ page }) => { await page.getByRole('button', { name: 'Sign in' }).click(); });\nThen('the product confirms I signed in', async ({ page }) => { await expect(page.getByRole('status')).toHaveText('Signed in'); });\n`);
   await expect(page.getByRole('button',{name:'確認測試並繼續',exact:true})).toBeEnabled();
   await job(page.getByRole('button',{name:'確認測試並繼續',exact:true}),'workflow.review');await expect(page.getByRole('dialog')).not.toBeVisible();await expect(page.locator('#phase-title')).toHaveText('開發');
+  assert.equal(await git.resolve(savedRoot),creationHead,'Editing and confirming all stages must not commit');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'01-simple-workflow.png'),fullPage:true});
   const beforeDevelopment=await page.locator('#notice').getAttribute('data-job-id');
   await expect(page.locator('#implementation-panel')).toBeVisible();await expect(page.locator('#source-panel')).not.toBeVisible();await expect(page.locator('#scope-details')).not.toBeVisible();
   const beforeDispatch=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').length;
-  await page.getByRole('button',{name:'確認開發',exact:true}).click();await expect(d).toContainText('預覽 CLI Prompt');
+  await page.getByRole('button',{name:'確認開發',exact:true}).click();await expect(d).toContainText('預覽 Agent Prompt');
   assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').length,beforeDispatch);
   await d.getByRole('button',{name:'取消',exact:true}).click();
   assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').length,beforeDispatch);
@@ -200,15 +205,15 @@ const server=http.createServer((request,response)=>{
   await d.getByRole('textbox',{name:'派工 Prompt',exact:true}).fill(editedPrompt);
   await d.getByRole('button',{name:'送出',exact:true}).click();await expect(page.locator('#development-terminal')).toBeVisible({timeout:30000});
   assert.equal(events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').at(-1).body.input.prompt,editedPrompt);
-  await expect(page.locator('#development-terminal')).toContainText('PTY_READY real-terminal=true');
-  await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('terminal-probe');await page.keyboard.press('Enter');
+  await expect(page.locator('#development-terminal')).toContainText('SDK_READY controlled-exec-peer=true');
+  await page.locator('#operation-sdk-message').fill('terminal-probe');await page.locator('#operation-sdk-send').click();
   const activeDevelopmentId=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop').at(-1).body.operationId;
   const inputEntries=async()=>{const value=await (await fetch(site+`/repository-api/v1/spec-repositories/${alpha}/interactions`)).json();return value.entries.filter(entry=>entry.operation==='interaction.cli.input'&&entry.parentOperationId===activeDevelopmentId);};
   await expect.poll(async()=>(await inputEntries()).length).toBe(1);
-  await page.locator('#development-terminal .xterm-helper-textarea').focus();await page.keyboard.type('second-probe');await page.keyboard.press('Enter');
+  await page.locator('#operation-sdk-message').fill('second-probe');await page.locator('#operation-sdk-send').click();
   await expect.poll(async()=>(await inputEntries()).length).toBe(2);
   assert.deepEqual((await inputEntries()).map(entry=>entry.message).sort(),['second-probe','terminal-probe'].sort());
-  await page.screenshot({path:path.join(artifacts,'10-real-agent-terminal.png'),fullPage:true});
+  await page.screenshot({path:path.join(artifacts,'10-sdk-agent-events.png'),fullPage:true});
   await page.waitForFunction(before=>{const n=document.querySelector('#notice');return n.dataset.operation==='workflow.develop'&&n.dataset.jobId!==before;},beforeDevelopment,{timeout:360000});await ready();
   await expect(page.locator('#implementation-panel')).toBeVisible();assert.equal(await page.getByRole('button',{name:'再次驗收',exact:true}).count(),0);
   await click('5 驗收');await expect(page.locator('#verification-panel')).toBeVisible();let run=page.locator('#feature-report-list [data-run-id]').first();const failedRunId=await run.getAttribute('data-run-id');const failedDevelopmentCount=await page.locator('#feature-report-list [data-run-id]').count();assert.equal(failedDevelopmentCount,3,'A failed full suite is retried within development, never marked accepted');await expect(run).toContainText('FAILED');await expect(run).toContainText('NOT_VERIFIED');
@@ -222,18 +227,27 @@ const server=http.createServer((request,response)=>{
   assert.equal((await git.command(undefined,['--git-dir',remotes.product,'rev-parse','main'])).stdout.trim(),initialProduct.commit,'Local save and verification must not sync products');
   assert.equal((await git.command(undefined,['--git-dir',remotes.alpha,'show-ref'],{allowFailure:true})).exitCode,1);
   await tab('需求流程');await click('4 開發實作');await job(page.getByRole('button',{name:'確認開發',exact:true}),'workflow.develop');await expect(page.locator('#verification-panel')).toBeVisible();run=page.locator('#feature-report-list [data-run-id]').first();const passedRunId=await run.getAttribute('data-run-id');assert.notEqual(passedRunId,failedRunId);await expect(run).toContainText('VERIFIED');await expect(run).toContainText('PASSED');
-  await expect(page.getByRole('dialog')).not.toBeVisible();if(!await page.locator('.report-history').evaluate(n=>n.open))await page.locator('.report-history > summary').click();await run.getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id',passedRunId);await expect(page.locator('#feature-report-view')).toHaveAttribute('aria-busy','false');await expect(page.frameLocator('#feature-report-view iframe').getByRole('link',{name:/Passed/})).toContainText('1');await reportHistory();await page.locator(`#run-list [data-run-id="${passedRunId}"]`).getByRole('button',{name:'檢視證據',exact:true}).click();for(const image of await page.locator('#report-view .gherkin-results img').all())await image.scrollIntoViewIfNeeded();await page.waitForFunction(()=>{const a=[...document.querySelectorAll('#report-view .gherkin-results img')];return a.length>=3&&a.every(x=>x.complete&&x.naturalWidth>0);});await tab('需求流程');await expect(page.locator('#feature-status')).toHaveText('等待人工驗收');await job(page.getByRole('button',{name:'驗收通過',exact:true}),'workflow.accept');
+  await expect(page.getByRole('dialog')).not.toBeVisible();if(!await page.locator('.report-history').evaluate(n=>n.open))await page.locator('.report-history > summary').click();await run.getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#feature-report-view')).toHaveAttribute('data-run-id',passedRunId);await expect(page.locator('#feature-report-view')).toHaveAttribute('aria-busy','false');await expect(page.frameLocator('#feature-report-view iframe').getByRole('link',{name:/Passed/})).toContainText('1');await reportHistory();await page.locator(`#run-list [data-run-id="${passedRunId}"]`).getByRole('button',{name:'檢視證據',exact:true}).click();for(const image of await page.locator('#report-view .gherkin-results img').all())await image.scrollIntoViewIfNeeded();await page.waitForFunction(()=>{const a=[...document.querySelectorAll('#report-view .gherkin-results img')];return a.length>=3&&a.every(x=>x.complete&&x.naturalWidth>0);});await tab('需求流程');await expect(page.locator('#feature-status')).toHaveText('等待人工驗收');
+  assert.equal(await git.resolve(savedRoot),creationHead,'Development, retries and passing verification do not commit');
+  assert.equal(await git.resolve(path.join(savedRoot,'projects/product')),initialProduct.commit);
+  const testedManifest=JSON.parse(await readFile(path.join(home,'executions',passedRunId,'evidence','manifest.json'),'utf8'));
+  assert.equal(testedManifest.sourceKind,'WORKSPACE');assert.equal(testedManifest.testedSpecCommit,null);assert.match(testedManifest.inputDigest,/^[a-f0-9]{64}$/);
+  await job(page.getByRole('button',{name:'驗收通過',exact:true}),'workflow.accept');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'03-simple-verified.png'),fullPage:true});
   const productHead=await git.resolve(path.join(savedRoot,'projects/product'));assert.notEqual(productHead,initialProduct.commit);
-  const tested=await git.resolve(savedRoot);await job(page.getByRole('button',{name:'遠端同步',exact:true}),'repository.sync');await expect(run).toContainText('已同步至遠端');await expect(page.getByRole('dialog')).not.toBeVisible();
+  const acceptedSpecCommit=await git.resolve(savedRoot);assert.notEqual(acceptedSpecCommit,creationHead);
+  const offlineAlpha=remotes.alpha+'.offline';await rename(remotes.alpha,offlineAlpha);
+  await job(page.getByRole('button',{name:'遠端同步',exact:true}),'repository.sync','FAILED');
+  assert.equal(await git.resolve(savedRoot),acceptedSpecCommit,'Failed synchronization preserves the accepted checkpoint');
+  await rename(offlineAlpha,remotes.alpha);
+  await job(page.getByRole('button',{name:'遠端同步',exact:true}),'repository.sync');await expect(run).toContainText('已同步至遠端');await expect(page.getByRole('dialog')).not.toBeVisible();
   assert.equal((await git.command(undefined,['--git-dir',remotes.product,'rev-parse','main'])).stdout.trim(),productHead);const syncedHead=(await git.command(undefined,['--git-dir',remotes.alpha,'rev-parse','main'])).stdout.trim();
-  const progressOnly=(await git.command(savedRoot,['diff','--name-only',tested,syncedHead])).stdout.trim().split('\n').filter(Boolean);
-  assert.ok(progressOnly.length>0&&progressOnly.every(p=>p==='spec/REQ-001/feature/workflow.json'||p==='spec/REQ-001/feature/acceptance.json'),'Sync versions progress and human acceptance without changing tested source');
+  assert.equal(syncedHead,acceptedSpecCommit,'Sync publishes the accepted checkpoint without creating another commit');
   const portable=JSON.parse((await git.command(undefined,['--git-dir',remotes.alpha,'show','main:spec/REQ-001/feature/workflow.json'])).stdout);
   assert.equal(portable.stage,'VERIFIED');assert.equal(portable.latestReport.runId,passedRunId);
   const acceptance=JSON.parse((await git.command(undefined,['--git-dir',remotes.alpha,'show','main:spec/REQ-001/feature/acceptance.json'])).stdout).items.at(-1);assert.equal(acceptance.runId,passedRunId);assert.equal(acceptance.manifestDigest,portable.latestReport.manifestDigest);assert.equal(acceptance.reviewer,portable.acceptance.reviewer);assert.ok(acceptance.reviewer.trim());
-  const reportCommit=(await git.command(undefined,['--git-dir',remotes.alpha,'rev-parse',`refs/heads/evidence/${passedRunId}`])).stdout.trim();assert.notEqual(reportCommit,tested);
-  const manifest=JSON.parse((await git.command(undefined,['--git-dir',remotes.alpha,'show',`${reportCommit}:reports/REQ-001/feature/${passedRunId}/manifest.json`])).stdout);assert.equal(manifest.testedSpecCommit,tested);assert.equal(manifest.verification,'VERIFIED');assert.equal(manifest.projects[0].commit,productHead);assert.ok(manifest.artifacts.filter(x=>x.path.startsWith('screenshots/')).length>=3);
+  const reportCommit=(await git.command(undefined,['--git-dir',remotes.alpha,'rev-parse',`refs/heads/evidence/${passedRunId}`])).stdout.trim();assert.notEqual(reportCommit,acceptedSpecCommit);
+  const manifest=JSON.parse((await git.command(undefined,['--git-dir',remotes.alpha,'show',`${reportCommit}:reports/REQ-001/feature/${passedRunId}/manifest.json`])).stdout);assert.deepEqual(manifest,testedManifest,'Acceptance and sync preserve the exact tested workspace evidence');assert.equal(manifest.verification,'VERIFIED');assert.match(manifest.projects[0].contentDigest,/^[a-f0-9]{64}$/);assert.ok(manifest.artifacts.filter(x=>x.path.startsWith('screenshots/')).length>=3);
   await page.reload();await ready();await expect(page.locator('#feature-report-list')).toContainText('已同步至遠端');await tab('需求流程');await expect(page.locator('#feature-status')).toHaveText('已完成');
   // The same completed human UI workflow can be inspected/advanced/re-run by the CLI.
   async function workflowCli(args,label) {
@@ -251,8 +265,8 @@ const server=http.createServer((request,response)=>{
   await tab('需求流程');await page.reload();await ready();await expect(page.locator('#feature-report-list [data-run-id]')).toHaveCount(failedDevelopmentCount+3);
   await expect(page.locator('#feature-report-list')).toContainText(cliRun.value.result.runId);await expect(page.locator('#feature-status')).toHaveText('等待人工驗收');
   await page.screenshot({path:path.join(artifacts,'09-cli-and-requirement-reports.png'),fullPage:true});
-  // Report a real acceptance issue, return to development and let the configured CLI edit the product.
-  await page.getByRole('textbox',{name:'驗收意見',exact:true}).fill('feedback-pty-fixture: add a regression marker without weakening the approved BDD');
+  // Report an acceptance issue and return to SDK development with the controlled peer.
+  await page.getByRole('textbox',{name:'驗收意見',exact:true}).fill('feedback-sdk-fixture: add a regression marker without weakening the approved BDD');
   await job(page.getByRole('button',{name:'LLM 修改實作',exact:true}),'workflow.develop','SUCCEEDED',false);await expect(page.locator('#verification-panel')).toBeVisible();
   assert.equal(await readFile(path.join(savedRoot,'projects/product/agent-fixed.txt'),'utf8'),'fixed from acceptance feedback\n');
   await expect(page.locator('#feature-status')).toHaveText('等待人工驗收');await expect(page.frameLocator('#feature-report-view iframe').getByRole('link',{name:/Passed/})).toContainText('1');await reportHistory();await page.locator('#run-list [data-run-id]').first().getByRole('button',{name:'檢視證據',exact:true}).click();await expect(page.locator('#report-view .bdd-step')).toHaveCount(3);
@@ -262,7 +276,7 @@ const server=http.createServer((request,response)=>{
   await page.screenshot({path:path.join(artifacts,'11-acceptance-gherkin-steps.png'),fullPage:true});
   const devJobs=events.filter(e=>e.url.endsWith('/operations')&&e.body.operation==='workflow.develop');
   const firstTerminal=await (await fetch(site+`/repository-api/v1/operations/${devJobs[0].body.operationId}/terminal`)).json();
-  assert.match(firstTerminal.output,/PTY_READY real-terminal=true/);assert.match(firstTerminal.output,/INPUT:terminal-probe/);assert.match(firstTerminal.output,/BDD.*FAILED/);
+  assert.match(firstTerminal.output,/SDK_READY controlled-exec-peer=true/);assert.match(firstTerminal.output,/INPUT:terminal-probe/);assert.match(firstTerminal.output,/BDD.*FAILED/);
   const replies=await inputEntries(),firstReply=replies.find(entry=>entry.message==='terminal-probe'),secondReply=replies.find(entry=>entry.message==='second-probe');
   const replyLog=async id=>(await (await fetch(site+`/repository-api/v1/operations/${id}/terminal`)).json()).output;
   assert.match(await replyLog(firstReply.id),/INPUT:terminal-probe/);assert.doesNotMatch(await replyLog(firstReply.id),/INPUT:second-probe/);assert.match(await replyLog(secondReply.id),/INPUT:second-probe/);
@@ -301,7 +315,7 @@ const server=http.createServer((request,response)=>{
   await page.reload();await ready();await expect(page.locator('#phase-title')).toHaveText('設計');
   await click('1 需求確認');await expect(lower).toHaveValue(placeholderDraft);await expect(lower).not.toBeEditable();await expect(upper).not.toBeEditable();await expect(page.locator('#save-requirement')).not.toBeVisible();
   assert.equal(readSaved(beta,'spec/REQ-001/feature/feature.feature'),placeholderDraft);
-  assert.equal(await exists(betaRoot),true,'Binding acquired the checkout; human content approval remains a SQLite action');
+  assert.equal(await exists(betaRoot),true,'Feature creation acquired the checkout; human content approval remains a SQLite action');
   // Official parser accepts static checks and * style without a mandatory When/Then pair.
   for(const source of [
     'Feature: Static data\n Scenario: Version\n  Given a version exists\n  Then the version is correct\n',
@@ -315,14 +329,12 @@ const server=http.createServer((request,response)=>{
   await page.waitForFunction(previous=>{const n=document.querySelector('#notice');return n.dataset.jobId!==previous&&n.dataset.operation==='workflow.review';},priorJob);
   await expect(page.locator('#notice')).toHaveAttribute('data-outcome','FAILED');await ready();await expect(lower).toHaveValue('Feature: unfinished\n');await expect(page.locator('#phase-title')).toHaveText('需求');
   await lower.fill(betaGenerated);await job(page.locator('#save-requirement'),'workflow.requirement.save');
-  // Break the isolated remote after binding. A real UI sync fails, while later saves succeed.
-  const moved=remotes.beta+'.offline';await import('node:fs/promises').then(fs=>fs.rename(remotes.beta,moved));
-  const previousJob=await page.locator('#notice').getAttribute('data-job-id');await page.getByRole('button',{name:'遠端同步',exact:true}).click();
-  await page.waitForFunction(previous=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation==='repository.sync';},previousJob);
-  await expect(page.locator('#notice')).toHaveAttribute('data-outcome','FAILED');await ready();
-  await lower.fill(betaGenerated+'# 同步失敗後仍可儲存\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
-  await page.reload();await ready();await expect(lower).toHaveValue(betaGenerated+'# 同步失敗後仍可儲存\n');await expect(upper).toHaveValue(importSource);
-  assert.match(readSaved(beta,'spec/REQ-001/feature/feature.feature'),/同步失敗後仍可儲存/);
+  // New drafts cannot sync before acceptance. Taking the remote offline does not block later saves.
+  await expect(page.getByRole('button',{name:'遠端同步',exact:true})).toBeDisabled();
+  const moved=remotes.beta+'.offline';await rename(remotes.beta,moved);
+  await lower.fill(betaGenerated+'# 遠端離線仍可儲存\n');await job(page.locator('#save-requirement'),'workflow.requirement.save');
+  await page.reload();await ready();await expect(lower).toHaveValue(betaGenerated+'# 遠端離線仍可儲存\n');await expect(upper).toHaveValue(importSource);
+  assert.match(readSaved(beta,'spec/REQ-001/feature/feature.feature'),/遠端離線仍可儲存/);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(artifacts,'06-two-input-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));await page.setViewportSize({width:1440,height:1000});
   await upper.fill('尚未儲存的來源草稿');await lower.fill(betaGenerated+'# 尚未儲存的下方修改\n');
   await (await repositoryMenu()).getByRole('button',{name:'設定',exact:true}).click();await expect(d).toContainText('尚未儲存');await d.getByRole('button',{name:'取消',exact:true}).click();
@@ -335,5 +347,5 @@ const server=http.createServer((request,response)=>{
   assert.ok(installs.every(x=>x.operation==='repository.tools.prepare'),'All installations are approved during settings preparation');
   assert.ok(operations.every(x=>!x.operation.startsWith('git.')&&!x.operation.startsWith('submodule.')&&!x.operation.startsWith('run.')),'No Git plumbing or split run steps are exposed to the UI');
   const installationConsentsByRepository=Object.fromEntries([alpha,beta].map(repositoryId=>[repositoryId,installs.filter(x=>x.repositoryId===repositoryId).length]));
-  await writeJson(path.join(artifacts,'ui-flow-receipt.json'),{repositoryIds:{alpha,beta},failedRunId,passedRunId,initialProduct:initialProduct.commit,fixedProduct:productHead,testedSpecCommit:tested,reportCommit,localVerificationBeforeSync:true,installationConsentsByRepository,uiOperations:operations.map(x=>x.operation),noGitControls:true});
+  await writeJson(path.join(artifacts,'ui-flow-receipt.json'),{repositoryIds:{alpha,beta},failedRunId,passedRunId,initialProduct:initialProduct.commit,fixedProduct:productHead,sourceKind:testedManifest.sourceKind,testedSpecCommit:null,inputDigest:testedManifest.inputDigest,acceptedSpecCommit,reportCommit,localVerificationBeforeSync:true,installationConsentsByRepository,uiOperations:operations.map(x=>x.operation),noGitControls:true});
 });

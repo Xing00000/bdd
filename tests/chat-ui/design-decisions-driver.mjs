@@ -1,10 +1,12 @@
 import {expect} from '@playwright/test';
-import {mkdtemp,writeFile,readFile} from 'node:fs/promises';
+import {mkdtemp,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {validateAgentRuntimeSettings} from '../../packages/workstation/agent-settings.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 import {parseDesignDecisions,writeDesignDecisions} from '../../packages/spec-toolkit/design-decisions.mjs';
+import {git} from '../workstation/helpers.mjs';
+import {configureSdkPeer} from '../workstation/sdk-peer.mjs';
 const proposed={schemaVersion:1,items:[{id:'identity',question:'主機如何驗證身分？',options:[{id:'token',label:'每台主機獨立憑證',description:'由共同服務驗證主機歸屬。'}],answer:null},{id:'resources',question:'LLM 資源回報哪些資料？',options:[{id:'models',label:'只回報可用模型名稱'}],answer:null}]};
 export async function* designDecisionScenario(page,info,{real=false}={}){
  const directory=await mkdtemp(path.join(tmpdir(),'bdd-design-ui-')),repositoryId='SPEC-decision-ui',ids={requirementId:'REQ-001',featureId:'hosts'},file='spec/REQ-001/hosts/hosts.sd.md',home=path.join(directory,'home');
@@ -13,9 +15,10 @@ export async function* designDecisionScenario(page,info,{real=false}={}){
  const expectMode=async mode=>{const editing=mode==='edit';await expect(page.locator('#design-edit-button')).toBeVisible({visible:!editing});await expect(page.locator('#save-source')).toBeVisible({visible:editing});await expect(page.locator('#design-controls #save-source')).toHaveCount(1);};
  let seq=0;const job=async(operation,input={})=>{const id='OP-decision-'+(++seq);app.service.enqueue({schemaVersion:1,operationId:id,repositoryId,operation,input});const result=await app.service.wait(id,180000);expect(result.status,JSON.stringify(result.error)).toBe('SUCCEEDED');return result;};
  try{
+  await git.command(undefined,['init','--bare','--initial-branch','main',path.join(directory,'remote.git')]);
   app.service.register({id:repositoryId,title:'Host decisions',remoteUrl:path.join(directory,'remote.git')});
-  let agent={...runtime,command:path.resolve('node_modules/@openai/codex/bin/codex.js')};
-  if(!real){const peer=path.join(directory,'design-protocol-peer.mjs'),content=writeDesignDecisions('# 主機系統設計\n\n保留原始設計。<script>parent.injectionRan=true</script>\n',proposed);await writeFile(peer,`import {readFile,writeFile} from 'node:fs/promises';const {task}=JSON.parse(await readFile(process.argv[2],'utf8'));if(!task.decisionContract)throw Error('Missing decision contract');await writeFile(task.output,${JSON.stringify(content)});`);agent={command:process.execPath,args:[peer,'{task}'],timeoutMs:15000};}
+  let agent={...runtime};
+  if(!real){const content=writeDesignDecisions('# 主機系統設計\n\n保留原始設計。<script>parent.injectionRan=true</script>\n',proposed);await configureSdkPeer({home,directory,source:`import {writeFile} from 'node:fs/promises';if(!task.decisionContract)throw Error('Missing decision contract');await writeFile(task.output,${JSON.stringify(content)});`});agent={runtime:'codex-sdk',timeoutMs:15000};}
   await job('repository.setup',{reviewer:'Decision UI test',projects:[],agent});await job('workflow.create',{...ids,title:'Host overview'});
   const gherkinPath='spec/REQ-001/hosts/hosts.feature',prior=await app.service.readFile(repositoryId,gherkinPath);await job('repository.save',{kind:'source',path:gherkinPath,expectedHash:prior.sha256,content:'Feature: 主機與模型總覽\n  @case:host-overview\n  Scenario: 查看連線主機\n    Given 主機已連線\n    When 使用者查看總覽\n    Then 顯示主機名稱與可用模型\n'});
   const feature=(await app.service.detail(repositoryId)).spec.features[0];await job('workflow.review',{...ids,stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
@@ -27,6 +30,6 @@ export async function* designDecisionScenario(page,info,{real=false}={}){
   await page.reload();await expect(page.locator('#design-preview')).toBeVisible();await expect(questions.first().getByRole('radio',{name:'其他',exact:true})).toBeChecked();await expect(questions.first().getByRole('textbox')).toHaveValue(custom);yield {phase:'answered'};
   await expectMode('preview');await page.getByRole('button',{name:'編輯',exact:true}).click();await expectMode('edit');await expect(page.locator('#source-editor')).toBeVisible();await expect(page.locator('#design-preview')).toBeHidden();await page.locator('#source-editor').fill(saved.content+'\n編輯內容保留驗證\n');await page.getByRole('button',{name:'預覽',exact:true}).click();await expectMode('preview');await expect(page.frameLocator('#design-preview').getByText('編輯內容保留驗證',{exact:true})).toBeVisible();expect((await app.service.readFile(repositoryId,file)).content).not.toContain('編輯內容保留驗證');await page.locator('#design-edit-button').click();await expectMode('edit');await page.locator('#save-source').click();await expect(page.locator('#editor-state')).toHaveText('已儲存');await expect(page.locator('#design-preview')).toBeVisible();await expectMode('preview');
   await page.getByRole('button',{name:'編輯',exact:true}).click();await page.locator('#stage-nav button').nth(0).click();await page.locator('#stage-nav button').nth(1).click();await expect(page.locator('#design-preview')).toBeVisible();await expect(page.locator('#source-editor')).toBeHidden();expect(await page.evaluate(()=>window.injectionRan)).toBeUndefined();expect(errors).toEqual([]);await expectMode('preview');for(const width of [320,768,1024,1440]){await page.setViewportSize({width,height:1000});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}yield {phase:'modes'};
-  await info.attach('決策原文與 SQLite 儲存結果',{body:JSON.stringify({runtime:real?'real Codex CLI':'controlled PTY protocol peer; transport verification only',questions:count,document:(await app.service.readFile(repositoryId,file)).content},null,2),contentType:'application/json'});
+  await info.attach('決策原文與 SQLite 儲存結果',{body:JSON.stringify({runtime:real?'official Codex SDK with native Codex':'official Codex SDK with controlled native exec peer; transport verification only',questions:count,document:(await app.service.readFile(repositoryId,file)).content},null,2),contentType:'application/json'});
  }finally{await info.attach('系統文件預覽與問答',{body:await page.screenshot({fullPage:true}),contentType:'image/png'});await info.attach('實際驗收程式',{body:await readFile(import.meta.filename),contentType:'text/plain'});await app.close();}
 }

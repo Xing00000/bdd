@@ -154,8 +154,14 @@ export function openStore(home) {
         value.results=value.results.map(x=>['RUNNING','PENDING'].includes(x.outcome)?{...x,outcome:status}:x);this.recordRegression(row.repository_id,value);
       }
     },
-    saveRequirementProposal(repositoryId, { editorKey, description, previousGherkin, gherkin }) {
-      const proposalId=randomUUID(), createdAt=new Date().toISOString();
+    saveRequirementProposal(repositoryId, { editorKey, description, previousGherkin, gherkin, creationOperationId }) {
+      const proposalId=creationOperationId?`creation-${identity({repositoryId,creationOperationId})}`:randomUUID(), createdAt=new Date().toISOString();
+      const previous=db.prepare('SELECT * FROM requirement_proposals WHERE id=?').get(proposalId);
+      if(previous) {
+        invariant(previous.repository_id===repositoryId&&previous.description===description&&previous.original_gherkin===previousGherkin&&previous.generated_gherkin===gherkin,
+          'OPERATION_ID_CONFLICT','操作識別碼已被其他建立內容使用。',409);
+        return {proposalId,createdAt:previous.created_at};
+      }
       db.prepare('INSERT INTO requirement_proposals VALUES(?,?,?,?,?,?,?)').run(proposalId,repositoryId,editorKey,description,previousGherkin,gherkin,createdAt);
       return {proposalId,createdAt};
     },

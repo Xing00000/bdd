@@ -4,11 +4,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { chromium, expect } from '@playwright/test';
-import { fixture,toolkitRoot,testBrowserRoot } from '../workstation/helpers.mjs';
+import { fixture,toolkitRoot,testBrowserRoot,git } from '../workstation/helpers.mjs';
 import { createStandaloneServer } from '../../packages/workstation/http.mjs';
+import { configureSdkPeer } from '../workstation/sdk-peer.mjs';
 
 test('passed stages are read-only; returning from test plan clears its contents and restores design editing',async t=>{
   const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false});
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${app.server.address().port}`,service=app.service;
   service.register({id:'SPEC-ui',title:'Lifecycle',remoteUrl:f.remote});
@@ -55,20 +57,20 @@ test('passed stages are read-only; returning from test plan clears its contents 
 
 test('settings prepares packages, design confirmation codegens, and only the separate LLM button completes the plan',async t=>{
   const f=await fixture(t),app=await createStandaloneServer({home:f.home,toolkitRoot,browserRoot:testBrowserRoot,allowLocal:true,autoAcquire:false,enableExecution:true});
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${app.server.address().port}`,service=app.service;
   service.register({id:'SPEC-split',title:'Split generation',remoteUrl:f.remote});
   const ids={requirementId:'REQ-001',featureId:'sum'},stepPath='tests/REQ-001/sum/sum.steps.ts',hookPath='tests/REQ-001/sum/sum.hooks.ts';
   const steps="import {Then} from '../../_shared/bdd';\nimport {expect} from '@playwright/test';\nThen('two plus three is five',async()=>{expect(2+3).toBe(5);});\n";
   const hooks="import {AfterStep} from '../../_shared/bdd';\nAfterStep(async({page,$testInfo,$step})=>{await $testInfo.attach('step-'+$step.title,{contentType:'image/png',body:await page.screenshot()});});\n";
-  const agent=path.join(f.base,'complete-plan.mjs');
-  await writeFile(agent,`import {writeFile} from 'node:fs/promises';const root=process.argv[2];await writeFile(root+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});await writeFile(root+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});await writeFile(${JSON.stringify(path.join(f.base,'sent-prompt.txt'))},process.argv.at(-1));`);
+  await configureSdkPeer({home:f.home,directory:f.base,source:`import {writeFile} from 'node:fs/promises';await writeFile(cwd+'/'+${JSON.stringify(stepPath)},${JSON.stringify(steps)});await writeFile(cwd+'/'+${JSON.stringify(hookPath)},${JSON.stringify(hooks)});await writeFile(${JSON.stringify(path.join(f.base,'sent-prompt.txt'))},prompt);`});
   let sequence=0;
   const job=async(operation,input={})=>{
     const operationId=`OP-split-${++sequence}`;service.enqueue({schemaVersion:1,repositoryId:'SPEC-split',operationId,operation,input});
     const result=await service.wait(operationId);assert.equal(result.status,'SUCCEEDED',JSON.stringify(result.error));return result;
   };
-  await job('repository.setup',{reviewer:'Human',projects:[],agent:{command:process.execPath,args:[agent,'{spec}','{task}'],skills:''}});
+  await job('repository.setup',{reviewer:'Human',projects:[],agent:{runtime:'codex-sdk'}});
   await job('workflow.create',{...ids,title:'Sum'});
   for(const [file,content] of [['spec/REQ-001/sum/sum.feature','Feature: Sum\n  @case:CASE-001\n  Scenario: Addition\n    Then two plus three is five\n'],['spec/REQ-001/sum/sum.sd.md','# Sum\nAssert that two plus three equals five and capture step screenshots.\n']]) {
     const old=await service.readFile('SPEC-split',file);await job('repository.save',{kind:'source',path:file,content,expectedHash:old.sha256});
@@ -91,7 +93,7 @@ test('settings prepares packages, design confirmation codegens, and only the sep
   await expect(page.locator('#complete-test-plan')).toBeVisible();await expect(page.locator('#generate-test-plan')).toBeHidden();
   assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);
   await page.locator('#complete-test-plan').click();
-  await expect(dialog).toContainText('預覽 CLI Prompt');
+  await expect(dialog).toContainText('預覽 Agent Prompt');
   const prompt=dialog.getByRole('textbox',{name:'派工 Prompt',exact:true});
   await expect(prompt).toHaveValue(/workbench_get_task/);
   assert.equal((await service.detail('SPEC-split')).operations.some(op=>op.request.operation==='workflow.tests.complete'),false);

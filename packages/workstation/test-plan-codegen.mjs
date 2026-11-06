@@ -8,7 +8,7 @@ import { scan, reviewState } from '../spec-toolkit/index.mjs';
 import { runBddCommand } from '../spec-toolkit/engine.mjs';
 import { ensureDraft, inDraftView, sourceFiles } from './authoring.mjs';
 import { useRepositoryTools } from './repository-tools.mjs';
-import { refreshWorkflowFiles, draftModules } from './workflow-state.mjs';
+import { refreshWorkflowFiles, draftModules, liveWorkflowSpecSourceDigest } from './workflow-state.mjs';
 
 export async function generateTestSkeleton(context) {
   const {store,request,options}=context,repositoryId=request.repositoryId,input=request.input;
@@ -34,7 +34,7 @@ export async function generateTestSkeleton(context) {
     await atomicWrite(await safePath(root,hooks),`import { AfterStep } from '${shared.startsWith('.')?shared:'./'+shared}';\n\nAfterStep(async ({ page, $testInfo, $step }) => {\n  await $testInfo.attach('step-' + $step.title, {\n    contentType: 'image/png',\n    body: await page.screenshot(),\n  });\n});\n`);
     const generated=await runBddCommand(root,'generate',input.requirementId,input.featureId);
     invariant(generated.exitCode===0&&!generated.timedOut&&!generated.overflow,'TEST_CODEGEN_FAILED',generated.stderr||generated.stdout);
-    await refreshWorkflowFiles(root,{modules:draftModules(snapshot,store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId)});
+    await refreshWorkflowFiles(root,{modules:draftModules(snapshot,store.projection(repositoryId)),runs:store.runs(repositoryId),reports:store.reports(repositoryId),checkpoint:store.projection(repositoryId),specSourceDigest:await liveWorkflowSpecSourceDigest(context,snapshot,root)});
     const files=(await sourceFiles(root)).filter(file=>!snapshot.files.some(old=>old.target===file.target&&old.path===file.path&&old.sha256===digest(file.content)))
       .map(file=>({...file,baseHash:snapshot.files.find(old=>old.target===file.target&&old.path===file.path)?.baseHash??null}));
     return store.saveDraft(repositoryId,{expectedRevision:snapshot.revision,operationId:receiptId,request,files,result:{nextStage:'TESTS',testPlan:{paths,skeleton:true},testOutcome:'NOT_RUN'}});

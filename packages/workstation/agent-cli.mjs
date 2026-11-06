@@ -1,15 +1,12 @@
-/** All dispatched authoring agents share the same PTY, input receipts and SQL log. */
-import {terminalRuntime,runPty} from './development.mjs';
-import {currentProgress} from '../git-core/progress.mjs';
+/** The sole implementation dispatch boundary: the official Codex SDK. */
 import {readProgress,saveProgressPhase} from '../git-core/progress-store.mjs';
-import {invariant} from '../contracts/index.mjs';
+import {validateAgentRuntimeSettings} from './agent-settings.mjs';
 
-export async function runInteractiveAgent(context,command,args,cwd,timeoutMs){
-  const {options,store,request}=context,progress=currentProgress();
-  invariant(progress,'PROGRESS_REQUIRED','CLI execution requires a durable progress session');
-  const pty=await terminalRuntime(context);
-  saveProgressPhase(options.home,request.operationId,{phase:'RUNNING'});
-  const outcome=await runPty(pty,command,args,cwd,{timeoutMs,log:data=>progress.output(data),onInputDelivered:(id,previous)=>store.acknowledgeInput(request.operationId,id,previous)});
-  saveProgressPhase(options.home,request.operationId,{phase:'CHECKING'});
-  return {...outcome,output:readProgress(options.home,request.operationId).output.toString()};
+export async function runAgentTask(context,{agent,prompt,cwd,task,timeoutMs=agent.timeoutMs,log}){
+  const settings=validateAgentRuntimeSettings(agent);
+  timeoutMs??=settings.timeoutMs;
+  saveProgressPhase(context.options.home,context.request.operationId,{phase:'STARTING',runtime:'codex-sdk',inputDelivery:'next-turn'});
+  const {runCodexSdkAgent}=await import('./codex-sdk-agent.mjs');
+  const result=await runCodexSdkAgent(context,{agent:settings,prompt,cwd,task,timeoutMs,log});
+  return {...result,output:result.output??readProgress(context.options.home,context.request.operationId)?.output.toString()??''};
 }

@@ -1,0 +1,190 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { fixture, git, toolkitRoot, repository, specRepository, approve, sealedBundle } from './helpers.mjs';
+import { createWorkstation } from '../../packages/workstation/service.mjs';
+import { openStore } from '../../packages/workstation/store.mjs';
+import { executeOperation } from '../../packages/workstation/operations.mjs';
+import { prepareProjection } from '../../packages/workstation/projection.mjs';
+import { initialize, createFeature, configuration, confirm, reviewState } from '../../packages/spec-toolkit/index.mjs';
+import { prepareWorkspaceRun, executeRun } from '../../packages/spec-toolkit/engine.mjs';
+import { exists, digest, identity, writeJson } from '../../packages/contracts/index.mjs';
+import { dispatch } from '../../packages/workstation/http.mjs';
+
+async function realGit() {
+  for (const directory of process.env.PATH.split(path.delimiter)) {
+    const file = path.join(directory, 'git'); try { await access(file, constants.X_OK); return file; } catch {}
+  }
+  throw Error('Git is required for isolated boundary fixtures');
+}
+async function trapGit(base, fn, { failPublication = false, expectCalls = false } = {}) {
+  const executable = await realGit(), directory = path.join(base, `git-trap-${crypto.randomUUID()}`), log = path.join(directory, 'calls.jsonl');
+  await mkdir(directory);
+  await writeFile(path.join(directory, 'git'), `#!${process.execPath}\nconst fs=require('node:fs'),cp=require('node:child_process');const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');if(${failPublication}&&!args.some(arg=>arg.includes('/publishers/'))){const r=cp.spawnSync(${JSON.stringify(executable)},args,{stdio:'inherit'});process.exit(r.status??1);}process.exit(94);\n`, { mode: 0o755 });
+  const previous = process.env.PATH; process.env.PATH = `${directory}${path.delimiter}${previous}`;
+  try { await fn(); } finally { process.env.PATH = previous; }
+  const calls = await exists(log) ? (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line)) : [];
+  if (!expectCalls) assert.deepEqual(calls, [], 'ordinary work must never spawn Git, including read-only commands');
+  return calls;
+}
+async function workstation(t, f, remoteUrl) {
+  const options = { home: f.home, toolkitRoot, allowLocal: true, enableExecution: true };
+  const service = await createWorkstation(options), store = openStore(f.home); t.after(async () => { store.close(); await service.close(); });
+  service.register({ id: 'SPEC-flow', title: 'Lifecycle fixture', remoteUrl });
+  const operation = (name, input = {}) => executeOperation(options, store, { schemaVersion: 1, operationId: `OP-${crypto.randomUUID()}`, repositoryId: 'SPEC-flow', operation: name, input });
+  const root = path.join(f.home, 'repositories/SPEC-flow/repo');
+  return { options, service, store, operation, root };
+}
+
+test('binding, settings, ordinary edits, reads and materialization never spawn Git between lifecycle boundaries', async t => {
+  const f = await fixture(t); await git.command(undefined, ['init', '--bare', '--initial-branch', 'main', f.remote]);
+  const product = path.join(f.base, 'product'); await repository(product, { 'message.txt': 'before\n' });
+  let context;
+  await trapGit(f.base, async () => {
+    context = await workstation(t, f, f.remote);
+    assert.equal(context.service.list()[0].connection.status, 'DEFERRED');
+    await context.operation('repository.setup', { reviewer: 'Human', projects: [{ id: 'product', url: product }] });
+    await context.service.detail('SPEC-flow');
+    assert.equal(await exists(context.root), false);
+    assert.equal((await dispatch(context.service, { method: 'GET', url: '/health', headers: {} })).body.status, 'ok');
+    await assert.rejects(context.operation('repository.prepare'), { code: 'FEATURE_INITIALIZATION_REQUIRED' });
+  });
+  const { service, operation, root } = context;
+  await operation('workflow.create', { requirementId: 'REQ-001', featureId: 'login', title: 'Login', guided: true, projectIds: ['product'] });
+  const createdHead = await git.resolve(root), productHead = await git.resolve(path.join(root, 'projects/product'));
+  await trapGit(f.base, async () => {
+    const relative = 'spec/REQ-001/login/login.sd.md', before = await service.readFile('SPEC-flow', relative);
+    await operation('repository.save', { kind: 'source', path: relative, expectedHash: before.sha256, content: '# Updated design\n' });
+    await operation('repository.save', { kind: 'project', projectId: 'product', path: 'message.txt', expectedHash: digest('before\n'), content: 'draft product\n' });
+    await operation('repository.prepare');
+    const feature = (await service.detail('SPEC-flow')).spec.features[0];
+    await operation('workflow.review', { requirementId: 'REQ-001', featureId: 'login', stage: 'gherkin', expectedDigest: feature.review.hashes.gherkin });
+    await service.workflow('SPEC-flow'); await service.detail('SPEC-flow');
+    await service.projectFiles('SPEC-flow', 'product'); await service.readProjectFile('SPEC-flow', 'product', 'message.txt');
+    await assert.rejects(operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
+  });
+  assert.equal(await git.resolve(root), createdHead);
+  assert.equal(await git.resolve(path.join(root, 'projects/product')), productHead);
+  assert.equal(await readFile(path.join(root, 'projects/product/message.txt'), 'utf8'), 'draft product\n');
+});
+
+test('first creation preserves composer text before acquisition and allocates IDs after importing the remote', async t => {
+  const f=await fixture(t),context=await workstation(t,f,f.remote);
+  await context.operation('repository.setup',{reviewer:'Human',projects:[]});
+  const input={editorKey:'new-offline-draft',expectedToken:null,description:'保留完整需求\r\n第二行',gherkin:'Feature: Offline draft\n  Scenario: saved\n    Then it remains available\n',projectIds:[]};
+  const request={schemaVersion:1,operationId:'OP-offline-create',repositoryId:'SPEC-flow',operation:'workflow.requirement.save',input};
+  await assert.rejects(executeOperation(context.options,context.store,request),error=>{
+    assert.equal(error.details.saved,true);assert.equal(error.details.storage,'sqlite');assert.equal(error.details.creationPending,true);assert.equal(error.details.editorKey,input.editorKey);return true;
+  });
+  const reopened=openStore(f.home);t.after(()=>reopened.close());
+  const proposals=reopened.requirementProposals('SPEC-flow',input.editorKey);
+  assert.equal(proposals.length,1);assert.equal(proposals[0].description,input.description);assert.equal(proposals[0].generatedGherkin,input.gherkin);
+  assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,0);
+  await specRepository(f.remote);
+  const created=await executeOperation(context.options,context.store,request);
+  assert.equal(created.requirementId,'REQ-002');assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,2);
+  assert.equal(context.store.requirementProposals('SPEC-flow',created.key).length,1);
+});
+
+test('a failed creation checkpoint retries the same editor feature without duplicate IDs or intermediate Git', async t => {
+  const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
+  const context=await workstation(t,f,f.remote);await context.operation('repository.setup',{reviewer:'Human',projects:[]});await context.operation('repository.acquire');
+  const input={editorKey:'new-checkpoint-retry',expectedToken:null,description:'First source',gherkin:'Feature: Retry creation\n  Scenario: create once\n    Then exactly one feature exists\n',projectIds:[]};
+  let key;
+  await trapGit(f.base,async()=>{
+    await assert.rejects(context.operation('workflow.requirement.save',input),error=>{
+      assert.equal(error.details.saved,true);assert.equal(error.details.featureCreated,true);assert.equal(error.details.creationPending,true);key=error.details.key;return true;
+    });
+    assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,1);
+  },{expectCalls:true});
+  const revised={...input,description:'Revised source while initialization was pending'};
+  const created=await context.operation('workflow.requirement.save',revised);assert.equal(created.key,key);
+  assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,1);
+  assert.equal((await context.service.requirement('SPEC-flow',created.requirementId,created.featureId)).description,revised.description);
+  await trapGit(f.base,async()=>{
+    assert.equal((await context.operation('workflow.requirement.save',revised)).key,key);
+    await assert.rejects(context.operation('workflow.requirement.save',{...revised,description:'Requires ordinary editing'}),{code:'CREATION_ALREADY_EXISTS'});
+  });
+});
+
+test('verification pins real file bytes without Git and rejects a changed candidate', async t => {
+  const f = await fixture(t); await mkdir(f.repo); await mkdir(f.home);
+  await initialize(f.repo, { specRepositoryId: 'file-snapshot', toolkitRoot: path.join(toolkitRoot, 'packages') });
+  const config = await configuration(f.repo); config.projects = [{ id: 'product', path: 'projects/product' }]; config.execution.install = null;
+  await writeJson(path.join(f.repo, 'workbench.yaml'), config);
+  await mkdir(path.join(f.repo, 'projects/product'), { recursive: true }); await writeFile(path.join(f.repo, 'projects/product/source.txt'), 'saved bytes\n');
+  await writeJson(path.join(f.repo, 'package-lock.json'), { lockfileVersion: 3, packages: {} });
+  const ids = { requirementId: 'REQ-001', featureId: 'login' }; await createFeature(f.repo, { ...ids, title: 'Snapshot', projectIds: ['product'] });
+  await trapGit(f.base, async () => {
+    for (const stage of ['gherkin', 'sd', 'tests']) await confirm(f.repo, { ...ids, stage, expectedDigest: (await reviewState(f.repo, ids.requirementId, ids.featureId)).hashes[stage], confirmedBy: 'Fixture reviewer' });
+    const plan = await prepareWorkspaceRun({ root: f.repo, home: f.home, repositoryId: 'SPEC-flow', input: ids });
+    assert.equal(plan.sourceKind, 'WORKSPACE'); assert.equal(plan.testedSpecCommit, null); assert.match(plan.projects[0].contentDigest, /^[a-f0-9]{64}$/);
+    const candidate = path.join(f.home, 'executions', plan.runId, 'repo'); assert.equal(await exists(path.join(candidate, '.git')), false);
+    await writeFile(path.join(f.repo, 'projects/product/source.txt'), 'later edit\n');
+    assert.equal(await readFile(path.join(candidate, 'projects/product/source.txt'), 'utf8'), 'saved bytes\n');
+    // No runner is installed in this protocol fixture; its honest failure still seals the original inputs without Git.
+    const failed = await executeRun({ home: f.home, repositoryId: 'SPEC-flow', runId: plan.runId, enabled: true });
+    assert.equal(failed.verification, 'NOT_VERIFIED'); assert.equal(failed.inputsUnchanged, true); assert.equal(failed.testedSpecCommit, null);
+    const another = await prepareWorkspaceRun({ root: f.repo, home: f.home, repositoryId: 'SPEC-flow', input: ids });
+    await writeFile(path.join(f.home, 'executions', another.runId, 'repo/projects/product/source.txt'), 'tampered candidate\n');
+    await assert.rejects(executeRun({ home: f.home, repositoryId: 'SPEC-flow', runId: another.runId, enabled: true }), { code: 'CANDIDATE_CHANGED' });
+    await writeFile(path.join(f.repo,'.workbench-tools/spec-toolkit/reporter.mjs'),'// altered toolkit\n');
+    await assert.rejects(prepareWorkspaceRun({root:f.repo,home:f.home,repositoryId:'SPEC-flow',input:ids}),{code:'TOOLKIT_HASH_MISMATCH'});
+  });
+});
+
+async function acceptanceContext(t) {
+  const f = await fixture(t); await specRepository(f.repo); await approve(f.repo);
+  const context = await workstation(t, f, f.repo); await context.operation('repository.acquire');
+  await context.operation('repository.setup', { reviewer: 'Human reviewer', projects: [] });
+  const ids = { requirementId: 'REQ-001', featureId: 'login' };
+  const request = { schemaVersion: 1, operationId: 'OP-materialize', repositoryId: 'SPEC-flow', operation: 'workflow.verify', input: ids };
+  await prepareProjection({ ...context, request });
+  const plan = await prepareWorkspaceRun({ root: context.root, home: f.home, repositoryId: 'SPEC-flow', input: ids });
+  // An explicitly synthetic sealed report tests the human/checkpoint protocol, not browser execution.
+  const report = await sealedBundle(path.join(f.home, 'executions', plan.runId, 'evidence'), plan,
+    { testOutcome: 'PASSED', verification: 'VERIFIED', scope: 'ALL_CASES', coverageComplete: true, evidenceComplete: true, inputsUnchanged: true, finishedAt: new Date().toISOString() });
+  context.store.recordRun('SPEC-flow', report, 'SEALED');
+  return { ...f, ...context, input: { ...ids, runId: plan.runId, expectedManifestDigest: identity(report) }, report };
+}
+test('a failed acceptance checkpoint remains retryable without duplicating the human decision', async t => {
+  const f = await acceptanceContext(t);
+  const calls = await trapGit(f.base, async () => {
+    await assert.rejects(f.operation('workflow.accept', f.input));
+    assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status, 'ACCEPTANCE_PENDING');
+    await assert.rejects(f.operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
+  }, { expectCalls: true });
+  assert.ok(calls.length > 0, 'Git is attempted at the human acceptance boundary');
+  const before = JSON.parse((await f.service.readFile('SPEC-flow', 'spec/REQ-001/login/acceptance.json')).content); assert.equal(before.items.length, 1);
+  const accepted = await f.operation('workflow.accept', f.input); assert.equal(accepted.status, 'COMPLETE');
+  const after = JSON.parse((await f.service.readFile('SPEC-flow', 'spec/REQ-001/login/acceptance.json')).content); assert.deepEqual(after, before);
+  assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status, 'COMPLETE'); assert.equal(f.store.projection('SPEC-flow').checkpointKind, 'ACCEPTED');
+});
+test('publication failure cannot expose a partial acceptance as complete or synchronizable', async t => {
+  const f = await acceptanceContext(t);
+  await trapGit(f.base, async () => {
+    await assert.rejects(f.operation('workflow.accept', f.input));
+    assert.equal(f.store.projection('SPEC-flow').checkpointRevision, f.store.draft('SPEC-flow').revision);
+    assert.equal(f.store.projection('SPEC-flow').checkpointKind, 'ACCEPTANCE_PENDING');
+    assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status, 'ACCEPTANCE_PENDING');
+    await assert.rejects(f.operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
+  }, { failPublication: true, expectCalls: true });
+  assert.equal((await f.operation('workflow.accept', f.input)).status, 'COMPLETE');
+  assert.equal(JSON.parse((await f.service.readFile('SPEC-flow', 'spec/REQ-001/login/acceptance.json')).content).items.length, 1);
+});
+test('a concurrent SQLite edit is preserved and cannot be certified by an older acceptance checkpoint', async t => {
+  const f = await acceptanceContext(t), original = f.store.completeAcceptanceCheckpoint;
+  const relative = 'spec/REQ-001/login/login.feature';
+  f.store.completeAcceptanceCheckpoint = function(repositoryId, expectedRevision, acceptanceId) {
+    const current = this.draft(repositoryId), file = current.files.find(file => file.path === relative);
+    this.saveDraft(repositoryId, { expectedRevision: current.revision, operationId: 'OP-concurrent', request: { concurrent: true }, files: [{ ...file, content: file.content + '\n# concurrent human draft\n' }], result: {} });
+    return original.call(this, repositoryId, expectedRevision, acceptanceId);
+  };
+  await assert.rejects(f.operation('workflow.accept', f.input), { code: 'CONTENT_CHANGED' });
+  assert.match((await f.service.readFile('SPEC-flow', relative)).content, /concurrent human draft/);
+  assert.doesNotMatch((await git.command(f.root, ['show', `HEAD:${relative}`])).stdout, /concurrent human draft/);
+  assert.notEqual((await f.service.workflow('SPEC-flow')).workflows[0].status, 'COMPLETE');
+  await assert.rejects(f.operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
+});

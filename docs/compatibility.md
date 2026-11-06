@@ -14,7 +14,7 @@
 
 ## SQLite authoring（schema 5）
 
-設定、草稿、內容確認與產品編輯改存 SQLite，Repo 僅是綁定與同步／驗收輸出。舊 checkout 原文第一次唯讀匯入，不把 clean 工作目錄當作儲存前提。主資料庫、歷史原文和未同步內容必須備份，不能只靠重新 Clone 恢復。
+設定、草稿、內容確認與產品編輯改存 SQLite。日常流程只有建立功能與人工驗收完成時建立 Git checkpoint，期間讀取、儲存、開發與測試都使用本機內容。舊 checkout 原文第一次唯讀匯入，不把 clean 工作目錄當作儲存前提。主資料庫、歷史原文和未同步內容必須備份，不能只靠重新 Clone 恢復。
 
 低階 Git／遷移 helper 保留相容測試用途；它們修改 checkout 不代表已更新新的 SQL authoring。正式 UI 的儲存只有一套 SQL 交易路徑。
 
@@ -53,6 +53,18 @@ Git 操作頁、分開 Clone／初始化／Commit／Push／pin、獨立套件及
 舊多欄位 guided／quick-create UI 已移除，正常入口只有來源描述與 Gherkin 兩區。舊 `.feature` 不重寫，`workflow.create`／`workflow.draft` 保留為舊程式呼叫相容層，不是新 UI 的流程。SQLite schema 6 保留舊 authoring 與確認紀錄，只新增可恢復的生成歷史。
 
 
-## 自動綁定載入與歷史回歸
+## 延後來源初始化與歷史回歸
 
-新綁定即建立目錄、取得既有內容及報告，不再等到「第一次測試」才下載。既有未載入的綁定會顯示「載入需求與歷史」，不刪除 SQLite 草稿；無法取得遠端也不阻擋日常儲存。歷史單功能報告持續可用，新增的整批回歸報告使用相同平行目錄並增加總摘要。回歸未授予人類確認、不更動目前產品分支，既有單功能驗收行為保留。
+新綁定與位置設定不再自動取得遠端，來源初始化延後到建立功能；既有 SQLite 草稿與已取得來源保留。歷史版本的明確取得、整庫回歸與同步仍提供維護用途，不由一般頁面讀取觸發。歷史單功能報告持續可用；工作樹測試以 `sourceKind: WORKSPACE` 及內容摘要識別，舊報告的實際 commit SHA 不改寫。自動通過不授予人工驗收，仍須明確按「驗收通過」。
+
+工作樹報告須以 `specSourceDigest` 證明完整 Spec source 與目前內容一致。缺少此欄位的 WORKSPACE 報告保留為歷史，但需重新驗證才能人工驗收；既有 commit-based 報告仍沿用原契約。此摘要包含功能目錄外的 helper，排除工作台管理的衍生紀錄，避免新增驗收紀錄使其自身失效。
+
+## Copilot ACP 傳輸
+
+聊天設定的 `copilotExecutable`／`copilotArgs` 保留，指向 ACP server 啟動器；預設仍使用專案鎖定的 `@github/copilot`。工作台固定加入 `--acp --stdio`，拒絕會改回 headless、prompt/TUI 模式或覆寫工具權限的參數。舊自訂設定若包含這些選項，請移除衝突參數後重試；不會偷偷改用其他傳輸。Codex thread 與 SQLite 原始訊息保留。ACP 對外部模型的延遲仍取決於供應商，不將本機協定測試當成效能量測。
+
+## Codex SDK 任務執行
+
+Agent 唯一執行 runtime 為 `codex-sdk`，保存 `model`、`maxAttempts`、`timeoutMs`。舊版未標示 runtime 或 `custom-cli` 設定在新預覽時解析為 SDK，忽略 command／args、使用 `auto` 模型並保留有效執行限制；既有版本原始 JSON 不重寫。新保存的非 SDK runtime 或 CLI 欄位以 `AGENT_RUNTIME_UNSUPPORTED` 拒絕。凍結中的舊 CLI 派工以 `AGENT_PREVIEW_REQUIRED` 要求重新預覽，不自動執行舊命令或改寫已送出的契約。
+
+SDK 任務與聊天共用 Copilot 連線設定，但聊天的 app-server 與歷史資料不換成 SDK。SDK 沒有 app-server 的 compact 或即時插話介面，新增文字排入後續回合；不要把 SDK 結構事件宣稱為逐 token 串流。官方 SDK 仍需原生 Codex 執行環境，缺少 sandbox 能力時會明確失敗，不取消 sandbox 或改用 Copilot 工具執行。

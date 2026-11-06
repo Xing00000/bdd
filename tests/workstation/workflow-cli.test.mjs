@@ -18,6 +18,7 @@ async function job(service, operation, input={}, repositoryId='SPEC-one') {
 }
 async function setup(t) {
   const f=await fixture(t),service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false});t.after(()=>service.close());
+  await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   service.register({id:'SPEC-one',title:'BDD Spec',remoteUrl:f.remote});
   await job(service,'repository.setup',{reviewer:'Human fixture',projects:[]});
   await job(service,'workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',guided:true,acceptance:'能登入'});
@@ -64,7 +65,7 @@ test('CLI does not pretend run succeeded when human approval is missing',async t
   const f=await setup(t),r=await cli(f.home,['run','--repo','SPEC-one','--feature','REQ-001/login']);
   assert.equal(r.exitCode,1);assert.equal(r.value.status,'FAILED');assert.equal(r.value.error.code,'REVIEWS_REQUIRED');
 });
-test('workflow files persist revisions in SQLite without needing a checkout',async t=>{
+test('workflow files persist later revisions in SQLite without another Git checkpoint',async t=>{
   const f=await setup(t),state=await f.service.readFile('SPEC-one','spec/REQ-001/login/workflow.json');
   const value=JSON.parse(state.content);assert.equal(value.stage,'GHERKIN');assert.equal(value.reviewPath,'spec/REQ-001/review.json');
   assert.ok(!state.content.includes(f.home));assert.ok(!Object.hasOwn(value,'repositoryId'));
@@ -102,7 +103,7 @@ test('synchronized workflow state and requirement reports reconstruct on a fresh
   const baseline=(await reviewState(f.repo,'REQ-001','login')).hashes.tests,testedSpecCommit=await git.resolve(f.repo);
   await sealedBundle(path.join(f.repo,'reports/REQ-001/login/RUN-portable'),{runId:'RUN-portable',specRepositoryId:'fixture-spec',requirementId:'REQ-001',featureId:'login',testedSpecCommit,baseline,projects:[],testOutcome:'PASSED',verification:'VERIFIED',scope:'ALL_CASES',coverageComplete:true,evidenceComplete:true,finishedAt:'2026-01-01T00:00:00Z'});
   await commitAll(f.repo);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);await git.command(f.repo,['remote','add','origin',f.remote]);await git.push(f.repo,{},await git.inspect(f.repo));
-  const a=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>a.close());
+  const a=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:true});t.after(()=>a.close());
   const first=a.register({id:'SPEC-a',title:'portable',remoteUrl:f.remote});assert.equal((await a.wait(first.connection.operationId)).status,'SUCCEEDED');
   await job(a,'repository.setup',{reviewer:'Human',projects:[]},'SPEC-a');
   const workflow=(await a.workflow('SPEC-a','REQ-001/login')).workflows[0];
@@ -111,7 +112,7 @@ test('synchronized workflow state and requirement reports reconstruct on a fresh
   const raw=(await git.command(undefined,['--git-dir',f.remote,'show','main:spec/REQ-001/login/workflow.json'])).stdout;
   assert.equal(JSON.parse(raw).stage,'VERIFIED');assert.equal(JSON.parse(raw).latestReport.path,'reports/REQ-001/login/RUN-portable/manifest.json');
   assert.ok(!raw.includes(f.home));
-  const b=await createWorkstation({home:path.join(f.base,'second-home'),toolkitRoot,allowLocal:true});t.after(()=>b.close());
+  const b=await createWorkstation({home:path.join(f.base,'second-home'),toolkitRoot,allowLocal:true,autoAcquire:true});t.after(()=>b.close());
   const second=b.register({id:'SPEC-b',title:'portable',remoteUrl:f.remote});assert.equal((await b.wait(second.connection.operationId)).status,'SUCCEEDED');
   const result=await b.workflow('SPEC-b','REQ-001/login');assert.equal(result.workflows[0].stage,'VERIFIED');assert.equal(result.workflows[0].reports.length,1);assert.equal(result.workflows[0].reports[0].origin,'SPEC_REPO');
   const same=await b.readFile('SPEC-b','spec/REQ-001/login/workflow.json');assert.equal(JSON.parse(same.content).specRepositoryId,'fixture-spec');
@@ -119,7 +120,7 @@ test('synchronized workflow state and requirement reports reconstruct on a fresh
 test('forged VERIFIED workflow without matching review/evidence is not accepted',async t=>{
   const f=await fixture(t);await specRepository(f.repo);
   await writeJson(path.join(f.repo,'spec/REQ-001/login/workflow.json'),{schemaVersion:1,specRepositoryId:'fixture-spec',requirementId:'REQ-001',featureId:'login',stage:'VERIFIED'});await commitAll(f.repo);
-  await mkdir(f.home);const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true});t.after(()=>service.close());
+  await mkdir(f.home);const service=await createWorkstation({home:f.home,toolkitRoot,allowLocal:true,autoAcquire:true});t.after(()=>service.close());
   const r=service.register({id:'SPEC-one',title:'forged',remoteUrl:f.repo});await service.wait(r.connection.operationId);
   assert.equal((await service.workflow('SPEC-one')).workflows[0].stage,'GHERKIN');
 });

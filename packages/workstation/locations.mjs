@@ -70,8 +70,8 @@ export async function changeLocation(context) {
   invariant(request.input.expectedLocalPath === previous, 'LOCAL_PATH_CHANGED', '目錄設定已由另一個操作更新，請重新開啟設定。', 409);
   const selected = validateLocation(options, record.id, request.input.localPath, store.repositories());
   invariant(selected===previous||!overlaps(selected,previous),'LOCAL_PATH_OVERLAP','新舊目錄不能互相包含；請選獨立位置，原檔案仍保留。',409);
-  if (await exists(path.join(selected, '.git'))) await checkRepositoryIdentity(selected, record, git);
   if (selected !== previous) store.setRepositoryLocation(record.id, record.localPath, selected, previous, request.operationId, () => validateLocation(options, record.id, selected, store.repositories()));
-  const { acquireRepository } = await import('./catalog.mjs');
-  return acquireRepository({ ...context, root: selected });
+  const connection = { status: 'DEFERRED', localPath: selected };
+  store.setConnection(record.id, connection);
+  return { ...connection, bindingSaved: true, saved: true };
 }

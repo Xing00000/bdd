@@ -43,8 +43,10 @@ export function agentCatalogView({api,el,button,note,ask,onDirty,onSaved}){
    let fields={},body,purposes,files=[];
    if(kind==='agents'){
     const settings=revision?.settings??catalog.template;
-    for(const [key,label,type] of [['command','CLI 執行檔','text'],['args','CLI 參數（每行一個）','textarea'],['maxAttempts','最大嘗試次數','number'],['timeoutMs','逾時毫秒','number']]){const field=input(label,key==='args'?settings.args.join('\n'):settings[key],type);fields[key]=field.control;form.append(field.wrapper);}
-
+    form.append(el('p','執行引擎：Codex SDK · 模型 API：Copilot ACP','muted'));
+    const model=input('模型（auto 沿用對話設定）',settings.model??'auto');fields.model=model.control;
+    form.append(model.wrapper,el('p','所有實作任務由 Codex SDK 執行。Copilot ACP 只提供模型回答與工具提案，檔案與命令由 Codex 處理。補充訊息會排入後續回合。','muted'));
+    for(const [key,label] of [['maxAttempts','最大嘗試次數'],['timeoutMs','逾時毫秒']]){const field=input(label,settings[key],'number');fields[key]=field.control;form.append(field.wrapper);}
    }else if(kind==='prompts'){
     body=input('Prompt 內容',revision?.content??catalog.promptTemplates.gherkin,'textarea');body.control.rows=12;body.control.required=true;form.append(body.wrapper);
     purposes=el('fieldset');purposes.append(el('legend','適用任務'));for(const purpose of catalog.purposes){const label=el('label',undefined,'check'),check=el('input');check.type='checkbox';check.value=purpose;check.checked=revision?revision.purposes.includes(purpose):purpose==='gherkin';label.append(check,document.createTextNode(title[purpose]));purposes.append(label);}form.append(purposes,el('p','模板變數：{requirementId}、{featureId}、{spec}、{projects}、{feedback}、{previousFailure}。','muted'));
@@ -60,7 +62,9 @@ export function agentCatalogView({api,el,button,note,ask,onDirty,onSaved}){
    const actions=el('div',undefined,'inline-actions'),save=el('button','儲存新版本');save.type='submit';actions.append(save);
    const readDraft=()=>{
     const data={name:name.control.value,description:description.control.value};
-    if(kind==='agents'){data.settings=Object.fromEntries(Object.entries(fields).map(([key,n])=>[key,key==='args'?n.value.split('\n').filter(Boolean):['timeoutMs','maxAttempts'].includes(key)?Number(n.value):n.value]));}
+    if(kind==='agents'){
+     data.settings={runtime:'codex-sdk',model:fields.model.value,maxAttempts:Number(fields.maxAttempts.value),timeoutMs:Number(fields.timeoutMs.value)};
+    }
     else{data.content=body.control.value;data.purposes=[...purposes.querySelectorAll('input:checked')].map(n=>n.value);if(kind==='skills')data.resources=files.map(file=>({...file}));}
     return data;
    };

@@ -36,7 +36,7 @@ test('partial task defaults are completed without replacing a saved choice or du
  const home=await mkdtemp(path.join(tmpdir(),'bdd-catalog-partial-'));let store=openStore(home);
  t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
  const repositoryId='SPEC-partial';store.register({id:repositoryId,title:'Partial',remoteUrl:'https://github.com/example/spec'});
- const agent=store.saveCatalogAgent({name:'User-selected Agent',settings:{command:'user-cli',args:['{task}','{prompt}']}});
+ const agent=store.saveCatalogAgent({name:'User-selected Agent',settings:{runtime:'codex-sdk',model:'selected-model'}});
  const prompt=store.saveCatalogPrompt({name:'User-selected Prompt',content:'Preserve this exact choice',purposes:['design']});
  const choice={purpose:'design',agentRevisionId:agent.revisions[0].id,promptRevisionId:prompt.revisions[0].id,skillRevisionIds:[]};
  store.saveAgentDefault(repositoryId,choice);
@@ -77,15 +77,36 @@ test('default repair preserves custom revisions and does not revive archived see
  store.register({id:repositoryId,title:'Custom repair',remoteUrl:'https://github.com/example/spec'});store.ensureAgentDefaults(repositoryId,legacy);
  const initial=store.agentCatalog(),agent=initial.agents[0],skill=initial.skills[0],prompt=initial.prompts.find(item=>item.revisions[0].purposes.includes('design'));
  const changedSkill=store.saveCatalogSkill({id:skill.id,expectedRevision:skill.revisions[0].id,name:skill.name,description:skill.description,content:legacy.skills,resources:[{path:'custom.txt',content:'Keep this custom resource'}]});
- const changedAgent=store.saveCatalogAgent({id:agent.id,expectedRevision:agent.revisions[0].id,name:agent.name,description:agent.description,settings:{...agent.revisions[0].settings,command:'custom-cli'},skillRevisionIds:[changedSkill.revisions[0].id]});
+ const changedAgent=store.saveCatalogAgent({id:agent.id,expectedRevision:agent.revisions[0].id,name:agent.name,description:agent.description,settings:{...agent.revisions[0].settings,model:'custom-model'},skillRevisionIds:[changedSkill.revisions[0].id]});
  const archivedPrompt=store.saveCatalogPrompt({id:prompt.id,expectedRevision:prompt.revisions[0].id,name:prompt.name,description:prompt.description,content:prompt.revisions[0].content,purposes:['design'],archived:true});
  const preserved=store.agentDefaults(repositoryId).filter(row=>row.purpose!=='design'),db=new DatabaseSync(path.join(home,'metadata.sqlite'));
  try{db.prepare('DELETE FROM agent_task_defaults WHERE repository_id=? AND purpose=?').run(repositoryId,'design');}finally{db.close();}
  store.ensureAgentDefaults(repositoryId,legacy);
  const repaired=store.resolveAgent(repositoryId,'design'),catalog=store.agentCatalog();
  assert.notEqual(repaired.agentId,agent.id);assert.notEqual(repaired.skills[0].id,skill.id);assert.notEqual(repaired.prompt.id,prompt.id);
- assert.equal(repaired.settings.command,legacy.command);assert.equal(repaired.skills[0].content,legacy.skills);assert.deepEqual(repaired.skills[0].resources,[]);
+ assert.deepEqual(repaired.settings,validateAgentRuntimeSettings(legacy));assert.equal(repaired.skills[0].content,legacy.skills);assert.deepEqual(repaired.skills[0].resources,[]);
  assert.deepEqual(catalog.agents.find(item=>item.id===agent.id),changedAgent);assert.deepEqual(catalog.skills.find(item=>item.id===skill.id),changedSkill);assert.deepEqual(catalog.prompts.find(item=>item.id===prompt.id),archivedPrompt);
  assert.deepEqual(store.agentDefaults(repositoryId).filter(row=>row.purpose!=='design'),preserved);
  store.ensureAgentDefaults(repositoryId,legacy);assert.deepEqual(store.agentCatalog(),catalog);
+});
+
+test('catalog display and dispatch normalize all old CLI profiles without rewriting history or accepting new CLI choices',async t=>{
+ const home=await mkdtemp(path.join(tmpdir(),'bdd-catalog-runtime-')),store=openStore(home);t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
+ store.register({id:'SPEC-runtime',title:'Runtime',remoteUrl:'https://github.com/example/spec'});
+ const agent=store.saveCatalogAgent({name:'Legacy factory',settings:validateAgentRuntimeSettings()}),revisionId=agent.revisions[0].id;
+ const prompt=store.saveCatalogPrompt({name:'Task',content:'Implement {featureId}',purposes:['development']});
+ const legacy={command:'codex',args:['exec','--model','gpt-6.1-sol','--sandbox','workspace-write','{mcp}','{prompt}'],maxAttempts:2,timeoutMs:60000};
+ const db=new DatabaseSync(path.join(home,'metadata.sqlite'));t.after(()=>db.close());db.prepare('UPDATE agent_revisions SET settings_json=? WHERE id=?').run(JSON.stringify(legacy),revisionId);
+ const shown=store.agentCatalog().agents.find(item=>item.id===agent.id).revisions[0].settings;
+ const resolved=store.resolveAgent('SPEC-runtime','development',{agentRevisionId:revisionId,promptRevisionId:prompt.revisions[0].id,skillRevisionIds:[]});
+ assert.deepEqual(shown,resolved.settings);assert.deepEqual(shown,{runtime:'codex-sdk',model:'auto',maxAttempts:2,timeoutMs:60000});
+ assert.deepEqual(JSON.parse(db.prepare('SELECT settings_json FROM agent_revisions WHERE id=?').get(revisionId).settings_json),legacy);
+ const custom={...legacy,runtime:'custom-cli',command:'custom-agent',args:['--custom','{task}']};db.prepare('UPDATE agent_revisions SET settings_json=? WHERE id=?').run(JSON.stringify(custom),revisionId);
+ const current=store.agentCatalog().agents.find(item=>item.id===agent.id).revisions[0];
+ const next=store.resolveAgent('SPEC-runtime','development',{agentRevisionId:revisionId,promptRevisionId:prompt.revisions[0].id,skillRevisionIds:[]});
+ assert.deepEqual(current.settings,shown);assert.deepEqual(next.settings,shown);assert.deepEqual(JSON.parse(current.settings_json),custom);
+ assert.throws(()=>store.saveCatalogAgent({name:'Forbidden',settings:custom}),{code:'AGENT_RUNTIME_UNSUPPORTED'});
+ const updated=store.saveCatalogAgent({id:agent.id,expectedRevision:revisionId,name:agent.name,settings:{...shown,model:'selected-model'}});
+ assert.deepEqual(updated.revisions[1].settings,custom,'historical CLI revision remains readable exactly as saved');
+ assert.deepEqual(JSON.parse(db.prepare('SELECT settings_json FROM agent_revisions WHERE id=?').get(revisionId).settings_json),custom);
 });

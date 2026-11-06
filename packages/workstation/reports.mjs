@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { id, invariant, identity, digest, safePath, exists, atomicWrite, errorResult } from '../contracts/index.mjs';
 import { configuration } from '../spec-toolkit/index.mjs';
 import { verifyBundle } from '../spec-toolkit/engine.mjs';
+import { specCheckpointDigest } from '../spec-toolkit/source-checkpoint.mjs';
 
 function reportIdentity(manifest, requirementId, featureId, runId) {
   invariant(manifest.requirementId === requirementId && manifest.featureId === featureId && manifest.runId === runId,
@@ -46,8 +47,7 @@ export async function reindexReports({ root, home, repositoryId, git, store, ref
           const manifest = await verifyBundle(staging);
           reportIdentity(manifest, requirementId, featureId, runId);
           invariant(!manifest.specRepositoryId || manifest.specRepositoryId === config.specRepositoryId, 'REPORT_REPOSITORY_MISMATCH', 'Report belongs to a different Spec repository');
-          invariant((await git.command(root, ['merge-base', '--is-ancestor', manifest.testedSpecCommit, commit], { allowFailure: true })).exitCode === 0,
-            'REPORT_SOURCE_UNREACHABLE', 'Tested commit is not an ancestor of the report commit');
+          await verifyReportSource(manifest, entries, root, git, commit);
           await rename(staging, cache); staging = null;
         }
         const manifest = await verifyBundle(cache);
@@ -82,15 +82,33 @@ export async function reindexReports({ root, home, repositoryId, git, store, ref
   }
   return { indexed, errors, fetched: false, workingTreeChanged: false };
 }
-export function currentVerification(feature, modules, reports) {
+async function verifyReportSource(manifest, entries, root, git, reportCommit) {
+  let sourceCommit = manifest.testedSpecCommit;
+  if (manifest.sourceKind === 'WORKSPACE') {
+    const file = entries.find(entry => entry.path === `reports/_runs/${id(manifest.runId)}/summary.json`);
+    invariant(file?.type === 'blob' && file.mode === '100644' && file.size <= 1024 * 1024, 'REPORT_CHECKPOINT_MISSING', '工作樹報告缺少人工驗收版本參照。');
+    const summary = JSON.parse((await git.blob(root, file.sha)).toString('utf8'));
+    invariant(summary.sourceKind === 'WORKSPACE' && summary.runId === manifest.runId && summary.manifestDigest === identity(manifest)
+      && summary.inputDigest === manifest.inputDigest && summary.specDigest === manifest.specDigest && summary.specSourceDigest === manifest.specSourceDigest
+      && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(summary.acceptedSpecCommit ?? ''), 'REPORT_CHECKPOINT_MISMATCH', '驗收版本與封存報告不符。');
+    sourceCommit = summary.acceptedSpecCommit;
+    invariant(await specCheckpointDigest(root, git, sourceCommit) === manifest.specSourceDigest,
+      'REPORT_CHECKPOINT_MISMATCH', '驗收版本中的規格來源與封存報告不同。');
+  }
+  invariant((await git.command(root, ['merge-base', '--is-ancestor', sourceCommit, reportCommit], { allowFailure: true })).exitCode === 0,
+    'REPORT_SOURCE_UNREACHABLE', 'Source checkpoint is not an ancestor of the report commit');
+}
+export function currentVerification(feature, modules, reports, specSourceDigest) {
   const matching = reports.filter(x => x.manifest.requirementId === feature.requirementId && x.manifest.featureId === feature.id);
   const candidates = matching.filter(x => !x.invalidReason && x.manifest.verification === 'VERIFIED'
     && x.manifest.scope === 'ALL_CASES' && x.manifest.coverageComplete === true && x.manifest.evidenceComplete === true);
   const applicable = candidates.find(x => {
     const m = x.manifest;
     return Object.values(feature.review.confirmed).every(Boolean) && feature.review.hashes.tests === m.baseline
+      && (m.sourceKind !== 'WORKSPACE' || typeof specSourceDigest === 'string' && m.specSourceDigest === specSourceDigest)
       && Array.isArray(m.projects) && m.projects.length === modules.length
-      && modules.every(p => !p.dirty && p.actual === p.commit && m.projects.some(r => r.id === p.id && r.commit === p.actual));
+      && modules.every(p => !p.pendingDraft && p.initialized !== false && m.projects.some(r => r.id === p.id && (r.contentDigest
+        ? r.contentDigest === p.contentDigest : !p.dirty && p.actual === p.commit && r.commit === p.actual)));
   });
   if (applicable) return { status: 'VERIFIED', runId: applicable.manifest.runId, testedSpecCommit: applicable.manifest.testedSpecCommit };
   return { status: candidates.length ? 'STALE' : matching.length ? 'NOT_VERIFIED' : 'NOT_RUN' };

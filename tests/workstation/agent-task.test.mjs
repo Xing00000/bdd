@@ -4,8 +4,9 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {previewAgentPrompt,approvedAgentPrompt,writeAgentTask,agentArguments,taskRpc} from '../../packages/workstation/agent-task.mjs';
+import {previewAgentPrompt,approvedAgentPrompt,selectedAgent,writeAgentTask,taskRpc} from '../../packages/workstation/agent-task.mjs';
 import {validateAgentSettings} from '../../packages/workstation/agent-settings.mjs';
+import {runAgentTask} from '../../packages/workstation/agent-cli.mjs';
 
 const selection={requirementId:'REQ-one',featureId:'login',purpose:'development'};
 const snapshot={revision:1,settings:{agent:validateAgentSettings()},files:[
@@ -36,7 +37,20 @@ test('edited prompt dispatches verbatim, while missing approval and stale previe
   assert.throws(()=>approvedAgentPrompt(snapshot,{...context,root:'/moved'},'development'),{code:'PROMPT_CHANGED'});
   assert.throws(()=>approvedAgentPrompt(snapshot,{...context,request:{...context.request,input:{...selection}}},'development'),{code:'PROMPT_REQUIRED'});
   assert.throws(()=>approvedAgentPrompt(snapshot,{...context,request:{...context.request,input:{...context.request.input,prompt:' '}}},'development'),{code:'PROMPT_REQUIRED'});
-  assert.throws(()=>agentArguments({args:['exec','{prompt}']},{prompt:'do this'}),{code:'AGENT_MCP_REQUIRED'});
+});
+
+test('old frozen CLI approvals require a new SDK preview and direct CLI dispatch is rejected',async()=>{
+  const legacy={runtime:'custom-cli',command:process.execPath,args:['--eval','throw Error("must not run")'],maxAttempts:1,timeoutMs:1000};
+  const frozen={settings:legacy,digest:'old-contract'},context={root:'/repo',request:{repositoryId:'SPEC-one',input:{...selection,agentSnapshot:frozen,prompt:'Previously approved CLI prompt',promptDigest:'old-preview'}}};
+  assert.throws(()=>approvedAgentPrompt(snapshot,context,'development'),{code:'AGENT_PREVIEW_REQUIRED'});
+  assert.throws(()=>selectedAgent(snapshot,context),{code:'AGENT_PREVIEW_REQUIRED'});
+  const {runtime:oldRuntime,...withoutRuntime}=legacy;
+  assert.throws(()=>previewAgentPrompt(snapshot,'SPEC-one','/repo',{...selection,agentSnapshot:{...frozen,settings:withoutRuntime}}),{code:'AGENT_PREVIEW_REQUIRED'});
+  const migrated={...snapshot,settings:{agent:{...snapshot.settings.agent,...legacy}}};
+  const preview=previewAgentPrompt(migrated,'SPEC-one','/repo',selection);
+  assert.equal(approvedAgentPrompt(migrated,{root:'/repo',request:{repositoryId:'SPEC-one',input:{...selection,...preview}}},'development'),preview.prompt);
+  assert.equal(selectedAgent(migrated,{request:{input:{}}}).runtime,'codex-sdk');
+  await assert.rejects(()=>runAgentTask({}, {agent:legacy,prompt:'must not execute',cwd:'/unused',task:'/unused/task.json'}),{code:'AGENT_RUNTIME_UNSUPPORTED'});
 });
 
 test('new requirements can preview a minimal Gherkin prompt bound to unsaved composer input',()=>{
@@ -49,8 +63,6 @@ test('a real stdio task MCP exposes only frozen selected artifacts and no write 
   const directory=await mkdtemp(path.join(os.tmpdir(),'agent-task-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const file=await writeAgentTask(directory,snapshot,{...selection,workspace:'/isolated',products:['/isolated/product'],feedback:[{message:'fix layout'}],previousFailure:'last failure'});
   const bundle=JSON.parse(await readFile(file,'utf8'));
-  const args=agentArguments(validateAgentSettings(),{prompt:'exact prompt',spec:'/isolated',project:'/isolated/product',task:file});
-  assert.equal(args.at(-1),'exact prompt');assert.ok(args.some(a=>a.startsWith('mcp_servers.workbench_task=')));
   const queries=[
     {method:'initialize',params:{protocolVersion:'2025-11-25'}},
     {method:'tools/list'},
@@ -69,4 +81,13 @@ test('a real stdio task MCP exposes only frozen selected artifacts and no write 
   assert.equal(responses[3].result.structuredContent.content,'Feature: Approved login');
   assert.equal(responses[4].error.code,-32602);assert.equal(responses[5].error.code,-32602);
   assert.equal(taskRpc(bundle,{jsonrpc:'2.0',method:'notifications/initialized'}),null);
+});
+
+test('every dispatched purpose reserves all Git commands for workstation lifecycle boundaries',async t=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'agent-git-boundaries-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  for(const purpose of ['gherkin','design','testPlan','development']){
+    const source=purpose==='gherkin'?{editorKey:'new-fixture',description:'Requirement',previousGherkin:''}:purpose==='design'?{previousDesign:'# Design'}:undefined;
+    const file=await writeAgentTask(path.join(directory,purpose),snapshot,{...selection,purpose,workspace:directory,products:[path.join(directory,'product')],feedback:[],source});
+    const {task}=JSON.parse(await readFile(file,'utf8'));assert.match(task.rules,/Do not run any Git commands, including read-only inspection/);assert.match(task.rules,/feature creation and completed human acceptance/);
+  }
 });

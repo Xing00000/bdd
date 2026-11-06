@@ -11,7 +11,7 @@ export async function projectRoot(root, projectId, git) {
   id(projectId);
   const config = await configuration(root);
   const project = config.projects.find(x => x.id === projectId);
-  invariant(project && (await git.modules(root)).some(x => x.id === projectId && x.actual), 'PROJECT_NOT_INITIALIZED', 'Project must belong to this Spec Repo and be initialized', 404);
+  invariant(project && (git ? (await git.modules(root)).some(x => x.id === projectId && x.actual) : await exists(await safePath(root, project.path))), 'PROJECT_NOT_INITIALIZED', 'Project must belong to this Spec Repo and be initialized', 404);
   return safePath(root, project.path, { missing: false });
 }
 export function sourcePath(relative) {
@@ -42,7 +42,7 @@ export async function readProjectFile(root, projectId, relative, git) {
 }
 export async function saveProjectFile(root, input, git, expected) {
   const target = await projectRoot(root, input.projectId, git);
-  await git.expect(target, expected, { attached: true });
+  if(git)await git.expect(target, expected, { attached: true });
   const file = await safePath(target, sourcePath(input.path));
   const current = await exists(file) ? digest(await readFile(file)) : null;
   invariant(Object.hasOwn(input, 'expectedHash') && current === input.expectedHash, 'CONTENT_CHANGED', 'Source changed since the editor opened; your draft has not been overwritten', 409);

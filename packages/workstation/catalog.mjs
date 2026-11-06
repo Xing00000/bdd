@@ -7,7 +7,8 @@ import { id, invariant, exists, safePath, identity, digest, errorResult } from '
 import { remoteUrl, commitId, branchName } from '../git-core/index.mjs';
 import { initialize, scan } from '../spec-toolkit/index.mjs';
 import { ensureDraft } from './authoring.mjs';
-import { importBoundRepository, prepareProjection } from './projection.mjs';
+import { importBoundRepository } from './projection.mjs';
+import { workspaceModules } from '../spec-toolkit/workspace.mjs';
 import { reindexReports } from './reports.mjs';
 import { savePaths } from './flows.mjs';
 
@@ -107,14 +108,14 @@ export async function acquireRepository(context) {
     status.validatedPath=root;status.checkoutBases=checkoutBases;store.setConnection(repositoryId,status);
     if (!state.head && !await exists(path.join(root, 'workbench.yaml'))) {
       const initialized = await initialize(root, { specRepositoryId: repositoryId, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
+      status.managedGitmodulesHash = digest(await readFile(path.join(root, '.gitmodules'))); store.setConnection(repositoryId, status);
       // Initialization owns these exact new template files. Record the local baseline
       // here, not during SQLite saves, so our own empty .gitmodules is not mistaken
       // for a user's conflicting external edit on the first product preparation.
-      await savePaths(root, initialized.files, git, repositoryId, 'Initialize bound specification repository');
+      if (context.lifecycleBoundary === 'CREATE_FEATURE') await savePaths(root, initialized.files, git, repositoryId, 'Initialize feature workspace');
       state = await git.inspect(root);
     }
     let draft = await ensureDraft({ ...context, repositoryId });
-    if(!state.head && draft.settings.configured && draft.settings.projects?.length) {draft=await prepareProjection(context);state=await git.inspect(root);}
     const refs = await revisionOptions(root, git);
     // Import the bound branch's immutable remote revision, not a random editing branch.
     const branch = record.branch ?? state.branch;
@@ -132,7 +133,10 @@ export async function acquireRepository(context) {
     catch (error) { warnings.push(errorResult(error)); }
     const projection = store.projection(repositoryId);
     if (!warnings.length && !projection) {
-      store.setProjection(repositoryId, { status: 'IMPORTED', revision: draft.revision, head: state.head, branch: state.branch, modules: await git.modules(root),
+      const fingerprints = await workspaceModules(root, draft.settings.projects ?? []);
+      const modules = (await git.modules(root)).map(module => { const contentDigest = fingerprints.find(item => item.id === module.id)?.contentDigest; return { ...module, initialized: Boolean(module.actual), contentDigest, checkpointDigest: module.dirty ? null : contentDigest }; });
+      const completedAcceptances = draft.files.filter(file => /\/acceptance\.json$/.test(file.path) && file.sha256 === file.baseHash).flatMap(file => { try { return JSON.parse(file.content).items.map(item => item.id); } catch { return []; } });
+      store.setProjection(repositoryId, { status: 'IMPORTED', revision: draft.revision, head: state.head, branch: state.branch, modules, completedAcceptances,
         files: draft.files.filter(f => f.baseHash).map(({ target, path, baseHash }) => ({ target, path, sha256: baseHash })) });
     }
     let history = { indexed: [], errors: [] };

@@ -2,7 +2,7 @@ import {createRequire} from 'node:module';
 import { terminalVendor } from './development.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { createGit } from '../git-core/index.mjs';
+import { workspaceEntries, entriesDigest, workingCommit } from '../spec-toolkit/workspace.mjs';
 import { createWorkstation } from './service.mjs';
 import { invariant, id, safePath, errorResult } from '../contracts/index.mjs';
 import { verifyBundle } from '../spec-toolkit/engine.mjs';
@@ -30,8 +30,16 @@ const securityHeaders = {
 export async function dispatch(service, request) {
   const url = new URL(request.url, 'http://workstation.invalid'), pathname = url.pathname.replace(/\/$/, '') || '/';
   if(request.method==='GET'&&pathname==='/health') {
-    const commit=await createGit().resolve(service.options.toolkitRoot);
-    return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:{status:'ok',commit}};
+    let source = {};
+    if (process.env.WB_SOURCE_DIGEST) {
+      const contentDigest = entriesDigest(await workspaceEntries(service.options.toolkitRoot));
+      invariant(contentDigest === process.env.WB_SOURCE_DIGEST, 'SOURCE_VERSION_MISMATCH', '啟動來源與測試快照不符。', 409);
+      source = { sourceKind: 'WORKSPACE', sourceDigest: contentDigest, sourceVersion: `sha256:${contentDigest}` };
+    } else if (process.env.WB_SOURCE_COMMIT) {
+      const commit = await workingCommit(service.options.toolkitRoot);
+      invariant(commit === process.env.WB_SOURCE_COMMIT, 'SOURCE_VERSION_MISMATCH', '啟動版本與測試來源不符。', 409); source = { commit };
+    }
+    return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:{status:'ok',...source}};
   }
   if(request.method==='GET'&&['/repositories/xterm.js','/repositories/xterm.css'].includes(pathname))return {status:200,headers:{...securityHeaders,'content-type':pathname.endsWith('.js')?'text/javascript':'text/css'},body:await readFile(terminalVendor(service.options.home,pathname.split('/').at(-1)))};
   if(request.method==='GET'&&pathname==='/repositories/markdown-it.js')return {status:200,headers:{...securityHeaders,'content-type':'text/javascript; charset=utf-8'},body:await readFile(createRequire(import.meta.url).resolve('markdown-it/browser'))};

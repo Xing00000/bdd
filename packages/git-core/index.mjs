@@ -9,51 +9,7 @@ import path from 'node:path';
 import { WorkstationError, invariant, id, relativePath, safePath, exists, digest, identity } from '../contracts/index.mjs';
 
 const activeChildren = new Set();
-/** Let Git own ignore semantics, including nested rules, negation and tracked files. */
-async function sourceGit(root, operation, input) {
-  let temporary;
-  const env=processEnvironment({HOME:process.env.HOME}),prefix=['-c',`core.hooksPath=${os.devNull}`,'-c','core.fsmonitor=false'];
-  try {
-    let args=[...prefix,'-C',root];
-    if(!await exists(path.join(root,'.git'))) {
-      temporary=await mkdtemp(path.join(os.tmpdir(),'bdd-ignore-'));
-      const initialized=await execute('git',[...prefix,'init','--bare','--quiet','--template=',temporary],{env,progress:false});
-      invariant(initialized.exitCode===0&&!initialized.timedOut&&!initialized.overflow,'GIT_IGNORE_FAILED',initialized.stderr);
-      args=[...prefix,`--git-dir=${temporary}`,`--work-tree=${root}`];
-    }
-    const result=await execute('git',[...args,...operation],{cwd:root,env,input,progress:false});
-    invariant((operation[0]==='check-ignore'?[0,1]:[0]).includes(result.exitCode)&&!result.timedOut&&!result.overflow,'GIT_IGNORE_FAILED',result.stderr);
-    return result;
-  } finally {if(temporary)await rm(temporary,{recursive:true,force:true});}
-}
-
-export async function gitSourcePaths(root,paths) {
-  if(!paths.length)return [];
-  const result=await sourceGit(root,['check-ignore','--stdin','-z'],paths.join('\0')+'\0');
-  const ignored=new Set(result.stdout.split('\0').filter(Boolean));return paths.filter(file=>!ignored.has(file));
-}
-
-/** Enumerate with Git before inspecting paths, so ignored trees are never traversed. */
-export async function gitSourceFiles(root,folders) {
-  const result=await sourceGit(root,['ls-files','--cached','--others','--exclude-standard','-z','--',...folders]);
-  const files=[];
-  for(const file of new Set(result.stdout.split('\0').filter(Boolean)))if(await exists(await safePath(root,file)))files.push(file);
-  const group=file=>folders.findIndex(folder=>file===folder||file.startsWith(folder+'/'));
-  return files.sort((a,b)=>{
-    const difference=group(a)-group(b);if(difference)return difference;
-    const left=a.split('/'),right=b.split('/');
-    for(let i=0;i<Math.min(left.length,right.length);i++){const order=left[i].localeCompare(right[i]);if(order)return order;}
-    return left.length-right.length;
-  });
-}
-
-/** SQLite materializations are already accepted sources, including tracked ignored paths. */
-export async function trackSourceView(root) {
-  for(const args of [['init','--quiet','--template='],['add','--force','--all']]) {
-    const result=await execute('git',['-c',`core.hooksPath=${os.devNull}`,'-c','core.fsmonitor=false','-C',root,...args],{env:processEnvironment({HOME:process.env.HOME},{git:true}),progress:false});
-    invariant(result.exitCode===0&&!result.timedOut&&!result.overflow,'GIT_SOURCE_VIEW_FAILED',result.stderr);
-  }
-}
+export { gitSourcePaths, gitSourceFiles, trackSourceView } from './source-files.mjs';
 export function stopChildProcesses(signal = 'SIGTERM') {
   for (const child of activeChildren) { try { if (process.platform !== 'win32') process.kill(-child.pid, signal); else child.kill(signal); } catch {} }
 }
@@ -389,7 +345,7 @@ export function createGit(policy = {}) {
       } finally { await rm(temporary, { recursive: true, force: true }); }
     },
     async push(directory, input, expected) {
-      const state = await expect(directory, expected, { attached: true });
+      const state = await expect(directory, expected, { attached: input.branch === undefined });
       const branch = branchName(input.branch ?? state.branch);
       const name = input.remote ?? 'origin', remote = await selectedRemote(directory, name, true);
       await command(directory, ['push', '--porcelain', '--recurse-submodules=check', name, `HEAD:refs/heads/${branch}`]);

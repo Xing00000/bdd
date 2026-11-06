@@ -6,9 +6,11 @@ import { createRequire } from 'node:module';
 import { caseSelection } from './tags.mjs';
 import { materializeDependencies, reuseForExecution } from './dependencies.mjs';
 import { WorkstationError, invariant, id, version, exists, safePath, walk, writeJson, readJson, atomicWrite, digest, identity, escapeHtml, errorResult } from '../contracts/index.mjs';
-import { execute, processEnvironment, trackChild, startProgressPty, gitSourceFiles } from '../git-core/index.mjs';
+import { execute, processEnvironment, trackChild, startProgressPty, gitSourceFiles, trackSourceView } from '../git-core/index.mjs';
+import { workspaceInput, copyWorkspace, workspaceSpecSourceDigest } from './workspace.mjs';
+import { specCheckpointDigest } from './source-checkpoint.mjs';
 import { currentProgress } from '../git-core/progress.mjs';
-import { validate, reviewState, configuration, featureKey } from './index.mjs';
+import { validate, validateToolkitSnapshot, scan, reviewState, configuration, featureKey } from './index.mjs';
 
 import { validateContract } from '../contracts/schemas.mjs';
 
@@ -68,6 +70,38 @@ export async function prepareRun({ root, home, repositoryId, input, git }) {
   await writeJson(path.join(directory, 'plan.json'), plan);
   return plan;
 }
+
+/** Normal authoring runs pin file bytes, never create a commit or Git checkout. */
+export async function prepareWorkspaceRun({ root, home, repositoryId, input }) {
+  const data = await scan(root), key = featureKey(input.requirementId, input.featureId), feature = data.features.find(item => item.key === key);
+  await validateToolkitSnapshot(root);
+  invariant(feature, 'FEATURE_NOT_FOUND', key, 404);
+  invariant(!feature.authoringOnly, 'TEST_RUNNER_NOT_CONFIGURED', '此規格尚未接線工作台測試執行器。', 409);
+  const review = await reviewState(root, input.requirementId, input.featureId);
+  invariant(Object.values(review.confirmed).every(Boolean), 'REVIEWS_REQUIRED', '請先確認目前的需求、設計與測試。', 409);
+  invariant(await exists(await safePath(root, 'package-lock.json')), 'LOCKFILE_REQUIRED', '請先安裝並確認測試相依版本。');
+  const selection = input.caseIds === undefined ? null : input.caseIds;
+  invariant(selection === null || Array.isArray(selection) && selection.length > 0 && new Set(selection).size === selection.length && selection.every(item => feature.caseIds.includes(item)), 'INVALID_SELECTION', 'Select existing case IDs');
+  const runId = id(input.runId ?? `RUN-${randomUUID()}`), directory = await safePath(home, `executions/${runId}`);
+  invariant(!await exists(directory), 'RUN_EXISTS', 'Run IDs are immutable and cannot be reused', 409);
+  const snapshot = await workspaceInput(root, data.config.projects), repository = path.join(directory, 'repo');
+  await mkdir(repository, { recursive: true, mode: 0o700 });
+  await copyWorkspace(root, repository, snapshot);
+  await trackSourceView(repository);
+  for (const project of snapshot.projects) await trackSourceView(path.join(repository, project.path));
+  const copied = await workspaceInput(repository, data.config.projects);
+  invariant(copied.inputDigest === snapshot.inputDigest, 'CANDIDATE_CHANGED', '執行快照與已儲存來源不同。', 409);
+  const copiedReview = await reviewState(repository, input.requirementId, input.featureId);
+  invariant(identity(copiedReview.hashes) === identity(review.hashes) && Object.values(copiedReview.confirmed).every(Boolean), 'REVIEW_BASELINE_MISMATCH', '執行快照與已確認來源不同。', 409);
+  if (await reuseForExecution(root, data.config.execution.install)) await materializeDependencies(root, repository);
+  const plan = { schemaVersion: 1, sourceKind: 'WORKSPACE', specRepositoryId: data.config.specRepositoryId, runId, repositoryId,
+    requirementId: input.requirementId, featureId: input.featureId, testedSpecCommit: null, specDigest: snapshot.specDigest, specSourceDigest: snapshot.specSourceDigest,
+    projects: snapshot.projects.map(project => ({ id: project.id, path: project.path, contentDigest: project.contentDigest })),
+    caseIds: selection ?? feature.caseIds, allCaseIds: feature.caseIds, profiles: feature.profiles, requiredProjectIds: feature.projectIds,
+    scope: selection ? 'SELECTED_CASES' : 'ALL_CASES', baseline: review.hashes.tests, inputDigest: snapshot.inputDigest,
+    createdAt: new Date().toISOString(), state: 'PREPARED' };
+  await writeJson(path.join(directory, 'plan.json'), plan); return plan;
+}
 function expectedKeys(plan, selected = true) { return (selected ? plan.caseIds : plan.allCaseIds).flatMap(c => plan.profiles.map(p => `${c}/${p}`)).sort(); }
 function definitionKeys(receipt) { return receipt.definitions.map(x => `${x.caseId}/${x.profile}`).sort(); }
 function checkReceipt(receipt, plan) {
@@ -105,7 +139,10 @@ export function assessEvidence(plan, discovery, receipt, processResult, inputsUn
     });
   }
   const evidenceComplete=evidenceIssues.length===0;
-  const deploymentMatches = deployment?.verified && (plan.requiredProjectIds ?? []).every(projectId => deployment.projectId === projectId && deployment.commit === plan.projects?.find(p => p.id === projectId)?.commit);
+  const deploymentMatches = deployment?.verified && (plan.requiredProjectIds ?? []).every(projectId => {
+    const project = plan.projects?.find(item => item.id === projectId);
+    return deployment.projectId === projectId && (plan.sourceKind === 'WORKSPACE' ? deployment.contentDigest === project?.contentDigest : deployment.commit === project?.commit);
+  });
   const reasons = [];
   if (!completeDiscovery || !selectedDiscovery || !exactExecution) reasons.push('CASE_SET_MISMATCH');
   if (!evidenceComplete) reasons.push('EVIDENCE_INCOMPLETE');
@@ -186,6 +223,16 @@ async function startManagedService(repo, config, plan, environment) {
   if (!service) return { receipt: { verified: false, reason: 'No managed deployment receipt' }, stop: async () => {} };
   const project = plan.projects.find(x => x.id === service.projectId);
   invariant(project, 'SERVICE_PROJECT_UNKNOWN', 'Managed service must belong to a pinned project');
+  const sourceVersion = plan.sourceKind === 'WORKSPACE' ? `sha256:${project.contentDigest}` : project.commit;
+  // Keep the existing health endpoint contract, with an explicit sha256: token
+  // for working files. It is never recorded as a Git commit in evidence.
+  const serviceEnvironment = { ...environment, WB_SOURCE_VERSION: sourceVersion, WB_SOURCE_COMMIT: sourceVersion,
+    ...(plan.sourceKind === 'WORKSPACE' ? { WB_SOURCE_DIGEST: project.contentDigest } : {}) };
+  const matches = health => plan.sourceKind === 'WORKSPACE'
+    ? health.sourceDigest === project.contentDigest || health.sourceVersion === sourceVersion || health.commit === sourceVersion
+    : health.commit === project.commit;
+  const receipt = (health, pid, healthUrl) => ({ verified: true, projectId: project.id,
+    ...(plan.sourceKind === 'WORKSPACE' ? { contentDigest: project.contentDigest, reportedVersion: sourceVersion } : { commit: project.commit, reportedCommit: health.commit }), healthUrl, pid });
   const url = new URL(service.healthUrl);
   invariant(url.protocol === 'http:' && ['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname) && !url.username && !url.password, 'SERVICE_URL_NOT_LOCAL', 'Managed health URL must be loopback HTTP');
   // A pre-existing listener is not proof that our candidate was deployed.
@@ -196,20 +243,20 @@ async function startManagedService(repo, config, plan, environment) {
   const command = commandArray(service.command), cwd = await safePath(repo, project.path);
   if (currentProgress()) {
     let exited = false, errorText = '';
-    const child = startProgressPty(command[0], command.slice(1), { cwd, env: { ...environment, WB_SOURCE_COMMIT: project.commit }, role: 'service', onData: (_kind, data) => { errorText = (errorText + data.toString()).slice(-65536); } });
+    const child = startProgressPty(command[0], command.slice(1), { cwd, env: serviceEnvironment, role: 'service', onData: (_kind, data) => { errorText = (errorText + data.toString()).slice(-65536); } });
     child.done.then(() => { exited = true; });
     const stop = async () => { if (exited) return; child.stop(); let timer; await Promise.race([child.done, new Promise(resolve => { timer = setTimeout(resolve, 1500); })]); clearTimeout(timer); if (!exited) { child.stop('SIGKILL'); await child.done; } };
     try {
       const deadline = Date.now() + 15000;
       while (Date.now() < deadline) {
         invariant(!exited, 'SERVICE_EXITED', errorText || 'Managed service exited before readiness');
-        try { const response = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: 'error' }); const health = await response.json(); if (response.ok && health.commit === project.commit) return { stop, receipt: { verified: true, projectId: project.id, commit: project.commit, healthUrl: url.href, pid: child.pid, reportedCommit: health.commit } }; } catch {}
+        try { const response = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: 'error' }); const health = await response.json(); if (response.ok && matches(health)) return { stop, receipt: receipt(health, child.pid, url.href) }; } catch {}
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      throw new Error('Managed health endpoint did not report the pinned project commit');
+      throw new Error('Managed health endpoint did not report the pinned source version');
     } catch (error) { await stop(); throw error; }
   }
-  const child = trackChild(spawn(command[0], command.slice(1), { cwd, env: { ...environment, WB_SOURCE_COMMIT: project.commit }, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'] }));
+  const child = trackChild(spawn(command[0], command.slice(1), { cwd, env: serviceEnvironment, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'] }));
   let errorText = '', startupError;
   child.stderr.on('data', chunk => { errorText = (errorText + chunk.toString()).slice(-65536); });
   child.on('error', error => { startupError = error; });
@@ -228,11 +275,11 @@ async function startManagedService(repo, config, plan, environment) {
       try {
         const response = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: 'error' });
         const health = await response.json();
-        if (response.ok && health.commit === project.commit) return { stop, receipt: { verified: true, projectId: project.id, commit: project.commit, healthUrl: url.href, pid: child.pid, reportedCommit: health.commit } };
+        if (response.ok && matches(health)) return { stop, receipt: receipt(health, child.pid, url.href) };
       } catch {}
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    throw new Error('Managed health endpoint did not report the pinned project commit');
+    throw new Error('Managed health endpoint did not report the pinned source version');
   } catch (error) { await stop(); throw error; }
 }
 async function copyArtifacts(source, destination) {
@@ -278,7 +325,10 @@ export async function executeRun({ home, runId, repositoryId, git, enabled = fal
   if (await exists(evidence)) return verifyBundle(evidence);
   invariant(plan.state === 'PREPARED', 'RUN_ALREADY_STARTED', 'Interrupted or failed execution needs a new run ID, not silent reuse', 409);
   const repo = path.join(directory, 'repo'), config = await configuration(repo), scratch = path.join(directory, 'scratch');
-  invariant(await git.resolve(repo) === plan.testedSpecCommit && await inputSnapshot(repo, git) === plan.inputDigest, 'CANDIDATE_CHANGED', 'Prepared candidate was changed', 409);
+  const unchangedCandidate = () => plan.sourceKind === 'WORKSPACE'
+    ? workspaceInput(repo, plan.projects).then(snapshot => snapshot.inputDigest === plan.inputDigest)
+    : Promise.all([git.resolve(repo), inputSnapshot(repo, git)]).then(([head, input]) => head === plan.testedSpecCommit && input === plan.inputDigest);
+  invariant(await unchangedCandidate(), 'CANDIDATE_CHANGED', 'Prepared candidate was changed', 409);
   const envConfig = config.execution.environment ?? {};
   invariant(Object.keys(envConfig).every(k => ['WB_TARGET_BASE_URL', 'NODE_ENV', 'TZ'].includes(k)) && Object.values(envConfig).every(v => typeof v === 'string'), 'ENVIRONMENT_NOT_ALLOWED', 'Only public target URL, NODE_ENV and TZ may be configured');
   const environment = { ...processEnvironment(), HOME: path.join(scratch, 'home'), TMPDIR: path.join(scratch, 'tmp'), ...envConfig };
@@ -319,9 +369,12 @@ export async function executeRun({ home, runId, repositoryId, git, enabled = fal
   }
   let unchanged = false;
   try {
-    const modules = await git.modules(repo);
-    unchanged = await git.resolve(repo) === plan.testedSpecCommit && await inputSnapshot(repo, git) === plan.inputDigest
-      && modules.length === plan.projects.length && modules.every(p => !p.dirty && plan.projects.some(x => x.id === p.id && x.commit === p.actual && p.commit === (plan.mode === 'REGRESSION' ? x.recordedCommit : x.commit)));
+    if (plan.sourceKind === 'WORKSPACE') unchanged = await unchangedCandidate();
+    else {
+      const modules = await git.modules(repo);
+      unchanged = await unchangedCandidate() && modules.length === plan.projects.length
+        && modules.every(p => !p.dirty && plan.projects.some(x => x.id === p.id && x.commit === p.actual && p.commit === (plan.mode === 'REGRESSION' ? x.recordedCommit : x.commit)));
+    }
   } catch {}
   let assessment = { testOutcome: 'NOT_RUN', verification: 'NOT_VERIFIED', coverageComplete: false, evidenceComplete: false, reasons: ['EXECUTION_INCOMPLETE'] };
   if (!failure && discovery && receipt) {
@@ -335,7 +388,7 @@ export async function executeRun({ home, runId, repositoryId, git, enabled = fal
     if (!artifacts.some(x => x.path === a.path)) { assessment.verification = 'NOT_VERIFIED'; assessment.evidenceComplete = false; assessment.reasons.push('MISSING_ATTACHMENT'); }
   if (plan.mode === 'REGRESSION' && !plan.approvalConfirmed) { assessment.verification = 'NOT_VERIFIED'; assessment.reasons.push('HUMAN_APPROVAL_NOT_RECORDED'); }
   const report = { schemaVersion: 1, mode: plan.mode ?? 'VERIFICATION', ...(plan.batchId ? { batchId: plan.batchId, selectedRefs: plan.selectedRefs, approvalConfirmed: plan.approvalConfirmed } : {}), specRepositoryId: plan.specRepositoryId, runId, requirementId: plan.requirementId, featureId: plan.featureId, ...assessment,
-    testedSpecCommit: plan.testedSpecCommit, projects: plan.projects, scope: plan.scope, deployment: managed.receipt,
+    testedSpecCommit: plan.testedSpecCommit, ...(plan.sourceKind === 'WORKSPACE' ? { sourceKind: 'WORKSPACE', specDigest: plan.specDigest, specSourceDigest: plan.specSourceDigest } : {}), projects: plan.projects, scope: plan.scope, deployment: managed.receipt,
     startedAt: plan.startedAt, finishedAt: new Date().toISOString(), failure, cleanupFailure, cases: receipt?.cases ?? [] };
   await writeJson(path.join(staging, 'report.json'), report);
   await atomicWrite(path.join(staging, 'report.html'), `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>BDD ${escapeHtml(runId)}</title><h1>${escapeHtml(plan.requirementId + '/' + plan.featureId)}</h1><pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre></html>\n`);
@@ -352,6 +405,13 @@ export async function publishRun({ root, home, repositoryId, runId, git, push = 
   invariant((plan.repositoryId ?? plan.workspaceId) === repositoryId, 'RUN_REPOSITORY_MISMATCH', 'Run belongs to another workspace', 403);
   const evidence = path.join(directory, 'evidence'), manifest = await verifyBundle(evidence);
   invariant(manifest.testedSpecCommit === plan.testedSpecCommit && manifest.runId === plan.runId, 'RUN_ID_MISMATCH', 'Sealed evidence belongs to another run');
+  if (plan.sourceKind === 'WORKSPACE') invariant(manifest.sourceKind === 'WORKSPACE' && manifest.specDigest === plan.specDigest
+    && manifest.specSourceDigest === plan.specSourceDigest && manifest.inputDigest === plan.inputDigest,
+  'RUN_ID_MISMATCH', '封存報告與原始執行快照不同。', 409);
+  const sourceCommit = plan.sourceKind === 'WORKSPACE' ? plan.acceptedSpecCommit : plan.testedSpecCommit;
+  invariant(typeof sourceCommit === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sourceCommit), 'ACCEPTANCE_CHECKPOINT_REQUIRED', '工作樹驗證報告須完成人工驗收後才能建立 Git 輸出。', 409);
+  if (plan.sourceKind === 'WORKSPACE') invariant(await specCheckpointDigest(root, git, sourceCommit) === manifest.specSourceDigest,
+    'CONTENT_CHANGED', '人工驗收版本與封存的規格來源不同；沒有輸出報告。', 409);
   const publicationFile = path.join(directory, 'publication.json'), defaultPath = `publishers/${runId}/repo`;
   let publication, publisher;
   if (await exists(publicationFile)) {
@@ -366,9 +426,11 @@ export async function publishRun({ root, home, repositoryId, runId, git, push = 
     const preservedPublisherPath = await exists(defaultPublisher) ? defaultPath : undefined;
     const publisherPath = preservedPublisherPath ? `publishers/${runId}/attempt-${randomUUID()}/repo` : defaultPath;
     publisher = await safePath(home, publisherPath);
-    await git.cloneCandidate(root, publisher, plan.testedSpecCommit);
+    await git.cloneCandidate(root, publisher, sourceCommit);
+    if (plan.sourceKind === 'WORKSPACE') invariant(await workspaceSpecSourceDigest(publisher) === manifest.specSourceDigest,
+      'CONTENT_CHANGED', '報告輸出目錄與驗收來源不同；沒有輸出報告。', 409);
     const branch = `evidence/${runId}`;
-    await git.branch(publisher, { name: branch, create: true }, { head: plan.testedSpecCommit });
+    await git.branch(publisher, { name: branch, create: true }, { head: sourceCommit });
     const prefix = `reports/${featureKey(plan.requirementId, plan.featureId)}/${runId}`, selected = [];
     for (const file of await walk(evidence)) {
       const relative = `${prefix}/${file}`, destination = await safePath(publisher, relative);
@@ -376,9 +438,10 @@ export async function publishRun({ root, home, repositoryId, runId, git, push = 
       await mkdir(path.dirname(destination), { recursive: true }); await copyFile(path.join(evidence, file), destination); selected.push(relative);
     }
     const summaryPath = `reports/_runs/${runId}/summary.json`;
-    await writeJson(await safePath(publisher, summaryPath), { schemaVersion: 1, runId, testedSpecCommit: plan.testedSpecCommit, features: [{ requirementId: plan.requirementId, featureId: plan.featureId, path: prefix }] }); selected.push(summaryPath);
-    const commit = await git.commitSelected(publisher, { paths: selected, message: `Record BDD evidence ${runId} (tested ${plan.testedSpecCommit})` }, { head: plan.testedSpecCommit, branch });
-    publication = { schemaVersion: 1, runId, testedSpecCommit: plan.testedSpecCommit, reportCommit: commit.commit, branch, status: 'LOCAL_COMMIT', path: prefix, publisherPath, ...(preservedPublisherPath && { preservedPublisherPath }) };
+    const checkpoint = plan.sourceKind === 'WORKSPACE' ? { sourceKind: 'WORKSPACE', acceptedSpecCommit: sourceCommit, specDigest: manifest.specDigest, specSourceDigest: manifest.specSourceDigest, inputDigest: manifest.inputDigest, manifestDigest: identity(manifest) } : {};
+    await writeJson(await safePath(publisher, summaryPath), { schemaVersion: 1, runId, testedSpecCommit: plan.testedSpecCommit, ...checkpoint, features: [{ requirementId: plan.requirementId, featureId: plan.featureId, path: prefix }] }); selected.push(summaryPath);
+    const commit = await git.commitSelected(publisher, { paths: selected, message: `Record accepted BDD evidence ${runId}` }, { head: sourceCommit, branch });
+    publication = { schemaVersion: 1, runId, testedSpecCommit: plan.testedSpecCommit, ...checkpoint, reportCommit: commit.commit, branch, status: 'LOCAL_COMMIT', path: prefix, publisherPath, ...(preservedPublisherPath && { preservedPublisherPath }) };
     await writeJson(publicationFile, publication);
   }
   if (push && publication.status !== 'PUBLISHED') {
