@@ -1,3 +1,4 @@
+import {dispatchSessionManagement,sessionManagementPages} from './session-management/http.mjs';
 import {createRequire} from 'node:module';
 import { terminalVendor } from './development.mjs';
 import { readFile } from 'node:fs/promises';
@@ -28,6 +29,8 @@ const securityHeaders = {
   'referrer-policy': 'no-referrer'
 };
 export async function dispatch(service, request) {
+  const sessionResponse = await dispatchSessionManagement(service, request);
+  if (sessionResponse) return sessionResponse;
   const url = new URL(request.url, 'http://workstation.invalid'), pathname = url.pathname.replace(/\/$/, '') || '/';
   if(request.method==='GET'&&pathname==='/health') {
     let source = {};
@@ -171,7 +174,7 @@ export async function registerRepositoryRoutes(app, options) {
     reply.code(response.status); for (const [key, value] of Object.entries(response.headers ?? {})) reply.header(key, value);
     return response.body;
   };
-  for (const route of [...assets.keys(),'/repositories/markdown-it.js','/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
+  for (const route of [...sessionManagementPages,...assets.keys(),'/repositories/markdown-it.js','/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: `${prefix}/mcp/progress`, handler });
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH'], url: `${prefix}/*`, handler });
   app.addHook('onClose', async () => service.close());

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>工作站 Session 管理</title>
+<style>
+body{font:16px/1.6 system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#182633}header{display:flex;align-items:baseline;gap:2rem}h1{font-size:1.6rem}h2{font-size:1.15rem}.notice{padding:1rem;border-left:4px solid #967331;background:#fff8e8}.grid{display:grid;grid-template-columns:340px 1fr;gap:1rem}section,details{padding:1rem;background:white;border:1px solid #dce2e8;border-radius:6px;margin:1rem 0}label{display:block;margin:.5rem 0}input,select,textarea,button{font:inherit;box-sizing:border-box}input,select,textarea{width:100%;padding:.4rem;border:1px solid #aebbc8}textarea{min-height:110px}button{padding:.35rem .8rem;margin:.3rem .3rem .3rem 0;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem;max-height:420px;overflow:auto}#status{min-height:1.6rem;white-space:pre-wrap}.events{max-height:350px;overflow:auto}.event{border-bottom:1px solid #e5e9ed;padding:.5rem 0;white-space:pre-wrap;overflow-wrap:anywhere}.task{display:block;width:100%;text-align:left}small{display:block;color:#546577}a{color:#225d85}@media(max-width:760px){.grid{grid-template-columns:1fr}}
+</style></head>
+<body>
+<header><h1>工作站 Session 管理</h1><a href="/repositories">返回既有工作台</a></header>
+<p class="notice">預覽：專案／Soul／Bot／Workflow 設定、實體 Worktree 建立與任務事件已接線。新版任務的原生 SDK 派工、Worker 控制及驗收 Checkpoint 尚未接線；儲存聊天訊息不代表模型已收到。既有工作台執行功能不變。</p>
+<p id="status" role="status" aria-live="polite"></p>
+<div class="grid"><aside>
+<section><h2>專案與程式庫</h2>
+<form id="project-form"><label>專案名稱<input name="name" required maxlength="200"></label><button>新增專案</button></form>
+<label>專案<select id="project"></select></label>
+<form id="repo-form"><label>程式庫名稱<input name="name" required></label><label>已存在的本地 Repo 根目錄<input name="rootPath" required placeholder="/Users/you/projects/app"></label><button>綁定程式庫</button></form>
+</section>
+<section><h2>建立任務</h2><form id="task-form"><label>標題<input name="title" required></label><label>程式庫<select name="repositoryId" id="repository"></select></label><label>Workflow 版本<select name="workflow" id="workflow"></select></label><small>建立時才操作 Git，產生唯一 Worktree。任務會固定目前選用的設定版本。</small><button>建立任務與聊天室</button></form></section>
+<section><h2>任務</h2><button id="refresh">重新整理</button><div id="tasks"></div></section>
+</aside><main>
+<section><h2>任務聊天室</h2><div id="task-summary">選擇一個任務。</div><div id="task-actions"></div><div id="events" class="events"></div>
+<form id="message-form"><label>對話對象<select id="target"><option value="room">任務聊天室</option></select></label><label>訊息<textarea name="text" required maxlength="32768"></textarea></label><button>儲存至任務佇列</button><small>回執為 QUEUED，不會假稱已送達或處理。</small></form>
+<details><summary>節點、Session Map、Worker 名額及正式結果</summary><pre id="detail"></pre></details></section>
+<details><summary>Bot／Soul／Skill／Workflow／Output Contract 設定</summary>
+<p>設定採不可變版本；儲存新版本不會修改既有任務快照。Role Tags 不授予權限。</p>
+<form id="catalog-form"><label>種類<select name="kind" id="kind"><option>skill</option><option>profile</option><option>soul</option><option>bot</option><option>contract</option><option>workflow</option></select></label><label>ID<input name="id" required></label><label>目前版本（新增為 0）<input name="revision" type="number" min="0" value="0" required></label><label>JSON 設定<textarea name="body" id="catalog-body" rows="14" required></textarea></label><button type="button" id="example">填入範例</button><button>儲存新版本</button></form><pre id="catalog"></pre></details>
+<details><summary>Soul 摘要記憶（不自動保存完整對話）</summary><form id="memory-form"><label>Soul ID<input name="soulId" required></label><label>分類<select name="category"><option>DECISION</option><option>PREFERENCE</option><option>LEARNED_RULE</option><option>OPEN_ISSUE</option></select></label><label>重點摘要<textarea name="summary" required maxlength="2000"></textarea></label><label>來源事件 ID（逗號分隔，須屬於所選專案）<input name="sources" required></label><button>保存專案範圍摘要</button></form></details>
+<details><summary>秘書進度總覽</summary><button id="portfolio-button">讀取最新進度</button><pre id="portfolio"></pre></details>
+</main></div>
+<script type="module" src="/repositories/session-management.js"></script>
+</body></html>
