@@ -3,6 +3,7 @@ import path from 'node:path';
 import {SessionManager} from './core.mjs';
 import {provisionTaskWorktree} from './worktree.mjs';
 import {SessionExecutionController} from './execution-controller.mjs';
+import {SessionAcceptance} from './acceptance.mjs';
 import {requireThat as ok,fields,identifier} from './contracts.mjs';
 
 export const sessionManagementPages=['/repositories/session-management','/repositories/session-management.js'];
@@ -58,8 +59,23 @@ export async function dispatchSessionManagement(service,request) {
       if(parts[0]==='tasks'&&parts.length===2)return response(200,manager.detail(parts[1]));
       if(parts[0]==='tasks'&&parts[2]==='events'&&parts.length===3)return response(200,manager.events(parts[1],{afterSeq:Number(url.searchParams.get('afterSeq')??0),limit:Number(url.searchParams.get('limit')??200)}));
       if(parts[0]==='tasks'&&parts[2]==='execution'&&parts.length===3)return response(200,(await executorFor(service)).state(parts[1]));
+      if(parts[0]==='tasks'&&parts[2]==='verifications'&&parts.length===3)return response(200,{verifications:new SessionAcceptance(manager).list(parts[1])});
       if(parts[0]==='nodes'&&parts.length===2)return response(200,manager.context(parts[1]));
       if(parts[0]==='memory'&&parts.length===2)return response(200,manager.memory(parts[1],url.searchParams.get('projectId')));
+    }
+    if(request.method==='POST'&&parts[0]==='tasks'&&parts.length===3&&parts[2]==='verify'){
+      fields(request.body??{},[]);
+      const profile=service.options.sessionVerifier;
+      const verifier=new SessionAcceptance(manager,{runTests:profile?.runTests,profileId:profile?.id,profileDigest:profile?.digest});
+      return response(200,await verifier.verify(parts[1]));
+    }
+    if(request.method==='POST'&&parts[0]==='tasks'&&parts.length===3&&parts[2]==='accept'){
+      fields(request.body??{},['verificationId','expectedVersion'],['verificationId','expectedVersion']);
+      const acceptance=new SessionAcceptance(manager);
+      return response(200,await acceptance.accept(parts[1],{
+        verificationId:request.body.verificationId,expectedVersion:request.body.expectedVersion,
+        authorName:service.options.gitAuthorName,authorEmail:service.options.gitAuthorEmail
+      }));
     }
     if(request.method==='POST'&&parts[0]==='tasks'&&parts.length===3&&parts[2]==='execute'){
       ok(process.env.WB_SM_EXPERIMENTAL_RUNTIME==='1','RUNTIME_NOT_VERIFIED','Session runtime requires explicit experimental opt-in until complete OS and model BDD verification',503);
