@@ -1,5 +1,6 @@
 import {installPromptCatalog,migrateAgentPrompts} from './prompt-catalog.mjs';
 import {installAgentCatalog,agentCatalogMethods} from './agent-catalog.mjs';
+import {installAgentSupervisorSchema} from './agent-supervisor.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { installDraftSchema, draftMethods, isLocalSave, requiresRepositoryLock, projectionJobPredicate } from './draft-store.mjs';
 import path from 'node:path';
@@ -108,6 +109,7 @@ export function openStore(home) {
   installPromptCatalog(db);
   installDraftSchema(db);
   installProgressSchema(db);
+  installAgentSupervisorSchema(db);
   if(!db.prepare('PRAGMA table_info(operations)').all().some(column=>column.name==='interaction_type'))db.exec('ALTER TABLE operations ADD COLUMN interaction_type TEXT');
   const typeFor=request=>interactionType(request,request.input?.parentOperationId?db.prepare('SELECT interaction_type FROM operations WHERE id=?').get(request.input.parentOperationId)?.interaction_type:undefined);
   for(const row of db.prepare('SELECT id,request_json FROM operations WHERE interaction_type IS NULL ORDER BY rowid').iterate())db.prepare('UPDATE operations SET interaction_type=? WHERE id=?').run(typeFor(JSON.parse(row.request_json)),row.id);

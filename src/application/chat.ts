@@ -10,8 +10,19 @@ export function chatText(value:unknown,name:string,max:number):string{
 }
 export function validateChatSettings(value:any):ChatSettings{
  if(!value||!Array.isArray(value.copilotArgs)||value.copilotArgs.some((x:unknown)=>typeof x!=='string'||x.includes('\0')))return fail(400,'INVALID_CHAT_SETTINGS','Copilot 參數必須為字串陣列');
+ if(value.acpProvider!==undefined&&value.acpProvider!=='copilot'&&value.acpProvider!=='kiro')return fail(400,'INVALID_CHAT_SETTINGS','ACP 推論來源僅支援 copilot 或 kiro');
+ if(value.kiroArgs!==undefined&&(!Array.isArray(value.kiroArgs)||value.kiroArgs.some((x:unknown)=>typeof x!=='string'||x.includes('\0'))))return fail(400,'INVALID_CHAT_SETTINGS','Kiro 參數必須為字串陣列');
  if(!Number.isInteger(value.timeoutMs)||value.timeoutMs<chatLimits.timeoutMin||value.timeoutMs>chatLimits.timeoutMax)return fail(400,'INVALID_CHAT_SETTINGS',`逾時須介於 ${chatLimits.timeoutMin} 與 ${chatLimits.timeoutMax} 毫秒`);
- return {codexExecutable:chatText(value.codexExecutable,'Codex 執行檔',4096),copilotExecutable:chatText(value.copilotExecutable,'Copilot 執行檔',4096),copilotArgs:value.copilotArgs,model:chatText(value.model,'模型',160),timeoutMs:value.timeoutMs};
+ return {
+  codexExecutable:chatText(value.codexExecutable,'Codex 執行檔',4096),
+  ...(value.acpProvider!==undefined?{acpProvider:value.acpProvider}:{}),
+  copilotExecutable:chatText(value.copilotExecutable,'Copilot 執行檔',4096),
+  copilotArgs:value.copilotArgs,
+  ...(value.kiroExecutable!==undefined?{kiroExecutable:chatText(value.kiroExecutable,'Kiro 執行檔',4096)}:{}),
+  ...(value.kiroArgs!==undefined?{kiroArgs:value.kiroArgs}:{}),
+  model:chatText(value.model,'模型',160),
+  timeoutMs:value.timeoutMs,
+ };
 }
 export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,runtime:ChatRuntime,defaults:ChatSettings){
  await store.run('INSERT OR IGNORE INTO chat_settings(id,value_json) VALUES(1,?)',[JSON.stringify(defaults)]);
@@ -24,7 +35,7 @@ export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,ru
  const requireOpen=()=>{if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');};
  function admit<T>(action:()=>Promise<T>){const job=action();admissions.add(job);void job.then(()=>admissions.delete(job),()=>admissions.delete(job));return job;}
  const room=async(id:string)=>{const row=(await store.all('SELECT * FROM chat_rooms WHERE id=?',[id]))[0];if(!row)fail(404,'CHAT_NOT_FOUND','找不到聊天室');return row;};
- const settings=async():Promise<ChatSettings>=>JSON.parse((await store.all('SELECT value_json FROM chat_settings WHERE id=1'))[0].value_json);
+ const settings=async():Promise<ChatSettings>=>({...defaults,...JSON.parse((await store.all('SELECT value_json FROM chat_settings WHERE id=1'))[0].value_json)});
  const pending=async(id:string)=>(await store.all("SELECT id FROM chat_messages WHERE room_id=? AND status='pending'",[id])).length>0;
  const list=()=>store.all(`SELECT r.*,EXISTS(SELECT 1 FROM chat_messages m WHERE m.room_id=r.id AND m.status='pending') AS pending FROM chat_rooms r ORDER BY r.updated_at DESC,r.id`);
  const detail=async(id:string)=>({...await room(id),messages:await store.all('SELECT * FROM chat_messages WHERE room_id=? ORDER BY sequence',[id]),streaming:streams.has(id)?{...streams.get(id)!}:null});
@@ -38,9 +49,10 @@ export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,ru
    const value=validateChatSettings({...await settings(),...input});
    if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');if(busyRooms.size)fail(409,'CHAT_BUSY','回覆進行中，請稍後再更新設定');
    const patch=Object.fromEntries(Object.keys(input).map(key=>[key,value[key as keyof ChatSettings]]));
-   await store.run('UPDATE chat_settings SET value_json=json_patch(value_json,?) WHERE id=1',[JSON.stringify(patch)]);return settings();
+   await store.run('UPDATE chat_settings SET value_json=json_patch(value_json,?) WHERE id=1',[JSON.stringify(patch)]);
+   const next=await settings();void runtime.warmup?.(next);return next;
   },
-  async saveSettings(input:unknown){const value=validateChatSettings(input);if(busyRooms.size)fail(409,'CHAT_BUSY','回覆進行中，請稍後再更新設定');await store.run('UPDATE chat_settings SET value_json=? WHERE id=1',[JSON.stringify(value)]);return value;},
+  async saveSettings(input:unknown){const value=validateChatSettings(input);if(busyRooms.size)fail(409,'CHAT_BUSY','回覆進行中，請稍後再更新設定');await store.run('UPDATE chat_settings SET value_json=? WHERE id=1',[JSON.stringify(value)]);void runtime.warmup?.(value);return value;},
   list,
   async create(input:any){const title=input?.title===undefined?newChatTitle:chatText(input.title,'聊天室名稱',chatLimits.title),id=randomUUID(),now=new Date().toISOString();await store.run('INSERT INTO chat_rooms(id,title,created_at,updated_at) VALUES(?,?,?,?)',[id,title,now,now]);publish('changed',id);return room(id);},
   detail,

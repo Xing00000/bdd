@@ -8,7 +8,7 @@ const tool=(name,description,properties,required,readOnly)=>({name,description,i
 const repositoryId={type:'string'},editorKey={type:'string'};
 export const chatTools=[...progressTools,
  tool('workbench_generate_requirement','Generate and save a requirement proposal using the workstation service. This does not save a feature or approve any workflow stage. Preserve the user description exactly; use a new-<unique-id> editorKey for a new proposal.',{repositoryId,editorKey,description:{type:'string'},previousGherkin:{type:'string'}},['repositoryId','editorKey','description'],false),
- tool('workbench_get_requirement_proposals','Read saved requirement proposals for a repository and editorKey, including their IDs and original descriptions.',{repositoryId,editorKey},['repositoryId','editorKey'],true)
+ tool('workbench_get_requirement_proposals','Read saved requirement proposals for a repository and editorKey, including their IDs and original descriptions.',{repositoryId,editorKey},['repositoryId','editorKey'],true),
 ];
 
 export async function openChatTools(service){
@@ -29,7 +29,8 @@ export async function openChatTools(service){
    invariant(q.method==='tools/call','UNKNOWN_METHOD','Unknown method');
    const def=chatTools.find(t=>t.name===q.params?.name),args=q.params?.arguments??{};
    invariant(def,'UNKNOWN_TOOL','Unknown tool');
-   invariant(args&&typeof args==='object'&&!Array.isArray(args)&&Object.keys(args).every(k=>Object.hasOwn(def.inputSchema.properties,k))&&def.inputSchema.required.every(k=>Object.hasOwn(args,k)),'INVALID_ARGUMENT','Invalid arguments');
+   const requiredKeys=def.inputSchema.required??[];
+   invariant(args&&typeof args==='object'&&!Array.isArray(args)&&Object.keys(args).every(k=>Object.hasOwn(def.inputSchema.properties,k))&&requiredKeys.every(k=>Object.hasOwn(args,k)),'INVALID_ARGUMENT','Invalid arguments');
    if(progressTools.some(t=>t.name===def.name)){
     const result=await service.mcpProgress({method:'POST',headers:{host:req.headers.host},body:q});return send(result.status,result.body);
    }

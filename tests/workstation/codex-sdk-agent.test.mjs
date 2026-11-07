@@ -44,6 +44,7 @@ test('the official SDK owns thread streaming, MCP config and sandboxed execution
   assert.deepEqual(call.args.slice(0,2),['exec','--experimental-json']);assert.ok(call.args.includes('--skip-git-repo-check'));
   assert.equal(call.args[call.args.indexOf('--sandbox')+1],'workspace-write');assert.ok(call.args.includes('approval_policy="never"'));assert.ok(call.args.includes('web_search="disabled"'));
   assert.ok(call.args.includes('model_provider="workstation_copilot"'));assert.ok(call.args.some(arg=>arg.startsWith('mcp_servers.workbench_task.args=')&&arg.includes('mcp-agent-task.mjs')));
+  assert.ok(call.args.some(arg=>arg.startsWith('mcp_servers.agent_supervisor.args=')&&arg.includes('mcp-agent-supervisor.mjs')));
   assert.ok(call.args.some(arg=>arg.startsWith('developer_instructions=')&&arg.includes('Do not invoke Git')));
   assert.ok(!call.args.some(arg=>/danger-full-access|bypass/.test(arg)));
   assert.ok(events.some(event=>event.type==='item.completed'&&event.item.text==='Controlled SDK response'));

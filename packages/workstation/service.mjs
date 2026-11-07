@@ -22,6 +22,7 @@ import { openStore } from './store.mjs';
 import {llmTasks} from './interaction-types.mjs';
 import {sdkServiceShutdownGraceMs} from './agent-lifecycle.mjs';
 import {openChat} from './chat.mjs';
+import {createAgentSupervisor,listAgentSessions,readAgentSession,readAgentSessionEvents} from './agent-supervisor.mjs';
 import { workflowStatus } from './workflow.mjs';
 import { workflowState, recordedWorkflow } from './workflow-state.mjs';
 import { validateRequest, repositoryDetail, repositoryPath, readRepositoryFile } from './operations.mjs';
@@ -33,7 +34,7 @@ export async function createWorkstation(configuration) {
   try { await migrateCheckoutDirectory(options.home); } catch (error) { store.close(); throw error; }
   const children = new Map(); let closing = false;
   const shutdownGrace=operation=>llmTasks.includes(operation.request.operation)?sdkServiceShutdownGraceMs:2000;
-  let chatService,chatOpening;
+  let chatService,chatOpening,supervisorService,supervisorOpening;
   function recordInteraction(repositoryId,operation,input,action) {
     const operationId=`OP-${randomUUID()}`;
     store.enqueue({schemaVersion:1,operationId,repositoryId,operation,input});store.claim(operationId);
@@ -67,6 +68,19 @@ export async function createWorkstation(configuration) {
       if(!chatOpening)chatOpening=openChat(store,options.home,service).then(value=>chatService=value).finally(()=>{chatOpening=undefined;});
       return chatOpening;
     },
+    async supervisor(){
+      invariant(!closing,'WORKSTATION_CLOSING','Workstation is closing',503);
+      if(supervisorService)return supervisorService;
+      if(!supervisorOpening)supervisorOpening=createAgentSupervisor({home:options.home}).then(value=>supervisorService=value).finally(()=>{supervisorOpening=undefined;});
+      return supervisorOpening;
+    },
+    agentSessions(query={}){return listAgentSessions(options.home,query);},
+    agentSession(sessionId){return readAgentSession(options.home,sessionId);},
+    agentSessionEvents(sessionId,query={}){return readAgentSessionEvents(options.home,sessionId,query);},
+    async startAgentSession(input={}){return (await this.supervisor()).start({...input,fromMcp:true});},
+    async sendAgentSessionMessage(sessionId,input={}){return (await this.supervisor()).send(sessionId,{...input,actor:input.actor??'human'});},
+    async cancelAgentSessionTurn(sessionId,input={}){return (await this.supervisor()).cancel(sessionId,{actor:input.actor??'human'});},
+    async stopAgentSession(sessionId,input={}){return (await this.supervisor()).stop(sessionId,{actor:input.actor??'human'});},
     catalog(){return store.agentCatalog();},
     saveAgent(input){return store.saveCatalogAgent(input);},
     saveSkill(input){return store.saveCatalogSkill(input);},
@@ -95,7 +109,7 @@ export async function createWorkstation(configuration) {
     async terminal(operationId, offset=0) {
       const operation=this.operation(operationId);
       const { readTerminal }=await import('./development.mjs');
-      return {...await readTerminal(options.home,operationId,offset),status:operation.status,result:operation.result,error:operation.error,submitted:operation.request.input};
+      return {...await readTerminal(options.home,operationId,offset),status:operation.status,result:operation.result,error:operation.error,submitted:operation.request.input,agentSessions:listAgentSessions(options.home,{operationId})};
     },
     terminalInput(operationId, input) {
       const operation=this.operation(operationId),child=children.get(operationId);
@@ -258,7 +272,12 @@ export async function createWorkstation(configuration) {
         const timer = setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch {} }, grace===sdkServiceShutdownGraceMs?grace:1500);
         child.once('close', () => { clearTimeout(timer); resolve(); });
       })));
-      try { if(chatOpening)await chatOpening; await chatService?.close(); } finally { store.close(); }
+      try {
+        if(chatOpening)await chatOpening;
+        await chatService?.close();
+        if(supervisorOpening)await supervisorOpening;
+        await supervisorService?.close();
+      } finally { store.close(); }
     }
   };
   return service;

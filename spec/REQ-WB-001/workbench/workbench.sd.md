@@ -1220,3 +1220,44 @@ AC-WB-043 的共用真實 UI driver 同時覆蓋新增 Prompt、獨立 Agent 欄
 `ChatModelsDriver` 的 catalog 協定 peer 明確是傳輸／UI fixture，不是模型推論：驗證非空模型可選、SQLite 保存、重載與刷新保留選擇、進階設定不覆蓋模型及桌面／手機排版。另一個 Playwright 情境直接查真實 Copilot CLI 並附原始回傳；目前環境已登入但目錄是空陣列，介面應明示而不偽造模型。`copilot-models.test.ts` 驗證非空／空／無效／重複／未登入、取消／shutdown，以及真 SQLite 下更換模型後下一則訊息取得新設定且原 thread 與歷史保留；受控 reply 僅測路由，不冒充模型回答。
 
 官方協定依據：https://github.com/github/copilot-sdk/blob/main/nodejs/src/client.ts 。`SessionModelList.modelPriceCategories` 明定只含價格中繼資料，未出現在可選清單者不能手選：https://github.com/github/copilot-sdk/blob/main/nodejs/src/generated/rpc.ts 。
+
+
+## 純模型推論 Adapter 與長駐互動式 CLI Agent Supervisor（AC-WB-048／049）
+
+授權來源：使用者明確要求所有 LLM 互動（包含對話與派工）滿足四層分工，並批准 AC-WB-048／049 實作：
+1. **Codex SDK / Codex CLI**：唯一的計畫與工具管理主 Agent，負責規劃、工具呼叫、修改檔案、執行指令與管理上下文。
+2. **Codex 原生 MCP**：連接所有 MCP Server（`workbench_task`、`workbench`、`agent_supervisor`），實際執行 MCP 工具。
+3. **Copilot ACP**：只提供純模型推論，不註冊、不連接、不呼叫任何 MCP Server。
+4. **Adapter 與 Agent Supervisor**：Adapter 只處理模型協定與資料轉換，不建立 Copilot MCP 工具通道；`agent-supervisor` 提供長駐、可多輪互動的 CLI Agent Session，支援 Codex SDK 與人類介入同一個 Session 共同參與對話。
+
+### 零 MCP Copilot ACP 與純協定轉換 Adapter（AC-WB-048）
+
+唯一 owner 為 `src/adapters/runtime/copilot-rpc.ts`、`src/adapters/runtime/copilot-chat.ts`、`src/adapters/runtime/chat-tool-protocol.ts` 與 `src/adapters/runtime/chat-provider.ts`；舊的 Copilot 本地 HTTP MCP 提案橋接 `src/adapters/runtime/copilot-tools.ts` 已移除。
+
+- `copilotArgs()` 一律以 `--acp --stdio --no-auto-update --no-custom-instructions --no-ask-user --no-bash-env --sync-session=off --disable-builtin-mcps --available-tools=__bdd_no_tools__` 啟動 Copilot ACP。
+- `copilot-chat.ts` 建立 `session/new` 時，`mcpServers` 恆為 `[]`。若 Copilot ACP 發出任何 `tool_call`、`tool_call_update`、`session/request_permission` 或客戶端 fs／terminal RPC，Adapter 立即取消並拒絕該回合。
+- `formatInferencePrompt()` 將當次宣告的 Codex／Workstation 工具 schema 與歷史轉換為純文字／JSON 推論契約；`isConflictingCodexBoilerplateOnly()` 只過濾明確識別且與 JSON 信封衝突的 Codex 內建樣板（`# How you work`／`<skills_instructions>`），嚴格保留 `Do not invoke Git`、`<permissions instructions>` 與所有人類授權／developer instructions。
+- `parseInferenceCompletion()` 解析並嚴格驗證模型回傳的 `{"type":"tool_calls","calls":[...]}` 或 `{"type":"message","text":"..."}`，逐一核對工具名稱／namespace 白名單與 `parameters` JSON Schema（`required`、`additionalProperties: false`、欄位型別與上下界）；不符 schema 或未宣告的工具輸出立即失敗，不靜默推測或執行，驗證通過後才轉為 OpenAI Responses `response.output_item.done (function_call / custom_tool_call)` SSE 事件交由 Codex SDK 原生 MCP 執行。
+
+### 長駐互動式 CLI Agent Supervisor 與雙向介入（AC-WB-049）
+
+唯一 owner 為 `packages/workstation/agent-supervisor.mjs` 與 `scripts/mcp-agent-supervisor.mjs`，同時掛載於工作台派工（`packages/workstation/codex-sdk-agent.mjs`）與聊天室（`packages/workstation/chat.mjs` → `src/adapters/runtime/codex-chat.ts`），並整合於 `packages/workstation/service.mjs`、`packages/workstation/http.mjs` 與 `packages/workstation/public/operation-terminal.js`。`packages/workstation/chat-tools.mjs` 僅保留工作台唯讀／提案工具，不重複包裝 `agent_*`，確保聊天室與派工皆經由 Codex 原生 `mcp_servers.agent_supervisor` 操作同一個 Supervisor。
+
+- **SQLite 持久化與訊息生命週期**：於 `WB_HOME/metadata.sqlite` 建立 `agent_supervisor_host`、`agent_sessions`、`agent_session_messages` 與 `agent_session_events`。`agent_session_messages` 明確區分 `QUEUED`（已排入）、`DELIVERED`（已送達）、`PROCESSED`（已處理）、`CANCELLED` 與 `FAILED` 狀態，支援 `messageId` 冪等重送（重連同 ID 同內容回傳既有狀態，不同內容回 409 `DUPLICATE_MESSAGE_ID`）與程序崩潰／取消後恢復。
+- **Codex 原生 MCP 工具與權限邊界**：提供 `agent_start`、`agent_send`、`agent_events`、`agent_list`、`agent_cancel`、`agent_stop`。透過 MCP 呼叫 `agent_start` 時禁止模型指定任意執行檔（`command`）、啟動參數（`args`）或自訂環境變數（`AGENT_COMMAND_FORBIDDEN`），並驗證 `cwd` 位於 `allowedRoots` 內（`AGENT_CWD_FORBIDDEN`）、清洗敏感環境變數，且在 `PATH` 前置 `git-guard` 阻擋委派 CLI Agent 擅自執行任何 `git` 命令（exit 126 `GIT_FORBIDDEN`）。
+- **人類、聊天室與 Codex SDK 派工共用同一 Supervisor 與明確中斷策略**：人類透過工作站 `/repository-api/v1/agent-sessions`（`GET` 清單、`:sessionId` 詳情、`:sessionId/events`、`:sessionId/messages`、`:sessionId/cancel`、`:sessionId/stop`）與 `operation-terminal.js` 介入，聊天室與派工 Codex 皆透過原生 `mcp_servers.agent_supervisor` 介入，三方共用同一個 Persistent Agent Supervisor。人類訊息預設採 `mode: 'queue'`（不自動取消正在執行的回合，但優先排在待執行佇列最前端、早於排隊中的 Codex 訊息送達）；僅在明確指定 `mode: 'interrupt'`（或 `interrupt: true`）時才對執行中回合發出 `session/cancel`（ACP）或 `\x03`（PTY）中斷並立即於同一 `sessionId` 執行人類指令，所有雙向訊息與輸出按序號 `seq` 記錄供 Codex 透過 `agent_events` 同步讀取。
+
+### 多 ACP 純模型推論來源切換：Copilot ACP ⇄ Kiro CLI ACP（AC-WB-050）
+
+唯一設定 SSOT 為 `src/ports/chat.ts`（`ChatSettings.acpProvider?: 'copilot' | 'kiro'`、`kiroExecutable?: string`、`kiroArgs?: string[]`）、`src/adapters/runtime/chat-settings.ts` 與 `src/application/chat.ts`（`validateChatSettings`），保存於 `WB_HOME/metadata.sqlite` 的 `chat_settings` 表，同時驅動聊天室（`codex-chat.ts`）與 Codex SDK 派工（`freezeCodexTransport`）。
+
+- **`acpProvider === 'copilot'`**：使用 `copilotExecutable` 與 `copilotArgs`，並由 Adapter 強制附加 `--acp --stdio --no-auto-update --disable-builtin-mcps --no-custom-instructions --no-ask-user --no-bash-env --sync-session=off --available-tools=__bdd_no_tools__`。
+- **`acpProvider === 'kiro'`**：`validateKiroArgs()` 拒絕任何試圖覆寫 `--agent`、`--model`、`--trust-all-tools`（`-a`）、`--trust-tools` 的參數；`ensureKiroZeroToolAgent()` 於隔離推論目錄同時寫入 `.kiro/agents/bdd_inference.json`（`tools: []`、`allowedTools: []`、`resources: []`、`mcpServers: {}`、`includeMcpJson: false`）與 `.kiro/settings/mcp.json`（`{"mcpServers":{}}`），並以 `kiro-cli acp --agent bdd_inference --trust-tools=` 啟動。每次 `session/new` 皆傳入 `mcpServers: []`，且 `copilot-chat.ts` 驗證回傳的 `modes.currentModeId === 'bdd_inference'`（不符立即 Fail-Closed 拒絕推論），確保 Kiro CLI ACP 具備雙重零內建工具與零 MCP 隔離。
+- **模型清單與熱切換**：`parseCopilotModels` 與 `selectModel` 同時支援 Copilot ACP 的 `configOptions` 與 Kiro CLI ACP 的 `result.models.availableModels`＋`session/set_model`。前端 `packages/workstation/public/chat.js` 的對話設定面板提供 `對話 ACP 推論來源`（`copilot`／`kiro`）、`Kiro ACP 執行檔` 與 `Kiro ACP 啟動參數`；切換後自動更新 `/chat-settings` 並重新載入對應 ACP 來源的模型清單，原對話歷史與 Codex thread 完整保留。
+
+### 受控 CLI Agent Profile 白名單與 Web UI 獨立 CLI Agent Session 互動面板（AC-WB-051）
+
+唯一 owner 為 `packages/workstation/agent-supervisor.mjs`（`AGENT_PROFILES` 與 `resolveProfileConfig`）、`packages/workstation/service.mjs`（`startAgentSession`）與 `packages/workstation/public/chat.js`（`agentSupervisorPanel`）。
+
+- **受控 CLI Agent Profile 白名單（`AGENT_PROFILES = ['copilot', 'kiro', 'codex', 'claude']`）**：`agent_start` MCP 工具與 `POST /repository-api/v1/agent-sessions` 皆支援 `agentProfile` 參數（預設 `'copilot'`），由 `resolveProfileConfig()` 映射至受控的 CLI 執行檔與啟動參數（支援 `acp` 與 `pty` 兩種協定），自動套用 `PATH` Git Guard 與環境變數去敏；非白名單 `agentProfile` 回傳 `INVALID_AGENT_PROFILE`（HTTP 400），且無論來自 MCP 或 HTTP 皆拒絕傳入任意 `command`、`args` 或 `env`（`AGENT_COMMAND_FORBIDDEN`）。
+- **Web UI CLI Agent Sessions 互動面板（`chat.js`）**：聊天室右側面板新增 `CLI Agent Sessions`（`data-testid="chat-agent-supervisor"`），提供人類直接選擇 `agentProfile`（`copilot`、`kiro`、`codex`、`claude`）與 `protocol`（`acp`、`pty`）啟動新 Session、檢視進行中與歷史 Session 清單（`data-testid="agent-session-list"`）與增量事件輸出（`data-testid="agent-session-events"`），並直接對選取的 `sessionId` 執行排隊介入（`mode: 'queue'`）、中斷並送出（`mode: 'interrupt'`）、中斷目前回合（`POST /agent-sessions/:id/cancel`）與結束工作階段（`POST /agent-sessions/:id/stop`），與聊天室及工作台派工的 Codex SDK 共享同一個 Persistent Agent Supervisor。

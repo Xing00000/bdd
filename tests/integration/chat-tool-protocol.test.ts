@@ -3,12 +3,10 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
-import {conversationInput,workstationTools} from '../../src/adapters/runtime/chat-tool-protocol.ts';
+import {conversationInput,workstationTools,formatInferencePrompt,parseInferenceCompletion} from '../../src/adapters/runtime/chat-tool-protocol.ts';
 import {createCopilotRuntime} from '../../src/adapters/runtime/copilot-chat.ts';
 import {defaultChatSettings} from '../../src/adapters/runtime/chat-settings.ts';
 import {copilotChatPeer} from '../helpers/copilot-chat-peer.ts';
-import {createCopilotToolBridge} from '../../src/adapters/runtime/copilot-tools.ts';
-import http from 'node:http';
 
 const tool={name:'workbench_list_repositories',namespace:'mcp__workbench',description:'Read repositories',parameters:{type:'object',properties:{}}};
 test('workstation protocol preserves tool identity and text errors, rejects unrelated or unpaired results',()=>{
@@ -21,7 +19,7 @@ test('workstation protocol preserves tool identity and text errors, rejects unre
  assert.deepEqual(tools,[tool]);assert.deepEqual(workstationTools([],false),[]);
 });
 
-test('ACP MCP declarations hand off to Codex while every permission is cancelled and no action executes',async t=>{
+test('ACP inference translates tool proposals with zero MCP servers while refusing every tool execution or permission request',async t=>{
  const directory=await mkdtemp(path.join(tmpdir(),'bdd-copilot-protocol-')),peer=await copilotChatPeer(directory),runtime=createCopilotRuntime(directory);
  t.after(async()=>{await runtime.close();await rm(directory,{recursive:true,force:true});});
  const settings={...defaultChatSettings(),...peer},signal=new AbortController().signal;
@@ -32,48 +30,73 @@ test('ACP MCP declarations hand off to Codex while every permission is cancelled
  assert.deepEqual(await runtime.completion(settings,'text only',signal,[]),{text:'Protocol peer text response',calls:[]});
  const trace=(await readFile(peer.tracePath,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
  const created=trace.filter(event=>event.method==='session/new');assert.equal(created.length,5);
- assert.equal(created[0].params.mcpServers.length,1);assert.deepEqual(created.at(-1).params.mcpServers,[]);
- const catalog=trace.find(event=>event.type==='mcp'&&event.method==='tools/list');assert.deepEqual(catalog.result.tools.map((item:any)=>item.name),[tool.name]);
- assert.equal(trace.filter(event=>event.method==='session/cancel').length,4);
+ for(const session of created)assert.deepEqual(session.params.mcpServers,[],'Copilot ACP never receives any MCP server');
+ const firstPrompt=trace.find(event=>event.method==='session/prompt')?.params.prompt[0].text;
+ const embeddedCatalog=JSON.parse(firstPrompt.split('\n').slice(1).join('\n')).tools;
+ assert.deepEqual(embeddedCatalog.map((item:any)=>item.name),[tool.name]);
+ assert.equal(trace.filter(event=>event.method==='session/cancel').length,2);
  assert.equal(trace.filter(event=>event.method==='session/close').length,5);
- assert(!trace.some(event=>event.type==='mcp'&&event.method==='tools/call'),'The real action never reaches an MCP executor');
- for(const response of trace.filter(event=>event.type==='client-response'))assert.deepEqual(response.result,{outcome:{outcome:'cancelled'}},'A proposal is never a permission approval or action result');
+ assert(!trace.some(event=>event.type==='mcp'),'No MCP HTTP bridge is ever contacted by Copilot ACP');
+ for(const response of trace.filter(event=>event.type==='client-response'))assert.deepEqual(response.result,{outcome:{outcome:'cancelled'}},'Permission requests are always cancelled');
  assert.equal(trace.filter(event=>event.type==='spawn').length,1);
 });
 
-test('a server that skips permission for read-only MCPs still only produces a proposal',async t=>{
- const directory=await mkdtemp(path.join(tmpdir(),'bdd-copilot-mcp-proposal-')),peer=await copilotChatPeer(directory),runtime=createCopilotRuntime(directory);
- t.after(async()=>{await runtime.close();await rm(directory,{recursive:true,force:true});});
- const answer=await runtime.completion({...defaultChatSettings(),...peer},'[[tool-http]]',new AbortController().signal,[tool]);
- assert.equal(answer.calls.length,1);assert.equal(answer.calls[0].mcpToolName,tool.name);assert.deepEqual(answer.calls[0].arguments,{});
- const trace=(await readFile(peer.tracePath,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
- assert.equal(trace.filter(event=>event.method==='session/cancel').length,1);assert.equal(trace.filter(event=>event.method==='session/close').length,1);
- assert(!trace.some(event=>event.type==='mcp'&&event.method==='tools/call'&&event.result),'The proposal inbox returns no successful workbench result');
+test('pure protocol translation preserves Chinese UTF-8 arguments and strips vendor disabled-tools startup notices',()=>{
+ const formatted=formatInferencePrompt('Continue\n{"instructions":null,"input":[]}',[tool]);
+ const payload=JSON.parse(formatted.split('\n')[1]);
+ assert.equal(payload.tools[0].name,tool.name);
+ const raw='Info: Disabled tools: bash, view, editInfo: Unknown tool name in the tool allowlist: "__bdd_no_tools__"{"type":"tool_calls","calls":[{"id":"call-utf8","name":"workbench_list_repositories","arguments":{"note":"漢字內容"}}]}';
+ const parsed=parseInferenceCompletion(raw,[tool]);
+ assert.equal(parsed.text,'');
+ assert.deepEqual(parsed.calls,[{toolCallId:'call-utf8',mcpServerName:'codex_handoff',mcpToolName:tool.name,arguments:{note:'漢字內容'}}]);
 });
 
-test('closing a proposal registration aborts an upload already in progress and rejects later requests',async t=>{
- const bridge=await createCopilotToolBridge('closed-proposal-test');t.after(()=>bridge.close());
- const calls:any[]=[],failures:Error[]=[],registration=bridge.register([tool],(...args)=>calls.push(args),error=>failures.push(error));
- const headers=Object.fromEntries(registration.server.headers.map(header=>[header.name,header.value]));
- const request=http.request(registration.server.url,{method:'POST',headers:{...headers,'content-type':'application/json',expect:'100-continue','transfer-encoding':'chunked'}});
- request.on('error',()=>{});t.after(()=>request.destroy());
- const closed=new Promise<void>(resolve=>request.once('close',resolve));
- const ready=new Promise<void>(resolve=>request.once('continue',resolve));request.flushHeaders();await ready;
- request.write('{');registration.close();
- request.end(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:tool.name,arguments:{}}}).slice(1));await closed;
- const later=await fetch(registration.server.url,{method:'POST',headers,body:'{}'});assert.equal(later.status,401);await later.text();
- assert.deepEqual(calls,[]);assert.deepEqual(failures,[]);
+test('pure protocol translation strictly validates tool JSON schema, argument whitelist, and envelope structure',()=>{
+ const strictTool={
+  name:'workbench_generate_requirement',
+  namespace:'mcp__workbench',
+  description:'Generate requirement proposal',
+  parameters:{
+   type:'object',
+   properties:{
+    repositoryId:{type:'string',minLength:1},
+    editorKey:{type:'string'},
+    description:{type:'string'},
+   },
+   required:['repositoryId','editorKey','description'],
+   additionalProperties:false,
+  },
+ };
+ for(const invalidRaw of [
+  '{"type":"tool_calls","calls":[{"name":"workbench_generate_requirement","arguments":{"repositoryId":"SPEC-1","editorKey":"new-1"}}]}',
+  '{"type":"tool_calls","calls":[{"name":"workbench_generate_requirement","arguments":{"repositoryId":"SPEC-1","editorKey":"new-1","description":"ok","extra":true}}]}',
+  '{"type":"tool_calls","calls":[{"name":"workbench_generate_requirement","arguments":{"repositoryId":123,"editorKey":"new-1","description":"ok"}}]}',
+  '{"type":"tool_calls","calls":[{"name":"workbench_generate_requirement","arguments":{"repositoryId":"SPEC-1","editorKey":"new-1","description":"ok"},"extraKey":1}]}',
+  '{"type":"tool_calls","extraEnvelope":1,"calls":[{"name":"workbench_generate_requirement","arguments":{"repositoryId":"SPEC-1","editorKey":"new-1","description":"ok"}}]}',
+  '{"type":"tool_calls","calls":',
+  '{"type":"unknown_type","text":"hello"}',
+ ]){
+  assert.throws(()=>parseInferenceCompletion(invalidRaw,[strictTool]),/未授權或無效的工具提案/);
+ }
 });
 
-test('MCP proposal arguments preserve Chinese text across UTF-8 network chunk boundaries',async t=>{
- const bridge=await createCopilotToolBridge('utf8-proposal-test');t.after(()=>bridge.close());
- let resolve!:(args:Record<string,unknown>)=>void;
- const proposed=new Promise<Record<string,unknown>>(done=>{resolve=done;}),registration=bridge.register([tool],(_name,args)=>resolve(args),error=>assert.fail(error.message));
- t.after(()=>registration.close());
- const headers=Object.fromEntries(registration.server.headers.map(header=>[header.name,header.value]));
- const request=http.request(registration.server.url,{method:'POST',headers:{...headers,'content-type':'application/json','transfer-encoding':'chunked'}});
- request.on('error',()=>{});t.after(()=>request.destroy());
- const payload=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:tool.name,arguments:{note:'漢字內容'}}})),boundary=payload.indexOf(Buffer.from('漢'))+1;
- request.write(payload.subarray(0,boundary));await new Promise(resolve=>setTimeout(resolve,10));request.end(payload.subarray(boundary));
- assert.deepEqual(await proposed,{note:'漢字內容'});registration.close();
+test('prompt normalization preserves security boundaries, Git prohibitions, and permissions instructions verbatim',()=>{
+ const securityInstruction='Git is owned by the workstation feature-creation and human-acceptance checkpoints. Do not invoke Git, including read-only Git commands.';
+ const permissionsInstruction='<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. approval_policy is never.\n</permissions instructions>';
+ const boilerplate='You are a coding agent running in the Codex CLI, a terminal-based coding assistant.\n# How you work\n Long built-in boilerplate';
+ const prompt='Continue\n'+JSON.stringify({
+  instructions:null,
+  input:[
+   {type:'message',role:'developer',content:[{type:'input_text',text:boilerplate}]},
+   {type:'message',role:'developer',content:[{type:'input_text',text:permissionsInstruction}]},
+   {type:'message',role:'developer',content:[{type:'input_text',text:securityInstruction}]},
+   {type:'message',role:'user',content:[{type:'input_text',text:'請檢查專案'}]},
+  ],
+ });
+ const formatted=formatInferencePrompt(prompt,[tool]);
+ const payload=JSON.parse(formatted.split('\n')[1]);
+ const devTexts=payload.normalizedHistory.filter((item:any)=>item.role==='developer').map((item:any)=>item.content[0].text);
+ assert.ok(devTexts.includes(securityInstruction),'security/Git prohibition developer instructions must be preserved');
+ assert.ok(devTexts.includes(permissionsInstruction),'permissions instructions must be preserved');
+ assert.ok(!devTexts.includes(boilerplate),'only conflicting built-in Codex CLI boilerplate is filtered');
 });

@@ -13,6 +13,7 @@ import { WorkstationError, invariant, id, version, exists, safePath, readJson, w
 
 const hostScript=fileURLToPath(new URL('../../scripts/codex-sdk-agent.mjs',import.meta.url));
 const taskServer=fileURLToPath(new URL('../../scripts/mcp-agent-task.mjs',import.meta.url));
+const supervisorServer=fileURLToPath(new URL('../../scripts/mcp-agent-supervisor.mjs',import.meta.url));
 const eventLimit=4*1024*1024;
 
 async function builtRuntime() {
@@ -69,7 +70,23 @@ export function codexSdkOptions(job,settings,provider,token) {
     config:{
       model_provider:'workstation_copilot',
       model_providers:{workstation_copilot:{name:'GitHub Copilot ACP',base_url:provider.url,wire_api:'responses',requires_openai_auth:false,env_key:'WB_CODEX_PROVIDER_TOKEN',supports_websockets:false,request_max_retries:0,stream_max_retries:0}},
-      mcp_servers:{workbench_task:{command:process.execPath,args:[taskServer,job.task],enabled:true,required:true}},
+      mcp_servers:{
+        workbench_task:{command:process.execPath,args:[taskServer,job.task],enabled:true,required:true},
+        agent_supervisor:{
+          command:process.execPath,
+          args:[supervisorServer,job.home??path.dirname(job.directory),job.repositoryId,job.operationId,job.cwd],
+          enabled:true,
+          required:true,
+          tools:{
+            agent_start:{approval_mode:'approve'},
+            agent_send:{approval_mode:'approve'},
+            agent_events:{approval_mode:'approve'},
+            agent_list:{approval_mode:'approve'},
+            agent_cancel:{approval_mode:'approve'},
+            agent_stop:{approval_mode:'approve'},
+          }
+        }
+      },
       developer_instructions:'Git is owned by the workstation feature-creation and human-acceptance checkpoints. Do not invoke Git, including read-only Git commands. Read and edit the task files directly; leave all Git actions to the workstation.',
       shell_environment_policy:{exclude:['WB_CODEX_PROVIDER_TOKEN']},
       features:{code_mode:false,code_mode_host:false,code_mode_only:false,code_mode_tool_search:false,incremental_tools:false,apps:false,plugins:false,skill_search:false,tool_suggest:false,multi_agent:false,browser_use:false,computer_use:false,image_generation:false,shell_snapshot:false}
@@ -206,7 +223,7 @@ export async function runCodexSdkAgent(context,{agent,prompt,cwd,task,timeoutMs=
   invariant(progress,'PROGRESS_REQUIRED','SDK 派工需要持久化進度紀錄。');
   saveProgressPhase(options.home,request.operationId,{phase:'STARTING',runtime:'codex-sdk',inputDelivery:'next-turn'});
   const directory=path.dirname(task),transportFile=await freezeCodexTransport(context,agent);
-  const job={schemaVersion:1,operationId:request.operationId,repositoryId:request.repositoryId,directory,cwd,task,prompt,transportFile};
+  const job={schemaVersion:1,operationId:request.operationId,repositoryId:request.repositoryId,home:options.home,directory,cwd,task,prompt,transportFile};
   const jobFile=path.join(directory,'codex-sdk-job.json');await writeJson(jobFile,job);
   const pty=await terminalRuntime(context),interactionIds=[];
   let inputReady=false,startupBuffer='';

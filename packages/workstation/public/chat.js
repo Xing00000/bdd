@@ -63,12 +63,101 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
   }
   function settingsPanel(settings,onSave,saveSettings){
     const details=el('details',undefined,'chat-settings');details.append(el('summary','對話設定'));const form=el('form',undefined,'chat-settings-form'),fields={};
-    for(const [key,label] of [['codexExecutable','Codex 執行檔'],['copilotExecutable','Copilot ACP 執行檔'],['copilotArgs','Copilot ACP 啟動參數'],['timeoutMs','逾時']]){
-      const wrapper=el('label',label),input=el('input');input.setAttribute('aria-label','對話 '+label);input.value=key==='copilotArgs'?JSON.stringify(settings[key]):String(settings[key]);input.required=true;fields[key]=input;wrapper.append(input);form.append(wrapper);
+    const providerWrap=el('label','ACP 推論來源'),providerSelect=el('select');
+    providerSelect.setAttribute('aria-label','對話 ACP 推論來源');
+    providerSelect.append(new Option('GitHub Copilot ACP','copilot'),new Option('Kiro CLI ACP','kiro'));
+    providerSelect.value=settings.acpProvider??'copilot';
+    fields.acpProvider=providerSelect;providerWrap.append(providerSelect);form.append(providerWrap);
+    for(const [key,label] of [['codexExecutable','Codex 執行檔'],['copilotExecutable','Copilot ACP 執行檔'],['copilotArgs','Copilot ACP 啟動參數'],['kiroExecutable','Kiro ACP 執行檔'],['kiroArgs','Kiro ACP 啟動參數'],['timeoutMs','逾時']]){
+      const wrapper=el('label',label),input=el('input');input.setAttribute('aria-label','對話 '+label);input.value=(key==='copilotArgs'||key==='kiroArgs')?JSON.stringify(settings[key]??[]):String(settings[key]??'');input.required=true;fields[key]=input;wrapper.append(input);form.append(wrapper);
     }
     const save=el('button','儲存對話設定');save.type='submit';form.append(save);
-    form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const value={};for(const [key,input] of Object.entries(fields))value[key]=key==='copilotArgs'?JSON.parse(input.value):key==='timeoutMs'?Number(input.value):input.value;await saveSettings(value);note('對話設定已儲存');onSave?.();}catch(error){report(error);}finally{save.disabled=false;}};
+    form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const value={};for(const [key,input] of Object.entries(fields))value[key]=(key==='copilotArgs'||key==='kiroArgs')?JSON.parse(input.value):key==='timeoutMs'?Number(input.value):input.value;await saveSettings(value);note('對話設定已儲存');onSave?.();}catch(error){report(error);}finally{save.disabled=false;}};
     details.append(form);return details;
+  }
+  function agentSupervisorPanel(active){
+    const details=el('details',undefined,'chat-settings chat-agent-supervisor');details.dataset.testid='chat-agent-supervisor';
+    details.append(el('summary','CLI Agent 工作階段（Supervisor 派工與人工介入）'));
+    const startForm=el('form',undefined,'chat-settings-form'),profileWrap=el('label','Agent Profile'),profileSelect=el('select');
+    profileSelect.setAttribute('aria-label','CLI Agent Profile');
+    for(const [val,label] of [['copilot','GitHub Copilot CLI (copilot)'],['kiro','Kiro CLI (kiro)'],['codex','OpenAI Codex CLI (codex)'],['claude','Claude Code CLI (claude)']])profileSelect.append(new Option(label,val));
+    profileWrap.append(profileSelect);
+    const protoWrap=el('label','互動協定'),protoSelect=el('select');
+    protoSelect.setAttribute('aria-label','CLI Agent 協定');
+    protoSelect.append(new Option('ACP 工作階段 (acp)','acp'),new Option('PTY 終端機 (pty)','pty'));
+    protoWrap.append(protoSelect);
+    const titleWrap=el('label','工作階段標題'),titleInput=el('input');
+    titleInput.setAttribute('aria-label','CLI Agent 標題');titleInput.placeholder='選填標題…';titleWrap.append(titleInput);
+    const promptWrap=el('label','初始派工指令'),promptInput=el('input');
+    promptInput.setAttribute('aria-label','CLI Agent 初始指令');promptInput.placeholder='選填初始指令…';promptWrap.append(promptInput);
+    const startBtn=el('button','啟動 CLI Agent');startBtn.type='submit';
+    const refreshBtn=button('重新整理工作階段',()=>void refreshSessions());
+    startForm.append(profileWrap,protoWrap,titleWrap,promptWrap,startBtn,refreshBtn);
+    const listNode=el('div',undefined,'chat-agent-session-list');listNode.dataset.testid='agent-session-list';
+    const detailNode=el('div',undefined,'chat-agent-session-detail');detailNode.dataset.testid='agent-session-detail';
+    details.append(startForm,listNode,detailNode);
+    let sessions=[],selectedId=null,busy=false;
+    async function renderDetail(){
+      detailNode.replaceChildren();
+      if(!selectedId)return;
+      try{
+        const snap=await api(`/agent-sessions/${encodeURIComponent(selectedId)}/events?afterSeq=0&limit=200`);
+        if(!active())return;
+        const header=el('div',undefined,'chat-composer-actions');
+        header.append(el('strong',`${snap.sessionId} · ${snap.agentName} (${snap.protocol.toUpperCase()}) · 狀態：${snap.status}${snap.pid?` · PID ${snap.pid}`:''}`));
+        const reloadBtn=button('重新讀取事件',()=>void renderDetail());reloadBtn.dataset.testid='agent-session-refresh-events';
+        const cancelBtn=button('取消目前回合 (cancel)',async()=>{try{await api(`/agent-sessions/${encodeURIComponent(selectedId)}/cancel`,'POST',{});note('已取消目前回合');await refreshSessions();}catch(e){report(e);}});
+        cancelBtn.dataset.testid='agent-session-cancel';cancelBtn.disabled=snap.status==='STOPPED'||snap.status==='FAILED';
+        const stopBtn=button('結束並回收 (stop)',async()=>{try{await api(`/agent-sessions/${encodeURIComponent(selectedId)}/stop`,'POST',{});note('已結束並回收 CLI Agent');await refreshSessions();}catch(e){report(e);}});
+        stopBtn.dataset.testid='agent-session-stop';stopBtn.disabled=snap.status==='STOPPED';
+        header.append(reloadBtn,cancelBtn,stopBtn);
+        const eventsBox=el('div',undefined,'chat-messages');eventsBox.dataset.testid='agent-session-events';
+        if(!snap.events?.length)eventsBox.append(el('p','尚無事件紀錄。','muted'));
+        for(const ev of snap.events??[]){
+          const row=el('p',`#${ev.seq} [${ev.actor}/${ev.kind}] ${ev.content}`,'chat-message-content');
+          eventsBox.append(row);
+        }
+        const interveneBox=el('div',undefined,'chat-composer-actions'),msgInput=el('input');
+        msgInput.setAttribute('aria-label','CLI Agent 介入指令');msgInput.dataset.testid='agent-session-input';msgInput.placeholder='輸入給此 CLI Agent 的指令…';
+        const sendIntervene=async mode=>{
+          const message=msgInput.value.trim();if(!message||busy)return;busy=true;
+          try{await api(`/agent-sessions/${encodeURIComponent(selectedId)}/messages`,'POST',{message,mode,wait:true});msgInput.value='';note(`已送出介入指令（${mode}）`);await refreshSessions();}
+          catch(e){report(e);}finally{busy=false;}
+        };
+        const queueBtn=button('排入佇列送出 (queue)',()=>void sendIntervene('queue'));queueBtn.dataset.testid='agent-session-send-queue';queueBtn.disabled=snap.status==='STOPPED'||snap.status==='FAILED';
+        const interruptBtn=button('中斷並插話 (interrupt)',()=>void sendIntervene('interrupt'));interruptBtn.dataset.testid='agent-session-send-interrupt';interruptBtn.disabled=snap.status==='STOPPED'||snap.status==='FAILED';
+        interveneBox.append(msgInput,queueBtn,interruptBtn);
+        detailNode.append(header,eventsBox,interveneBox);
+      }catch(e){report(e);}
+    }
+    async function refreshSessions(){
+      try{
+        const res=await api('/agent-sessions');if(!active())return;
+        sessions=res.sessions??[];listNode.replaceChildren();
+        if(!sessions.length){listNode.append(el('p','目前尚無長駐 CLI Agent 工作階段。','muted'));detailNode.replaceChildren();return;}
+        if(!selectedId||!sessions.some(s=>s.sessionId===selectedId))selectedId=sessions[0].sessionId;
+        for(const s of sessions){
+          const item=button(`${s.sessionId} · ${s.agentName} · ${s.protocol.toUpperCase()} · ${s.status}`,()=>{selectedId=s.sessionId;void refreshSessions();},'chat-room-link');
+          item.dataset.testid='agent-session-'+s.sessionId;
+          item.setAttribute('aria-current',s.sessionId===selectedId?'true':'false');
+          listNode.append(item);
+        }
+        await renderDetail();
+      }catch(e){if(active())report(e);}
+    }
+    startForm.onsubmit=async event=>{
+      event.preventDefault();if(busy)return;busy=true;startBtn.disabled=true;
+      try{
+        const body={agentProfile:profileSelect.value,protocol:protoSelect.value};
+        if(titleInput.value.trim())body.title=titleInput.value.trim();
+        if(promptInput.value.trim()){body.prompt=promptInput.value.trim();body.wait=true;}
+        const created=await api('/agent-sessions','POST',body);
+        selectedId=created.sessionId;titleInput.value='';promptInput.value='';
+        note(`已啟動 CLI Agent：${created.sessionId}`);await refreshSessions();
+      }catch(e){report(e);}finally{busy=false;startBtn.disabled=false;}
+    };
+    details.ontoggle=()=>{if(details.open)void refreshSessions();};
+    return {node:details,refresh:refreshSessions};
   }
   async function open(id){
     const epoch=++version;source?.close();source=null;current=id;opened.add(id);renderTabs();view.replaceChildren(el('p','載入對話…'));
@@ -86,6 +175,7 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
       settingsTail=job.then(()=>undefined,()=>undefined);return job;
     };
     const picker=modelPicker(settings,{isBusy:()=>pending||sending||Boolean(settingsSaving),save:saveSettings,active:()=>epoch===version});
+    const supervisorPanel=agentSupervisorPanel(()=>epoch===version);
     input.oninput=()=>{drafts.set(id,input.value);updateButton();};
     input.onkeydown=event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)&&!event.isComposing){event.preventDefault();form.requestSubmit();}};
     const renderStreaming=value=>{
@@ -99,6 +189,7 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
       if(!value.messages.length){const empty=el('div',undefined,'chat-empty');empty.append(el('h2','開始這段對話'),el('p','在下方輸入訊息，對話會自動儲存。'));log.append(empty);}
       for(const message of value.messages){const article=el('article',undefined,'chat-message chat-message-'+message.role);article.dataset.testid='chat-message-'+message.role;article.append(el('strong',message.role==='user'?'你':'助手'),el('p',message.content,'chat-message-content'));if(message.error){const error=el('p',`${message.status==='interrupted'?'回覆已中斷':'回覆失敗'}：${message.error}`,'error');error.setAttribute('role','alert');article.append(error);}log.append(article);}
       if(pending)log.append(el('p','助手正在回覆，訊息已儲存。','muted'));renderStreaming(value.streaming);updateButton();log.scrollTop=log.scrollHeight;
+      if(supervisorPanel.node.open)void supervisorPanel.refresh();
     };
 
     form.onsubmit=async event=>{
@@ -106,7 +197,7 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
       try{await api(`/chat-rooms/${encodeURIComponent(id)}/messages`,'POST',{content});if(input.value===content){input.value='';drafts.set(id,'');}}
       catch(error){report(error);}finally{sending=false;updateButton();}
     };
-    actions.insertBefore(picker.node,send);view.replaceChildren(settingsPanel(settings,()=>void picker.refresh(),saveSettings),connection,log,form);renderMessages(room);input.focus();connect(id,renderMessages,renderStreaming,connection);
+    actions.insertBefore(picker.node,send);view.replaceChildren(settingsPanel(settings,()=>void picker.refresh(),saveSettings),supervisorPanel.node,connection,log,form);renderMessages(room);input.focus();connect(id,renderMessages,renderStreaming,connection);
   }
   $('#new-chat-room').onclick=async()=>{const submit=$('#new-chat-room');submit.disabled=true;try{const room=await api('/chat-rooms','POST',{});await refreshList();await navigate(room.id);}catch(error){report(error);}finally{submit.disabled=false;}};
   return {open,refreshList,leave(){version++;current=null;source?.close();source=null;renderTabs();connect();}};

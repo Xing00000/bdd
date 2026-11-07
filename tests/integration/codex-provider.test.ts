@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,readdir,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,readdir,realpath,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -69,7 +69,7 @@ test('coding history preserves function and custom identities, exact patch text 
 });
 
 async function fixture(t:TestContext,options:CopilotPeerOptions={},policy:boolean|'codex'='codex'){
- const directory=await mkdtemp(path.join(tmpdir(),'bdd-codex-provider-')),peer=await copilotChatPeer(directory,options),provider=await createChatProvider(directory,policy);
+ const directory=await realpath(await mkdtemp(path.join(tmpdir(),'bdd-codex-provider-'))),peer=await copilotChatPeer(directory,options),provider=await createChatProvider(directory,policy);
  t.after(async()=>{await provider.close();await rm(directory,{recursive:true,force:true});});
  const wrapper=path.join(directory,'observed-copilot-peer.mjs');
  await writeFile(wrapper,`import {appendFileSync,readdirSync} from 'node:fs';
@@ -123,8 +123,8 @@ test('coding HTTP provider returns raw custom calls through ACP and carries thei
  const continued=JSON.parse(requests.at(-1).params.prompt[0].text.split('\n').slice(1).join('\n'));
  assert.equal(continued.input[1].input,patchInput);assert.deepEqual(continued.input[2],result);
  assert.equal(trace.filter(event=>event.type==='spawn').length,1);
- assert(trace.some(event=>event.type==='client-response'&&event.result?.outcome?.outcome==='cancelled'));
- assert(!trace.some(event=>event.type==='mcp'&&event.method==='tools/call'),'Copilot never executes an actual Codex tool');
+ assert(trace.filter(event=>event.method==='session/new').every(event=>event.params.mcpServers.length===0),'Copilot ACP never receives any MCP server');
+ assert(!trace.some(event=>event.type==='mcp'),'Copilot never connects to or executes any MCP tool');
 });
 
 test('coding HTTP provider restores the selected namespace when identical names appear in several catalogs',async t=>{
@@ -132,7 +132,8 @@ test('coding HTTP provider restores the selected namespace when identical names 
  const response=await f.post({input:prompt,tools:[{type:'namespace',name:'functions',tools:[shell]},{type:'namespace',name:'mcp__workbench_task',tools:[shell]}]});
  const item=output(await response.text()).at(-1).response.output[0];
  assert.equal(item.type,'function_call');assert.equal(item.namespace,'mcp__workbench_task');assert.equal(item.name,'exec_command');assert.equal(JSON.parse(item.arguments).command,'do not execute: proposal fixture');
- const catalog=(await f.trace()).find(event=>event.type==='mcp'&&event.method==='tools/list').result.tools;
+ const promptText=(await f.trace()).find(event=>event.method==='session/prompt').params.prompt[0].text;
+ const catalog=JSON.parse(promptText.split('\n').slice(1).join('\n')).tools;
  assert.equal(catalog.length,2);assert.notEqual(catalog[0].name,catalog[1].name);
 });
 
@@ -147,7 +148,8 @@ test('coding tool choice limits proposals and unsupported response contracts fai
  const tools=[{type:'namespace',name:'functions',tools:[shell,patch]}];
  const chosen=await f.post({input:prompt,tools,tool_choice:{type:'custom',name:'apply_patch',namespace:'functions'}});
  const item=output(await chosen.text()).at(-1).response.output[0];assert.equal(item.type,'custom_tool_call');assert.equal(item.input,patchInput);
- const catalog=(await f.trace()).find(event=>event.type==='mcp'&&event.method==='tools/list').result.tools;
+ const promptText=(await f.trace()).find(event=>event.method==='session/prompt').params.prompt[0].text;
+ const catalog=JSON.parse(promptText.split('\n').slice(1).join('\n')).tools;
  assert.equal(catalog.length,1);assert.equal(catalog[0].name,'codex_tool_0001');
  const none=await f.post({input:[{...prompt[0],content:[{type:'input_text',text:'Answer without tools'}]}],tools,tool_choice:'none'});
  assert(output(await none.text()).at(-1).response.output.every((item:any)=>item.type==='message'));

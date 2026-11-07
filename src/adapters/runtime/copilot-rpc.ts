@@ -1,6 +1,9 @@
+import {mkdirSync,writeFileSync} from 'node:fs';
+import path from 'node:path';
 import type {ChatSettings} from '../../ports/chat.ts';
 import {chatLimits} from '../../domain/chat.ts';
 import {spawnChatProcess} from './chat-process.ts';
+import {defaultKiroExecutable} from './chat-settings.ts';
 
 type Pending={resolve:(value:any)=>void;reject:(error:Error)=>void};
 type Listeners={event:(sessionId:string,update:any)=>void;request:(sessionId:string|undefined,method:string,params:any)=>void;failure:(error:Error)=>void};
@@ -14,15 +17,48 @@ export function validateCopilotArgs(args:string[]){
  for(const value of args)if(value==='--'||reserved.test(value)||/^-[pirC]/.test(value))throw Error(`Copilot ACP 啟動參數不相容：${value.split('=')[0]}。請移除舊 CLI／權限參數；傳輸、模型與工具由 ACP 工作階段管理。`);
 }
 
+export function validateKiroArgs(args:string[]){
+ if(!Array.isArray(args)||args.some(value=>typeof value!=='string'))throw Error('Kiro ACP 啟動參數必須是文字陣列');
+ const reserved=/^(?:acp|chat|serve|mcp|agent|login|--(?:agent|model|effort|trust-all-tools|trust-tools|agent-engine|auth-method|authMethod|login)(?:=|$)|-a$)/;
+ for(const value of args)if(value==='--'||reserved.test(value))throw Error(`Kiro ACP 啟動參數不相容：${value.split('=')[0]}。傳輸、模型與零工具隔離由 ACP 工作階段管理。`);
+}
+
+function ensureKiroZeroToolAgent(cwd:string){
+ const agentDir=path.join(cwd,'.kiro','agents'),settingsDir=path.join(cwd,'.kiro','settings');
+ mkdirSync(agentDir,{recursive:true,mode:0o700});
+ mkdirSync(settingsDir,{recursive:true,mode:0o700});
+ writeFileSync(path.join(settingsDir,'mcp.json'),JSON.stringify({mcpServers:{}},null,2),{mode:0o600});
+ writeFileSync(path.join(agentDir,'bdd_inference.json'),JSON.stringify({
+  name:'bdd_inference',
+  description:'Pure inference adapter agent with zero tools and zero MCP servers.',
+  prompt:'You are the LLM inference backend for an OpenAI Responses / Codex adapter. Each user message is a JSON payload containing instructions, input (conversation history), tools (advertised tool definitions), and responseContract. You must follow responseContract strictly and output ONLY the requested raw JSON object.',
+  tools:[],
+  allowedTools:[],
+  resources:[],
+  mcpServers:{},
+  includeMcpJson:false,
+ },null,2),{mode:0o600});
+}
+
 /** Official ACP stdio transport: one JSON-RPC 2.0 message per UTF-8 line. */
-export function createCopilotConnection(settings:ChatSettings,cwd:string,mcpServerName:string,listeners:Listeners){
- validateCopilotArgs(settings.copilotArgs);
+export function createCopilotConnection(settings:ChatSettings,cwd:string,listeners:Listeners){
+ const isKiro=settings.acpProvider==='kiro';
+ if(isKiro)validateKiroArgs(settings.kiroArgs??[]);
+ else validateCopilotArgs(settings.copilotArgs);
  const controller=new AbortController();
- // A unique allowlist excludes builtin tools AND unrelated configured MCPs.
- // Empty --available-tools does not disable tools in Copilot 1.0.105.
- const args=[...settings.copilotArgs,'--acp','--stdio','--no-auto-update','--disable-builtin-mcps','--no-custom-instructions','--no-ask-user','--no-bash-env','--sync-session=off',`--available-tools=${mcpServerName}/*`];
+ let executable:string,args:string[];
+ if(isKiro){
+  ensureKiroZeroToolAgent(cwd);
+  executable=settings.kiroExecutable||defaultKiroExecutable();
+  args=[...(settings.kiroArgs??[]),'acp','--agent','bdd_inference','--trust-tools='];
+ }else{
+  // A sentinel allowlist plus --disable-builtin-mcps disables every built-in
+  // tool and every configured MCP server in Copilot ACP.
+  executable=settings.copilotExecutable;
+  args=[...settings.copilotArgs,'--acp','--stdio','--no-auto-update','--disable-builtin-mcps','--no-custom-instructions','--no-ask-user','--no-bash-env','--sync-session=off','--available-tools=__bdd_no_tools__'];
+ }
  const env={...process.env,COPILOT_ALLOW_ALL:'false',COPILOT_ASSISTED_APPROVAL:'false'};
- const child=spawnChatProcess(settings.copilotExecutable,args,{cwd,signal:controller.signal,env});
+ const child=spawnChatProcess(executable,args,{cwd,signal:controller.signal,env});
  child.stderr.resume();
  const pending=new Map<number,Pending>();let buffer:Buffer=Buffer.alloc(0),next=0,failure:Error|undefined,closing:Promise<void>|undefined;
  const fail=(error:Error)=>{
