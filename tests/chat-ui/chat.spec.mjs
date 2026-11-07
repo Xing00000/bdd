@@ -46,8 +46,34 @@ const test=base.extend({workstation:async({page},use,info)=>{
 }});
 
 test('AC-WB-036 正式入口：左側聊天室與中間頁籤',async({page,workstation:w})=>{
- await test.step('建立聊天室後，左側與對話頁籤同時顯示',async()=>{await w.create();await expect(page.getByTestId('chat-room-'+w.roomId)).toBeVisible();await expect(page.getByRole('navigation',{name:'工作頁籤'}).getByRole('button',{name:'對話 · '+w.title,exact:true})).toHaveCount(1);});
+ await test.step('建立聊天室後，對話頁籤顯示且可展開側邊選單檢視聊天室',async()=>{await w.create();await expect(page.getByRole('navigation',{name:'工作頁籤'}).getByRole('button',{name:'對話 · '+w.title,exact:true})).toHaveCount(1);await page.getByTestId('assistant-rooms-toggle').click();await expect(page.getByTestId('chat-room-'+w.roomId)).toBeVisible();await page.getByTestId('assistant-rooms-close').click();});
  await test.step('切換、重複開啟及關閉頁籤不刪除聊天室或草稿',async()=>{await page.getByRole('textbox',{name:'對話訊息輸入'}).fill('尚未送出的草稿');await page.getByRole('navigation',{name:'工作頁籤'}).getByRole('button',{name:'工作台',exact:true}).click();await page.getByTestId('chat-room-'+w.roomId).click();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toHaveValue('尚未送出的草稿');await page.getByRole('button',{name:'關閉 對話 · '+w.title,exact:true}).click();await page.getByTestId('chat-room-'+w.roomId).click();await expect(page.getByRole('navigation',{name:'工作頁籤'}).getByRole('button',{name:'對話 · '+w.title,exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toBeVisible();expect((await w.get('/chat-rooms')).length).toBe(1);});
+ await test.step('右側可縮合面板以側邊 Modal 展開直式導覽清單（不設「對話 / 工作」分頁、非向下展開），整合對話紀錄與 CLI Agent Session',async()=>{
+  await page.setViewportSize({width:1440,height:1000});
+  await expect(page.locator('#home-view')).toBeVisible();
+  await expect(page.getByTestId('assistant-tab-chat')).toHaveCount(0);
+  await expect(page.getByTestId('assistant-tab-sessions')).toHaveCount(0);
+  const mainBox=await page.locator('.main-shell').boundingBox(),drawerBox=await page.getByTestId('assistant-drawer').boundingBox(),bodyBox=await page.locator('.assistant-body').boundingBox();
+  expect(drawerBox.x).toBeGreaterThanOrEqual(mainBox.x+mainBox.width-2);
+  await expect(page.getByTestId('assistant-rooms-panel')).toBeHidden();
+  await page.getByTestId('assistant-rooms-toggle').click();
+  await expect(page.getByTestId('assistant-rooms-panel')).toBeVisible();
+  await expect(page.getByTestId('chat-agent-supervisor')).toBeVisible();
+  const modalBox=await page.getByTestId('assistant-rooms-panel').boundingBox();
+  expect(Math.abs(modalBox.x-bodyBox.x)).toBeLessThanOrEqual(2);
+  expect(modalBox.height).toBeGreaterThanOrEqual(bodyBox.height-2);
+  expect(modalBox.width).toBeLessThan(drawerBox.width);
+  const newChatBox=await page.getByTestId('new-chat').boundingBox(),roomBox=await page.getByTestId('chat-room-'+w.roomId).boundingBox(),supBox=await page.getByTestId('chat-agent-supervisor').boundingBox();
+  expect(roomBox.y).toBeGreaterThanOrEqual(newChatBox.y+newChatBox.height-2);
+  expect(supBox.y).toBeGreaterThanOrEqual(roomBox.y+roomBox.height-2);
+  await page.getByTestId('assistant-rooms-close').click();
+  await expect(page.getByTestId('assistant-rooms-panel')).toBeHidden();
+  await page.getByTestId('assistant-drawer-toggle').click();
+  await expect(page.getByTestId('assistant-drawer')).toBeHidden();
+  await expect(page.getByTestId('assistant-drawer-open')).toBeVisible();
+  await page.getByTestId('assistant-drawer-open').click();
+  await expect(page.getByTestId('assistant-drawer')).toBeVisible();
+ });
  for(const width of [320,768,1024,1440])await test.step(`視窗寬度 ${width} 不產生水平溢出`,async()=>{await page.setViewportSize({width,height:1000});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);});
 });
 test('AC-WB-037 正式入口：真實 Copilot 回覆、SQLite、重啟續聊與壓縮',async({page,workstation:w})=>{
@@ -121,7 +147,7 @@ base('AC-WB-047 UIUX：取得模型清單、選擇並保存，重新整理維持
 test('對話模型清單：真實 Copilot CLI 的可用與空清單狀態',async({page,workstation:w},info)=>{
  const response=page.waitForResponse(r=>r.url().endsWith('/chat-models'));await w.create();const received=await response,catalog=await received.json();expect(received.ok(),JSON.stringify(catalog)).toBe(true);
  const select=page.getByRole('combobox',{name:'對話模型',exact:true});await expect(select).toBeEnabled();await expect(select.locator('option')).toHaveCount(catalog.models.length+1);await expect(select).toHaveValue(catalog.automaticModel);
- await expect(page.locator('.chat-model-picker [role=status]')).toHaveText(catalog.models.length?`已取得 ${catalog.models.length} 個模型`:'Copilot 目前未提供可手選模型，仍可使用自動選擇。');
+ await expect(page.locator('.chat-model-picker [role=status]')).toHaveText(catalog.models.length?'':'Copilot 目前未提供可手選模型，仍可使用自動選擇。');
  await info.attach('真實 Copilot CLI 模型清單（含實際空清單）',{body:JSON.stringify(catalog,null,2),contentType:'application/json'});expect(w.errors).toEqual([]);
 });
 
