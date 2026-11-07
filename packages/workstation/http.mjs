@@ -76,6 +76,17 @@ export async function dispatch(service, request) {
     const body=method==='GET'?await service.catalogDefaults(id(parts[1])):method==='PUT'?await service.saveCatalogDefault(id(parts[1]),input):undefined;
     invariant(body!==undefined,'NOT_FOUND','Unknown defaults route',404);return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body};
   }
+  if(parts[0]==='agent-sessions'){
+    if(parts.length===1&&method==='GET')result={sessions:service.agentSessions({repositoryId:url.searchParams.get('repositoryId')||undefined,operationId:url.searchParams.get('operationId')||undefined})};
+    else if(parts.length===1&&method==='POST'){result=await service.startAgentSession(input);status=201;}
+    else if(parts.length===2&&method==='GET')result=service.agentSession(id(parts[1]));
+    else if(parts.length===3&&parts[2]==='events'&&method==='GET')result=service.agentSessionEvents(id(parts[1]),{afterSeq:url.searchParams.has('afterSeq')?Number(url.searchParams.get('afterSeq')):0,limit:url.searchParams.has('limit')?Number(url.searchParams.get('limit')):200});
+    else if(parts.length===3&&parts[2]==='messages'&&method==='POST')result=await service.sendAgentSessionMessage(id(parts[1]),input);
+    else if(parts.length===3&&parts[2]==='cancel'&&method==='POST')result=await service.cancelAgentSessionTurn(id(parts[1]),input);
+    else if(parts.length===3&&parts[2]==='stop'&&method==='POST')result=await service.stopAgentSession(id(parts[1]),input);
+    invariant(result!==undefined,'NOT_FOUND','Unknown agent session route',404);
+    return {status,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:result};
+  }
   if(parts[0]==='chat-rooms'||parts[0]==='chat-settings'||parts[0]==='chat-models') {
     const chat=await service.chat();
     if(parts[0]==='chat-models'&&parts.length===1&&method==='GET')result=await chat.models();

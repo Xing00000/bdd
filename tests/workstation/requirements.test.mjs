@@ -83,7 +83,7 @@ test('editing authoritative Gherkin requires explicit return and never preserves
 test('unfinished Gherkin and description-only drafts remain saveable but cannot be confirmed',async t=>{
   const f=await setup(t),saved=await save(f,{gherkin:'Feature: work in progress\n'});assert.equal(saved.saved,true);assert.ok(saved.diagnostics.length);
   const feature=(await f.service.detail('SPEC-editor')).spec.features[0];const result=await f.job('workflow.review',{requirementId:'REQ-001',featureId:'feature',stage:'gherkin',expectedDigest:feature.review.hashes.gherkin},true);assert.equal(result.error.code,'GHERKIN_INVALID');
-  await save(f,{gherkin:'',description:'Keep my raw notes'});await f.restart();assert.equal((await f.service.detail('SPEC-editor')).spec.features.length,2);
+  await save(f,{gherkin:'',description:'Keep my raw notes',editorKey:'new-notes'});await f.restart();assert.equal((await f.service.detail('SPEC-editor')).spec.features.length,2);
 });
 test('stale token for either field conflicts without overwriting the other editor contents',async t=>{
   const f=await setup(t),saved=await save(f);await save(f,{requirementId:'REQ-001',featureId:'feature',description:'new source',expectedToken:saved.token});

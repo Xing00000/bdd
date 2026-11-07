@@ -88,22 +88,33 @@ async function previewAgent(purpose,source={}) {
 async function guard() { if(!dirty())return true;if(!await ask('有尚未儲存的編輯','離開會捨棄畫面中的草稿；已存入 SQLite 的內容不受影響。','捨棄草稿並離開'))return false;state.editor=null;state.hookEditor=null;state.composer=null;state.composerRequest++;state.product=null;state.formDirty=false;return true; }
 async function navigate(patch,{protect=true,replace=false}={}) {
   if(state.view==='chat'&&!Object.hasOwn(patch,'view'))patch.view='features';
-  chat.leave();
-  if(state.busy||state.transient)return;if(protect&&!await guard())return;
+  const chatOnly=Object.keys(patch).every(k=>k==='chatId'||k==='view'&&patch.view==='chat');
+  if(!chatOnly&&(state.busy||state.transient))return;
+  if(!chatOnly&&protect&&!await guard())return;
   if ((Object.hasOwn(patch,'repositoryId')&&patch.repositoryId!==state.repositoryId)
     ||(Object.hasOwn(patch,'featureKey')&&patch.featureKey!==state.featureKey)) {
     note('');
   }
-  development.leave();designView.reset();
-  if(['repositoryId','featureKey','view','stage'].some(field=>Object.hasOwn(patch,field)&&patch[field]!==state[field])){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);}
-  Object.assign(state,patch);state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
-  for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
-  $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';
+  if(!chatOnly){
+    development.leave();designView.reset();
+    if(['repositoryId','featureKey','view','stage'].some(field=>Object.hasOwn(patch,field)&&patch[field]!==state[field])){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);}
+    state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
+    for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
+    $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';
+  }
+  Object.assign(state,patch);
+  if(state.view==='chat')state.view='features';
   const url=new URL(location.href);url.pathname='/';url.search='';
   if(state.view==='agents')url.searchParams.set('view','agents');
-  if(state.view==='chat'){url.searchParams.set('view','chat');url.searchParams.set('chat',state.chatId);}
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);}
-  history[replace?'replaceState':'pushState']({},'',url);if(mobileNavigation.matches){$('#sidebar').classList.remove('open');updateNavigationToggle();}await refresh();
+  if(state.chatId){if(!state.repositoryId&&state.view!=='agents')url.searchParams.set('view','chat');url.searchParams.set('chat',state.chatId);}
+  history[replace?'replaceState':'pushState']({},'',url);if(mobileNavigation.matches){$('#sidebar').classList.remove('open');updateNavigationToggle();}
+  if(chatOnly){
+    if(state.chatId){$('#chat-view').hidden=false;await chat.open(state.chatId);}
+    else{chat.leave();$('#chat-view').hidden=true;}
+    return;
+  }
+  await refresh();
 }
 async function route() { const q=new URLSearchParams(location.search);await navigate({repositoryId:q.get('repo'),view:q.get('view')??'features',featureKey:q.get('feature'),projectId:q.get('project'),stage:q.get('stage')??'GHERKIN',chatId:q.get('chat')},{protect:false,replace:true}); }
 async function refresh() {
@@ -112,11 +123,11 @@ async function refresh() {
     const repositories=await api('/spec-repositories');if(epoch!==state.epoch)return;state.repositories=repositories;
     const detail=state.repositoryId?await api(`/spec-repositories/${state.repositoryId}`):null;if(epoch!==state.epoch)return;state.detail=detail;
     renderNavigation();$('#agent-manager-view').hidden=state.view!=='agents';
-    if(state.view==='agents'){$('#home-view').hidden=true;$('#repository-view').hidden=true;$('#chat-view').hidden=true;$('#interaction-history').hidden=true;$('#content').classList.remove('chat-active');await catalogView.render(repositories);return;}
-    $('#chat-view').hidden=state.view!=='chat';$('#content').classList.toggle('chat-active',state.view==='chat');
-    if(state.view==='chat'){ $('#home-view').hidden=true;$('#repository-view').hidden=true;$('#interaction-history').hidden=true;$('#breadcrumbs').textContent='工作台 / 對話';await chat.open(state.chatId);return;}
-    $('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
     await chat.refreshList().catch(error=>note(error.message,true));
+    if(state.chatId){$('#chat-view').hidden=false;await chat.open(state.chatId);}
+    else{chat.leave();$('#chat-view').hidden=true;}
+    if(state.view==='agents'){$('#home-view').hidden=true;$('#repository-view').hidden=true;$('#interaction-history').hidden=true;await catalogView.render(repositories);return;}
+    $('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
     if(!detail){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);renderHome();return;}
     if(!['features','projects','reports','settings','versions'].includes(state.view))state.view='features';if(!detail.preferences?.configured && state.view!=='versions')state.view='settings';
     $('#repository-title').textContent=detail.title;$('#breadcrumbs').textContent=`工作台 / ${detail.title}`;
@@ -815,6 +826,6 @@ on('#develop','click',()=>development.start());on('#stop-development','click',()
 const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:()=>{resizeWorkflowEditor($('#source-editor'));renderNext();}});
 const catalogView=agentCatalogView({api,el,button,note,ask,onDirty:()=>{state.formDirty=true;},onSaved:()=>{state.formDirty=false;}});
 on('#open-agent-manager','click',()=>navigate({view:'agents',repositoryId:null,featureKey:null,projectId:null}));
-const chat=chatRoomsView({api,el,button,navigate:id=>navigate({view:'chat',chatId:id}),workspace:()=>navigate({view:'features'}),note});
+const chat=chatRoomsView({api,el,button,navigate:id=>navigate({chatId:id},{protect:false}),workspace:()=>navigate({chatId:null},{protect:false}),note});
 // Initialize the route only after every view state and handler exists.
 await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'測試執行已停用';await route();});

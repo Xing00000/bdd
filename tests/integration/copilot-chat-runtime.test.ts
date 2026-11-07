@@ -33,7 +33,7 @@ test('ACP reuses one server for models and turns, with server-issued sessions an
  assert(!trace.some(event=>['connect','models.list','session.create','session.send','session.delete'].includes(event.method)));
  for(const event of created){assert.deepEqual(event.params.mcpServers,[]);assert.equal(event.params.cwd,f.directory);assert.equal(event.params.sessionId,undefined);}
  const args=trace.find(event=>event.type==='spawn').args;assert(args.includes('--acp'));assert(args.includes('--stdio'));assert(!args.includes('--headless'));
- assert(args.some((arg:string)=>/^--available-tools=bdd_[a-f0-9]{24}\/\*$/.test(arg)),'Only the private proposal MCP namespace is available');
+ assert(args.includes('--available-tools=__bdd_no_tools__'),'All built-in and MCP tools are disabled in Copilot ACP');
 });
 
 test('concurrent room responses and cancellation stay scoped to their ephemeral ACP sessions',async t=>{
@@ -186,10 +186,12 @@ test('servers without session close capability drain rather than accumulating pr
  const trace=await f.trace();assert.equal(trace.filter(event=>event.type==='spawn').length,2);assert(!trace.some(event=>event.method==='session/close'||event.method==='session/delete'));
 });
 
-test('missing HTTP MCP capability fails before starting a tool-enabled inference',async t=>{
+test('tool-enabled inference succeeds without HTTP MCP capability because Copilot ACP never registers MCP servers',async t=>{
  const f=await fixture(t,{capabilities:{sessionCapabilities:{close:{}}}});
- await assert.rejects(f.runtime.completion(f.settings,'[[tool]]',signal(),[tool]),/不支援 HTTP MCP/);
- assert(!(await f.trace()).some(event=>event.method==='session/new'));
+ const answer=await f.runtime.completion(f.settings,'[[tool]]',signal(),[tool]);
+ assert.equal(answer.calls.length,1);assert.equal(answer.calls[0].mcpToolName,tool.name);
+ const created=(await f.trace()).filter(event=>event.method==='session/new');
+ assert.equal(created.length,1);assert.deepEqual(created[0].params.mcpServers,[]);
 });
 
 test('persisted CLI and permission overrides fail before spawning instead of falling back from ACP',async t=>{
@@ -198,4 +200,39 @@ test('persisted CLI and permission overrides fail before spawning instead of fal
   await assert.rejects(f.runtime.completion({...f.settings,copilotArgs:[...f.settings.copilotArgs,arg]},'must not start',signal(),[]),/ACP 啟動參數不相容/);
  }
  assert.deepEqual(await f.trace(),[]);
+});
+
+test('AC-WB-050: runtime switches between Copilot ACP and Kiro CLI ACP with zero-tool agent isolation and strict argument validation',async t=>{
+ const expectedStreamText='即時串流第一段內容已經超過二十六個字元，所以會在文字中間切開變成兩個增量事件';
+ const f=await fixture(t,{capabilities:{mcpCapabilities:{http:true}},responseText:JSON.stringify({type:'message',text:expectedStreamText})});
+ const kiroSettings={...f.settings,acpProvider:'kiro' as const,kiroExecutable:f.settings.copilotExecutable,kiroArgs:f.settings.copilotArgs};
+ for(const badArg of ['--agent=other','--trust-all-tools','-a','--trust-tools=shell','--model=other','acp','chat','--']){
+  await assert.rejects(f.runtime.completion({...kiroSettings,kiroArgs:[...f.settings.copilotArgs,badArg]},'must not start',signal(),[]),/Kiro ACP 啟動參數不相容/);
+ }
+ const kiroAnswer=await f.runtime.completion(kiroSettings,'[[tool]]',signal(),[tool]);
+ assert.equal(kiroAnswer.calls.length,1);assert.equal(kiroAnswer.calls[0].mcpToolName,tool.name);
+ const deltas:string[]=[];
+ const kiroStreamed=await f.runtime.completion(kiroSettings,'streamed json message',signal(),[tool],d=>deltas.push(d));
+ assert.equal(kiroStreamed.text,expectedStreamText);
+ assert(deltas.length>=2,'Tool-enabled JSON message envelope streams incremental text deltas before completion');
+ assert.equal(deltas.join(''),kiroStreamed.text);
+ const kiroAgentConfig=JSON.parse(await readFile(path.join(f.directory,'.kiro','agents','bdd_inference.json'),'utf8'));
+ assert.deepEqual(kiroAgentConfig.tools,[]);
+ assert.deepEqual(kiroAgentConfig.allowedTools,[]);
+ assert.deepEqual(kiroAgentConfig.mcpServers,{});
+ assert.equal(kiroAgentConfig.includeMcpJson,false);
+ const kiroMcpSettings=JSON.parse(await readFile(path.join(f.directory,'.kiro','settings','mcp.json'),'utf8'));
+ assert.deepEqual(kiroMcpSettings,{mcpServers:{}});
+
+ // Switch back to Copilot ACP on the same runtime
+ const copilotAnswer=await f.runtime.completion({...f.settings,acpProvider:'copilot'},'text after switch',signal(),[]);
+ assert.equal(copilotAnswer.text,JSON.stringify({type:'message',text:expectedStreamText}));
+ const trace=await f.trace(),spawns=trace.filter(event=>event.type==='spawn');
+ assert.equal(spawns.length,2,'Kiro ACP reuses one process across multiple turns even without session/close');
+ assert(spawns[0].args.includes('acp')&&spawns[0].args.includes('bdd_inference')&&spawns[0].args.includes('--trust-tools='));
+ assert(spawns[1].args.includes('--acp')&&spawns[1].args.includes('--disable-builtin-mcps'));
+
+ // Fail-closed if Kiro ACP session returns a non-isolated mode ID
+ const badMode=await fixture(t,{currentModeId:'kiro_default'});
+ await assert.rejects(badMode.runtime.completion({...badMode.settings,acpProvider:'kiro',kiroExecutable:badMode.settings.copilotExecutable,kiroArgs:badMode.settings.copilotArgs},'must reject wrong mode',signal(),[]),/零工具與零 MCP 隔離模式/);
 });

@@ -184,43 +184,24 @@ test('installed Copilot reuses one ACP process for isolated session lifecycles w
  await cli.finish();assert.deepEqual(f.inferenceRequests,[],'No model HTTP request was made');
 });
 
-test('installed Copilot ACP streams local fixture text and hands a restricted MCP proposal back without executing it',{timeout:60000},async t=>{
- // The real vendor binary connects to local OpenAI and MCP protocol fixtures.
- // Permission refusal plus session/cancel prevents a second model turn and
- // leaves execution of the proposed workstation action with Codex.
- const mcpName='bdd_native_codex_handoff',toolName='workbench_probe',fullToolName=`${mcpName}-${toolName}`;
+test('installed Copilot ACP streams local fixture text and pure-inference tool proposals with zero MCP servers',{timeout:60000},async t=>{
+ // The real vendor binary connects to a local OpenAI protocol fixture with
+ // mcpServers: [] and --available-tools=__bdd_no_tools__.
+ const toolName='workbench_probe';
  const f=await fixture((body,index,res)=>{
   assert(index<2,'Each session requests exactly one local fixture completion');
   assert.equal(body.model,'protocol-smoke');assert.equal(body.stream,true);
   const names=(body.tools??[]).map((tool:any)=>tool.function.name);
-  assert.deepEqual(names,index===0?[]:[fullToolName],'Only this session\'s declared MCP tools reach the model; built-in tools are absent');
-  const delta=index===0?{role:'assistant',content:'Native protocol fixture'}:{role:'assistant',content:'',tool_calls:[{index:0,id:'native-fixture-call',type:'function',function:{name:fullToolName,arguments:'{"note":"proposal only"}'}}]};
+  assert.deepEqual(names,[],'Zero MCP and zero built-in tools reach the model');
+  const delta=index===0?{role:'assistant',content:'Native protocol fixture'}:{role:'assistant',content:JSON.stringify({type:'tool_calls',calls:[{id:'native-fixture-call',name:toolName,arguments:{note:'proposal only'}}]})};
   const chunk={id:'fixture-response-'+index,object:'chat.completion.chunk',created:1,model:'protocol-smoke'};
   res.writeHead(200,{'content-type':'text/event-stream'});
   res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta,finish_reason:null}]})+'\n\n');
-  res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:index===0?'stop':'tool_calls'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})+'\n\n');
+  res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})+'\n\n');
   res.end('data: [DONE]\n\n');
  });t.after(()=>f.close());
  configureCopilotProvider(f);
- const mcpMethods:string[]=[],mcpErrors:unknown[]=[],permissions:any[]=[],proposals:any[]=[];
- const mcp=createServer(async(req,res)=>{
-  try{
-   assert.equal(req.headers.authorization,'Bearer local-native-mcp-fixture','ACP passes the scoped MCP authorization header');
-   if(req.method!=='POST'){res.writeHead(405);res.end();return;}
-   let raw='';for await(const chunk of req)raw+=String(chunk);const message=JSON.parse(raw);mcpMethods.push(message.method);
-   if(message.id===undefined){res.writeHead(202);res.end();return;}
-   let result:object|undefined;
-   if(message.method==='initialize')result={protocolVersion:message.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'bdd-native-proposal-fixture',version:'1.0.0'}};
-   if(message.method==='tools/list')result={tools:[{name:toolName,description:'Request a proposal only. Codex owns actual execution.',inputSchema:{type:'object',properties:{note:{type:'string'}},required:['note']}}]};
-   assert.notEqual(message.method,'tools/call','Refused ACP permissions must not invoke the MCP tool');
-   res.writeHead(200,{'content-type':'application/json'});
-   res.end(JSON.stringify({jsonrpc:'2.0',id:message.id,...(result?{result}:{error:{code:-32601,message:'Unsupported fixture method'}})}));
-  }catch(error){mcpErrors.push(error);if(!res.headersSent)res.writeHead(503);res.end();}
- });
- await new Promise<void>((resolve,reject)=>{mcp.once('error',reject);mcp.listen(0,'127.0.0.1',resolve);});
- t.after(async()=>{mcp.closeAllConnections();await new Promise<void>((resolve,reject)=>mcp.close(error=>error?reject(error):resolve()));});
- const address=mcp.address();assert(address&&typeof address==='object');
- const cli=f.start(copilotLoader,[...copilotArgs,`--available-tools=${mcpName}/*`],'acp'),pid=cli.child.pid;
+ const cli=f.start(copilotLoader,[...copilotArgs,'--available-tools=__bdd_no_tools__'],'acp'),pid=cli.child.pid;
  await initializeCopilot(cli);
  const {sessionId:textSession}=await cli.request('session/new',{cwd:f.workspace,mcpServers:[]});
  const textReply=await cli.request('session/prompt',{sessionId:textSession,prompt:[{type:'text',text:'Protocol fixture only'}]});
@@ -230,26 +211,16 @@ test('installed Copilot ACP streams local fixture text and hands a restricted MC
  // Keep that vendor notice observable; never strip arbitrary model text.
  assert.equal(chunks.at(-1),'Native protocol fixture');assert.equal(chunks.filter(chunk=>chunk==='Native protocol fixture').length,1);
  assert.deepEqual(await cli.request('session/close',{sessionId:textSession}),{});
- const {sessionId:toolSession}=await cli.request('session/new',{cwd:f.workspace,mcpServers:[{type:'http',name:mcpName,url:`http://127.0.0.1:${address.port}/mcp`,headers:[{name:'Authorization',value:'Bearer local-native-mcp-fixture'}]}]});
- cli.onRequest=message=>{
-  assert.equal(message.method,'session/request_permission');assert.equal(message.params.sessionId,toolSession);permissions.push(message.params);
-  const requested=message.params.toolCall;
-  const announced=cli.updates(toolSession,'tool_call').find(update=>update.toolCallId===requested.toolCallId);
-  assert(announced);assert.equal(announced.title,fullToolName);assert.equal(announced.kind,'other');
-  assert.equal(requested.title,toolName);assert.deepEqual(requested.rawInput,announced.rawInput);assert.deepEqual(requested.rawInput,{note:'proposal only'});
-  proposals.push({toolCallId:requested.toolCallId,name:toolName,arguments:requested.rawInput});
-  cli.notify('session/cancel',{sessionId:toolSession});
-  return {outcome:{outcome:'cancelled'}};
- };
+ const {sessionId:toolSession}=await cli.request('session/new',{cwd:f.workspace,mcpServers:[]});
  const toolReply=await cli.request('session/prompt',{sessionId:toolSession,prompt:[{type:'text',text:'Protocol fixture only'}]});
- assert.equal(toolReply.stopReason,'cancelled');
- assert.deepEqual(proposals,[{toolCallId:'native-fixture-call',name:toolName,arguments:{note:'proposal only'}}]);
- assert.equal(permissions.length,1);assert(mcpMethods.includes('initialize'));assert(mcpMethods.includes('tools/list'));assert(!mcpMethods.includes('tools/call'));
+ assert.equal(toolReply.stopReason,'end_turn');
+ const toolChunks=cli.updates(toolSession,'agent_message_chunk').map(update=>update.content.text).join('');
+ assert(toolChunks.includes('"native-fixture-call"'));
+ assert.equal(cli.updates(toolSession,'tool_call').length,0,'Copilot ACP emits zero tool_call updates');
  assert.deepEqual(await cli.request('session/close',{sessionId:toolSession}),{});
  assert.equal(cli.child.pid,pid);assert.equal(cli.child.exitCode,null);assert.equal(cli.methods.filter(method=>method==='initialize').length,1);
  assert(!cli.methods.some(method=>['connect','session.create','session.send','session.delete'].includes(method)),'The text and tool paths remain entirely on ACP');
  await cli.finish();assert.deepEqual(f.providerErrors,[]);assert.deepEqual(f.inferenceRequests,['POST /v1/chat/completions','POST /v1/chat/completions']);
- assert.deepEqual(mcpErrors,[]);
 });
 
 test('the production ACP adapter reuses installed Copilot for streaming, catalog and a Codex tool proposal',{timeout:60000},async t=>{
@@ -258,13 +229,14 @@ test('the production ACP adapter reuses installed Copilot for streaming, catalog
  const f=await fixture((body,index,res)=>{
   assert(index<3,'No second inference may execute a proposed tool');assert.equal(body.model,'protocol-smoke');
   const names=(body.tools??[]).map((tool:any)=>tool.function.name);observedTools.push(names);
-  if(index===1){assert.equal(names.length,1);assert.match(names[0],/^bdd_[a-f0-9]{24}-workbench_get_requirement_proposals$/);assert(names[0].length<=64,'The longest workstation tool keeps its exact name');}
-  else assert.deepEqual(names,[],'No builtin or inherited tool is exposed to inference');
-  const delta=index===1?{role:'assistant',content:'',tool_calls:[{index:0,id:'adapter-proposal',type:'function',function:{name:names[0],arguments:'{"note":"only a proposal"}'}}]}:{role:'assistant',content:`Native adapter reply ${index}`};
+  assert.deepEqual(names,[],'No builtin or MCP tool is exposed to Copilot inference');
+  if(index===1)assert(JSON.stringify(body.messages).includes(toolName),'Adapter embeds the declared tool catalog in the inference prompt');
+  const delta=index===1?{role:'assistant',content:JSON.stringify({type:'tool_calls',calls:[{id:'adapter-proposal',name:toolName,arguments:{note:'only a proposal'}}]})}
+   :{role:'assistant',content:`Native adapter reply ${index}`};
   const chunk={id:'adapter-fixture-'+index,object:'chat.completion.chunk',created:1,model:'protocol-smoke'};
   res.writeHead(200,{'content-type':'text/event-stream'});
   res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta,finish_reason:null}]})+'\n\n');
-  res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:index===1?'tool_calls':'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})+'\n\n');
+  res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})+'\n\n');
   res.end('data: [DONE]\n\n');
  });
  let runtime:ReturnType<typeof createCopilotRuntime>|undefined;
@@ -289,7 +261,7 @@ child.on('error',error=>{process.stderr.write(error.message);process.exitCode=1;
  assert.deepEqual(proposal.calls,[{toolCallId:'adapter-proposal',mcpServerName:'codex_handoff',mcpToolName:toolName,arguments:{note:'only a proposal'}}]);
  const third=await runtime.completion(settings,'Another isolated inference',signal,[]);assert(third.text.endsWith('Native adapter reply 2'));assert.deepEqual(third.calls,[]);
  const spawns=(await readFile(tracePath,'utf8')).trim().split('\n').map(line=>JSON.parse(line));assert.equal(spawns.length,1,'One installed ACP process serves catalog, text and tool proposals');
- assert(spawns[0].args.includes('--acp'));assert(!spawns[0].args.includes('--headless'));
+ assert(spawns[0].args.includes('--acp'));assert(!spawns[0].args.includes('--headless'));assert(spawns[0].args.includes('--available-tools=__bdd_no_tools__'));
  assert.equal(observedTools.length,3);assert.deepEqual(f.providerErrors,[]);
  await runtime.close();
 });
@@ -307,15 +279,19 @@ test('the real SDK and an exec protocol peer preserve Codex function and custom 
  const f=await fixture((body,index,res)=>{
   assert(index<4,'Only the exec peer starts the next inference after a handoff');
   const catalog=body.tools??[],names=catalog.map((tool:any)=>tool.function.name);observed.push(names);
-  assert.equal(names.length,3);assert(names.every((name:string)=>/^bdd_[a-f0-9]{24}-codex_tool_000[0-2]$/.test(name)),'Only declared proposal aliases reach Copilot');
-  if(index>0)assert(JSON.stringify(body.messages).includes('Protocol fixture result only; no tool was executed'), 'Codex-owned tool results survive the next model request');
-  const selected=index<3?catalog.find((tool:any)=>tool.function.name.endsWith('-codex_tool_000'+index)):undefined;
+  assert.deepEqual(names,[],'Zero MCP or builtin tools reach Copilot inference');
+  const serialized=JSON.stringify(body.messages);
+  for(const alias of ['codex_tool_0000','codex_tool_0001','codex_tool_0002'])assert(serialized.includes(alias),'Declared proposal aliases are embedded in the prompt');
+  if(index>0)assert(serialized.includes('Protocol fixture result only; no tool was executed'), 'Codex-owned tool results survive the next model request');
   const argumentsByStep=[{cmd:'printf protocol-fixture'},{input:patch},{}];
-  const delta=selected?{role:'assistant',content:'',tool_calls:[{index:0,id:'sdk-proposal-'+index,type:'function',function:{name:selected.function.name,arguments:JSON.stringify(argumentsByStep[index])}}]}:{role:'assistant',content:'SDK bridge fixture complete'};
+  const content=index<3
+   ?JSON.stringify({type:'tool_calls',calls:[{id:'sdk-proposal-'+index,name:'codex_tool_000'+index,arguments:argumentsByStep[index]}]})
+   :JSON.stringify({type:'message',text:'SDK bridge fixture complete'});
+  const delta={role:'assistant',content};
   const chunk={id:'sdk-model-fixture-'+index,object:'chat.completion.chunk',created:1,model:'protocol-smoke'};
   res.writeHead(200,{'content-type':'text/event-stream'});
   res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta,finish_reason:null}]})+'\n\n');
-  res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:selected?'tool_calls':'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})+'\n\n');res.end('data: [DONE]\n\n');
+  res.write('data: '+JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})+'\n\n');res.end('data: [DONE]\n\n');
  });
  let provider:Awaited<ReturnType<typeof createChatProvider>>|undefined;
  t.after(async()=>{try{await provider?.close();}finally{await f.close();}});

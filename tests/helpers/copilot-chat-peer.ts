@@ -17,9 +17,10 @@ export interface CopilotPeerOptions {
  reuseSessionId?:boolean;
  toolArguments?:Record<string,unknown>;
  toolIndex?:number;
+ currentModeId?:string;
 }
 
-/** ACP subprocess fixture. It exercises the real local proposal MCP bridge, never a model. */
+/** ACP subprocess fixture. It exercises pure inference protocol translation with zero MCP servers. */
 export async function copilotChatPeer(directory:string,options:CopilotPeerOptions={}){
  const suffix=randomUUID(),file=path.join(directory,`copilot-chat-peer-${suffix}.mjs`),tracePath=path.join(directory,`copilot-chat-trace-${suffix}.jsonl`);
  await writeFile(file,`
@@ -41,10 +42,6 @@ function modelState(model){
  if(options.legacyModels)return {models:{currentModelId:model??models[0]?.id,availableModels:Array.isArray(models)?models.map(item=>({modelId:item.id,name:item.name})):models}};
  return {configOptions:options.modelConfigOptions??[{id:'model',category:'model',type:'select',name:'Model',currentValue:model??models[0]?.id,options:Array.isArray(models)?models.map(item=>({value:item.id,name:item.name})):models}]};
 }
-async function mcp(server,method,params={}){
- const response=await fetch(server.url,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream',...Object.fromEntries(server.headers.map(header=>[header.name,header.value]))},body:JSON.stringify({jsonrpc:'2.0',id:randomUUID(),method,params})});
- const result=await response.json();trace({type:'mcp',method,status:response.status,result:result.result,error:result.error});if(result.error)throw Error(result.error.message);return result.result;
-}
 async function request(q){
  trace({type:q.method?'request':'client-response',id:q.id,method:q.method,params:q.params,result:q.result,error:q.error});
  if(!q.method)return;
@@ -53,10 +50,9 @@ async function request(q){
  if(q.method==='initialize')return respond(q,{protocolVersion:options.protocolVersion??1,agentCapabilities:options.capabilities??{mcpCapabilities:{http:true},sessionCapabilities:{close:{}}},agentInfo:{name:'protocol-fixture',version:'1'}});
  if(q.method==='session/new'){
   if(options.authenticated===false)return fail(q,'Authentication required');
-  const sessionId=options.reuseSessionId?(sharedSessionId??='fixture-'+randomUUID()):'fixture-'+randomUUID(),session={...p,model:undefined,tools:[],mcp:p.mcpServers?.[0]};
-  if(session.mcp){await mcp(session.mcp,'initialize',{protocolVersion:'2025-06-18',clientInfo:{name:'fixture',version:'1'},capabilities:{}});session.tools=(await mcp(session.mcp,'tools/list')).tools;}
+  const sessionId=options.reuseSessionId?(sharedSessionId??='fixture-'+randomUUID()):'fixture-'+randomUUID(),session={...p,model:undefined};
   sessions.set(sessionId,session);trace({type:'session-created',sessionId});event(sessionId,{sessionUpdate:'available_commands_update',availableCommands:[]});
-  return respond(q,{sessionId,...modelState()});
+  return respond(q,{sessionId,...modelState(),...(options.currentModeId?{modes:{currentModeId:options.currentModeId}}:{})});
  }
  if(q.method==='session/set_config_option'||q.method==='session/set_model'){
   const session=sessions.get(p.sessionId);if(!session)return fail(q,'Session missing');session.model=p.value??p.modelId;
@@ -77,16 +73,15 @@ async function request(q){
   const finish=result=>{prompts.delete(p.sessionId);respond(q,result);};
   const run=async()=>{
    const toolCallId='call-'+p.sessionId;
-   if(prompt.includes('[[builtin]]'))return event(p.sessionId,{sessionUpdate:'tool_call',toolCallId,title:'bash',kind:'execute',status:'in_progress',rawInput:{command:'false'}});
+   let tools=[];try{const tail=prompt.indexOf('\\n{');if(tail>=0)tools=JSON.parse(prompt.slice(tail+1)).tools??[];}catch{}
+   if(prompt.includes('[[builtin]]')||prompt.includes('[[tool-executed]]'))return event(p.sessionId,{sessionUpdate:'tool_call',toolCallId,title:'bash',kind:'execute',status:prompt.includes('[[tool-executed]]')?'completed':'in_progress',rawInput:{command:'false'}});
    if(prompt.includes('[[permission]]')||prompt.includes('[[rpc-permission]]')||prompt.includes('[[fs-request]]')||prompt.includes('[[terminal-request]]'))return send({jsonrpc:'2.0',id:'permission-'+p.sessionId,method:prompt.includes('[[fs-request]]')?'fs/read_text_file':prompt.includes('[[terminal-request]]')?'terminal/create':'session/request_permission',params:{sessionId:p.sessionId,toolCall:{toolCallId,title:'bash',rawInput:{command:'false'}},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
-   if(['tool','tool-http','bad-tool','tool-executed','invalid-tool-type','mismatch'].some(marker=>prompt.includes('[['+marker+']]'))){
-    const name=prompt.includes('[[bad-tool]]')?'shell':session.tools[options.toolIndex??0]?.name;
+   if(['tool','bad-tool','invalid-tool-type','mismatch'].some(marker=>prompt.includes('[['+marker+']]'))){
+    const name=prompt.includes('[[bad-tool]]')?'shell':tools[options.toolIndex??0]?.name;
     const args=prompt.includes('[[invalid-tool-type]]')?[]:options.toolArguments??{};
-    event(p.sessionId,{sessionUpdate:'tool_call',toolCallId,title:session.mcp.name+'-'+name,kind:'other',status:'in_progress',rawInput:args});
-    if(prompt.includes('[[mismatch]]'))return event(p.sessionId,{sessionUpdate:'tool_call_update',toolCallId,rawInput:{changed:true}});
-    if(prompt.includes('[[tool-executed]]'))return event(p.sessionId,{sessionUpdate:'tool_call_update',toolCallId,status:'completed'});
-    if(prompt.includes('[[tool-http]]')){void mcp(session.mcp,'tools/call',{name,arguments:args}).catch(()=>{});return;}
-    send({jsonrpc:'2.0',id:'permission-'+p.sessionId,method:'session/request_permission',params:{sessionId:p.sessionId,toolCall:{toolCallId,title:name,rawInput:args},options:[{optionId:'allow',kind:'allow_once',name:'Allow'},{optionId:'reject',kind:'reject_once',name:'Reject'}]}});return;
+    const calls=prompt.includes('[[mismatch]]')?[{id:toolCallId,name,arguments:{}},{id:toolCallId,name,arguments:{changed:true}}]:[{id:toolCallId,name,arguments:args}];
+    event(p.sessionId,{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({type:'tool_calls',calls})}});
+    return finish({stopReason:'end_turn'});
    }
    if(prompt.includes('[[error]]')){prompts.delete(p.sessionId);return fail(q,'Protocol fixture failure');}
    if(prompt.includes('[[empty]]'))return finish({stopReason:'end_turn'});

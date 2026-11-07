@@ -58,3 +58,20 @@ test('historical CLI execution remains read-only and cannot dispatch terminal in
   assert.equal(terminals[0].options.disableStdin,true);assert.equal(terminals[0].input,undefined);
   assert.deepEqual(posts,[]);assert.match(element('#operation-input-help').textContent,/僅供檢視/);
 });
+
+test('interactive CLI Agent session attached to an operation routes human intervention directly to the shared sessionId',async t=>{
+  const {element,restore}=surface(),posts=[];
+  const view=operationTerminal({api:async(path,method,input)=>{
+    if(method==='POST'){posts.push({path,input});return {sessionId:'AS-shared-1',seq:3};}
+    return {...state('codex-sdk'),agentSessions:[{sessionId:'AS-shared-1',status:'BUSY'}]};
+  },note:message=>assert.fail(message)});
+  t.after(()=>{view.leave();restore();});
+  await view.open(operation('job-sdk-supervisor','codex-sdk'));await tick();
+  assert.match(element('#operation-input-help').textContent,/AS-shared-1/);
+  const field=element('#operation-sdk-message'),form=element('#operation-sdk-input');
+  field.value='請補上空密碼錯誤處理';field.events.input();
+  assert.equal(element('#operation-sdk-send').disabled,false);
+  await form.events.submit({preventDefault(){}});
+  assert.deepEqual(posts,[{path:'/agent-sessions/AS-shared-1/messages',input:{message:'請補上空密碼錯誤處理'}}]);
+  assert.match(element('#operation-sdk-input-status').textContent,/互動式 CLI Agent Session/);
+});

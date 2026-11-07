@@ -503,3 +503,40 @@ Feature: 多人共用的BDD軟體開發工作台
     When 使用者從對話模型選單選擇模型
     Then 模型選擇保存於 SQLite 且重新載入仍保留
     And 重新整理模型清單不更動目前選擇
+
+  @AC-WB-048
+  Scenario: Copilot ACP 純模型推論與 Codex 原生 MCP 工具執行隔離
+    Given Codex SDK 與 Copilot ACP 已啟用且對話或派工已宣告原生 MCP 工具
+    When 使用者送出需要呼叫多個 MCP 工具的任務或對話訊息
+    Then Adapter 向 Copilot ACP 建立 session/new 時 mcpServers 恆為空陣列且禁用內建 MCP 與內建工具
+    And Copilot ACP 僅回傳純模型推論與符合工具宣告名稱及參數 JSON Schema 白名單的結構化工具呼叫提案，不註冊、不連接、不執行任何 MCP Server
+    And Prompt 正規化僅過濾衝突的內建工具樣板並完整保留禁止呼叫 Git、權限邊界與人類授權指令
+    And Codex SDK 透過自己的原生 MCP 執行實際工具並將結果送回下一輪推論完成回覆
+
+  @AC-WB-049
+  Scenario: Codex SDK 與聊天室透過單一共用 Agent Supervisor 派工長駐互動式 CLI Agent 並支援人類明確佇列或中斷介入
+    Given 工作站已在聊天室與派工皆啟用單一共用 agent_supervisor 原生 MCP Server 與受 Git 邊界及目錄權限保護的互動式 CLI Agent
+    When Codex 呼叫 agent_start 啟動長駐 CLI Agent 工作階段並送出初始任務
+    Then Supervisor 立即回傳持久 sessionId 並保留同一 CLI Agent 程序與 QUEUED、DELIVERED、PROCESSED 訊息狀態紀錄
+    When CLI Agent 執行回合期間人類從工作站介入同一 sessionId 發送修正指令且指定 queue 或 interrupt 策略
+    Then queue 模式不自動取消執行中回合但將人類訊息優先排在待執行佇列最前端，interrupt 模式才明確取消目前回合並優先於同一 CLI Agent Session 執行人類介入指令
+    And Codex 透過 agent_events 讀取包含人類介入與 Agent 輸出的增量事件，並可透過 agent_list、agent_cancel 或 agent_stop 管理該工作階段
+
+  @AC-WB-050
+  Scenario: 在 Copilot ACP 與 Kiro CLI ACP 之間切換純模型推論來源並維持零 MCP 隔離
+    Given 工作站同時支援 "copilot" 與 "kiro" 兩組 ACP 純模型推論來源
+    When 使用者將推論來源切換為 "kiro" 並重新載入模型清單
+    Then 工作站透過 kiro-cli acp 取得可選模型清單並將選擇保存於 SQLite chat_settings
+    And Adapter 在隔離推論目錄同時寫入零工具 bdd_inference agent 設定與空的 .kiro/settings/mcp.json，且每個 session/new 皆強制 mcpServers 為空陣列並驗證 currentModeId 為 "bdd_inference"
+    When 使用者在聊天室或 Codex SDK 派工執行需要呼叫原生 MCP 工具的任務
+    Then Kiro CLI ACP 僅提供純模型推論與符合 JSON Schema 的工具呼叫提案，不載入或執行任何 MCP 工具，實際 MCP 工具仍由 Codex 原生執行
+    And 使用者可隨時切換回 "copilot" ACP 推論來源且對話歷史與工作階段保持完整
+
+  @AC-WB-051
+  Scenario: 透過受控 CLI Agent Profile 白名單派工並在 Web UI 面板進行即時監看、佇列介入、中斷與結束
+    Given Persistent Agent Supervisor 已註冊受控的 CLI Agent Profile 白名單（"copilot"、"kiro"、"codex"、"claude"）並強制套用 Git 攔截守衛與環境變數淨化
+    When 主 Agent 從聊天室透過 agent_start 或人類從 Web UI 選擇指定 agentProfile 啟動長駐 CLI Agent 工作階段
+    Then Supervisor 依白名單解析對應執行檔與協定（ACP 優先、PTY 相容）啟動程序，並拒絕任何未在白名單內的執行檔或越權參數
+    And Web UI 的 CLI Agent 工作階段面板即時顯示該 sessionId、agentProfile、狀態（IDLE/BUSY/STOPPED/FAILED）與完整事件串流
+    When 人類從 Web UI 面板對同一 sessionId 執行佇列送出（queue）、強制中斷插話（interrupt）、取消當前回合（cancel）或結束工作階段（stop）
+    Then Supervisor 立即在同一個 CLI Agent Session 上套用對應控制並更新 SQLite 狀態與事件串流，主 Agent 亦可從聊天室透過 agent_events 同步讀取最新互動紀錄

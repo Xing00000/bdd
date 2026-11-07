@@ -1,4 +1,8 @@
+import {randomUUID} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
+
 export const workstationNamespace='mcp__workbench';
+export const agentSupervisorNamespace='mcp__agent_supervisor';
 export const codexProposalNamespace='codex_proposals';
 export type ProviderToolPolicy=boolean|'codex';
 export interface CopilotTool {name:string;namespace:string;description:string;parameters:Record<string,unknown>}
@@ -7,17 +11,28 @@ export interface CopilotCompletion {text:string;calls:CopilotCall[]}
 interface CodexToolIdentity {type:'function'|'custom';name:string;namespace?:string}
 export interface ProviderTool extends CopilotTool {source?:CodexToolIdentity}
 
-export function workstationTools(value:any,enabled:boolean):CopilotTool[]{
+const allowedChatNamespaces=new Set([workstationNamespace,agentSupervisorNamespace]);
+
+export function workstationTools(value:any,enabled:boolean):ProviderTool[]{
  if(!enabled)return [];
  if(value===undefined)return [];
  if(!Array.isArray(value))throw Error('Codex 工具目錄格式錯誤');
- return value.filter(t=>t.type==='namespace'&&t.name===workstationNamespace).flatMap(t=>{
-  if(!Array.isArray(t.tools))throw Error('Codex 工作站工具目錄格式錯誤');
-  return t.tools.map((f:any)=>{
-   if(f.type!=='function'||typeof f.name!=='string'||typeof f.description!=='string'||!f.parameters||f.parameters.type!=='object')throw Error('Codex 工作站工具定義錯誤');
-   return {name:f.name,namespace:t.name,description:f.description,parameters:f.parameters};
-  });
- });
+ const out:ProviderTool[]=[];
+ for(const t of value){
+  if(t?.type==='namespace'&&allowedChatNamespaces.has(t.name)){
+   if(!Array.isArray(t.tools))throw Error('Codex 工作站工具目錄格式錯誤');
+   for(const f of t.tools){
+    if(f?.type!=='function'||typeof f.name!=='string'||typeof f.description!=='string'||!f.parameters||f.parameters.type!=='object')throw Error('Codex 工作站工具定義錯誤');
+    out.push({name:f.name,namespace:t.name,description:f.description,parameters:f.parameters});
+   }
+  }else if(t?.type==='function'&&typeof t.name==='string'&&(t.name.startsWith('mcp__workbench__')||t.name.startsWith('mcp__agent_supervisor__'))){
+   if(typeof t.description!=='string'||!t.parameters||t.parameters.type!=='object')throw Error('Codex 工作站工具定義錯誤');
+   const ns=t.name.startsWith('mcp__agent_supervisor__')?agentSupervisorNamespace:workstationNamespace;
+   const shortName=t.name.slice(ns.length+2);
+   out.push({name:shortName,namespace:ns,description:t.description,parameters:t.parameters,source:{type:'function',name:t.name}});
+  }
+ }
+ return out;
 }
 
 export function conversationInput(value:any,toolsEnabled:boolean){
@@ -31,9 +46,10 @@ export function conversationInput(value:any,toolsEnabled:boolean){
   }
   if(!toolsEnabled)throw Error('此聊天執行環境不支援工具項目');
   if(item?.type==='function_call'){
-   if(item.namespace!==workstationNamespace||typeof item.name!=='string'||typeof item.call_id!=='string'||!item.call_id||calls.has(item.call_id)||typeof item.arguments!=='string')throw Error('不支援工具或工具呼叫格式錯誤');
+   const validNamespace=allowedChatNamespaces.has(item.namespace)||(item.namespace===undefined&&typeof item.name==='string'&&(item.name.startsWith('mcp__workbench__')||item.name.startsWith('mcp__agent_supervisor__')));
+   if(!validNamespace||typeof item.name!=='string'||typeof item.call_id!=='string'||!item.call_id||calls.has(item.call_id)||typeof item.arguments!=='string')throw Error('不支援工具或工具呼叫格式錯誤');
    const args=JSON.parse(item.arguments);if(!args||typeof args!=='object'||Array.isArray(args))throw Error('工具參數必須是物件');calls.add(item.call_id);
-   return {type:item.type,namespace:item.namespace,name:item.name,call_id:item.call_id,arguments:item.arguments};
+   return {type:item.type,...(item.namespace===undefined?{}:{namespace:item.namespace}),name:item.name,call_id:item.call_id,arguments:item.arguments};
   }
   if(item?.type==='function_call_output'){
    if(!calls.has(item.call_id)||outputs.has(item.call_id))throw Error('工具結果缺少對應呼叫');
@@ -78,7 +94,7 @@ export function providerTools(value:any,policy:ProviderToolPolicy):ProviderTool[
   // Original namespace/name pairs can collide or exceed Copilot's 64-char
   // combined MCP name limit. Only this request's short aliases reach ACP.
   tools.push({name:'codex_tool_'+String(tools.length).padStart(4,'0'),namespace:codexProposalNamespace,source,parameters,
-   description:`Propose the Codex tool ${JSON.stringify(source)}. Codex owns execution; this MCP endpoint only records the proposal.\n${namespaceDescription}\n${tool.description??''}${format}`});
+   description:`Propose the Codex tool ${JSON.stringify(source)} by returning the JSON tool_calls text envelope. Codex owns execution.\n${namespaceDescription}\n${tool.description??''}${format}`});
  };
  for(const entry of value){
   if(entry?.type==='namespace'){
@@ -138,4 +154,178 @@ export function responseToolCall(call:CopilotCall,tools:ProviderTool[]){
   return {type:'custom_tool_call' as const,...identity,input:call.arguments.input};
  }
  return {type:'function_call' as const,...identity,arguments:JSON.stringify(call.arguments)};
+}
+
+function matchDeclaredTool(rawCall:any,tools:ProviderTool[]):ProviderTool|undefined{
+ if(!object(rawCall)||typeof rawCall.name!=='string')return undefined;
+ const direct=tools.find(tool=>tool.name===rawCall.name);
+ if(direct)return direct;
+ const bySource=tools.filter(tool=>tool.source&&tool.source.name===rawCall.name&&(rawCall.namespace===undefined||tool.source.namespace===rawCall.namespace));
+ if(bySource.length===1)return bySource[0];
+ return tools.find(tool=>tool.source?.namespace&&`${tool.source.namespace}__${tool.source.name}`===rawCall.name);
+}
+
+function isConflictingCodexBoilerplateOnly(text:string):boolean{
+ if(text.includes('Do not invoke Git')||text.includes('<permissions instructions>')||text.includes('approval_policy')||text.includes('sandbox_mode')||text.includes('workbench_task')||text.includes('agent_supervisor'))return false;
+ return (text.startsWith('You are a coding agent running in the Codex CLI')&&text.includes('How you work'))||text.startsWith('<skills_instructions>');
+}
+
+function validateValueAgainstPropSchema(value:unknown,propSchema:any):boolean{
+ if(!object(propSchema))return true;
+ if(Array.isArray(propSchema.enum)&&!propSchema.enum.includes(value))return false;
+ const type=propSchema.type;
+ if(type==='string'){
+  if(typeof value!=='string')return false;
+  if(typeof propSchema.minLength==='number'&&value.length<propSchema.minLength)return false;
+  if(typeof propSchema.maxLength==='number'&&value.length>propSchema.maxLength)return false;
+  return true;
+ }
+ if(type==='integer'){
+  if(typeof value!=='number'||!Number.isInteger(value))return false;
+  if(typeof propSchema.minimum==='number'&&value<propSchema.minimum)return false;
+  if(typeof propSchema.maximum==='number'&&value>propSchema.maximum)return false;
+  return true;
+ }
+ if(type==='number'){
+  if(typeof value!=='number'||!Number.isFinite(value))return false;
+  if(typeof propSchema.minimum==='number'&&value<propSchema.minimum)return false;
+  if(typeof propSchema.maximum==='number'&&value>propSchema.maximum)return false;
+  return true;
+ }
+ if(type==='boolean')return typeof value==='boolean';
+ if(type==='array'){
+  if(!Array.isArray(value))return false;
+  if(object(propSchema.items))return value.every(item=>validateValueAgainstPropSchema(item,propSchema.items));
+  return true;
+ }
+ if(type==='object')return validateArgumentsAgainstSchema(value,propSchema);
+ return true;
+}
+
+function validateArgumentsAgainstSchema(args:unknown,schema:any):args is Record<string,unknown>{
+ if(!object(args))return false;
+ if(!object(schema))return true;
+ const required=Array.isArray(schema.required)?schema.required:[];
+ for(const key of required){
+  if(typeof key==='string'&&(!Object.hasOwn(args,key)||args[key]===undefined))return false;
+ }
+ const properties=object(schema.properties)?schema.properties:undefined;
+ if(schema.additionalProperties===false&&properties){
+  for(const key of Object.keys(args)){
+   if(!Object.hasOwn(properties,key))return false;
+  }
+ }
+ if(properties){
+  for(const [key,val] of Object.entries(args)){
+   if(val!==undefined&&Object.hasOwn(properties,key)&&!validateValueAgainstPropSchema(val,properties[key]))return false;
+  }
+ }
+ return true;
+}
+
+function normalizeHistoryForEnvelope(input:unknown,tools:ProviderTool[]){
+ if(!Array.isArray(input))return [];
+ return input.map((item:any)=>{
+  if(!object(item))return item;
+  if(item.type==='function_call'||item.type==='custom_tool_call'){
+   const matched=matchDeclaredTool(item,tools),name=matched?.name??item.name;
+   const args=item.type==='custom_tool_call'?{input:item.input}:JSON.parse(item.arguments??'{}');
+   return {role:'assistant',call_id:item.call_id,envelope:{type:'tool_calls',calls:[{name,arguments:args}]}};
+  }
+  if(item.type==='function_call_output'||item.type==='custom_tool_call_output'){
+   return {role:'tool_result',call_id:item.call_id,output:item.output};
+  }
+  if(item.type==='message'&&item.role==='developer'&&Array.isArray(item.content)){
+   const text=item.content.map((part:any)=>part?.text??'').join('\n');
+   if(isConflictingCodexBoilerplateOnly(text))return null;
+  }
+  return item;
+ }).filter(Boolean);
+}
+
+/** Embed declared tools as a pure text/JSON inference contract without any Copilot MCP servers. */
+export function formatInferencePrompt(prompt:string,tools:ProviderTool[]):string{
+ if(!tools.length)return prompt;
+ const catalog=tools.map(tool=>({name:tool.name,...(tool.source?{source:tool.source}:{}),description:tool.description,parameters:tool.parameters}));
+ const responseContract={
+  mode:'pure_inference_json_envelope',
+  rule:'You have NO native or MCP tools on this transport. Never emit preamble text before a tool call. To propose one or more tools from the "tools" array, output ONLY a single raw JSON object (no markdown fences): {"type":"tool_calls","calls":[{"name":"<exact tool.name from tools>","arguments":{...}}]}. When all tool steps are complete and you are ready to answer, output ONLY raw JSON: {"type":"message","text":"<your final response>"}.',
+ };
+ const newline=prompt.indexOf('\n{');
+ if(newline>=0){
+  try{
+   const payload=JSON.parse(prompt.slice(newline+1));
+   const sanitizedInput=Array.isArray(payload.input)?payload.input.map((item:any)=>{
+    if(item?.type==='message'&&item.role==='developer'&&Array.isArray(item.content)){
+     const text=item.content.map((part:any)=>part?.text??'').join('\n');
+     if(isConflictingCodexBoilerplateOnly(text)){
+      if(text.startsWith('<skills_instructions>'))return null;
+      return {...item,content:[{type:'input_text',text:'You are a coding agent running in the Codex CLI. Follow responseContract and normalizedHistory strictly.'}]};
+     }
+    }
+    return item;
+   }).filter(Boolean):payload.input;
+   return prompt.slice(0,newline+1)+JSON.stringify({...payload,input:sanitizedInput,tools:catalog,normalizedHistory:normalizeHistoryForEnvelope(payload.input,tools),responseContract});
+  }catch{ /* Fall through to two-line wrapper if prompt tail is not JSON. */ }
+ }
+ return `${prompt}\n${JSON.stringify({tools:catalog,responseContract})}`;
+}
+
+const copilotStartupNotice=/^(?:Info: (?:Disabled tools: [^\n{]*|Unknown tool name in the tool allowlist: "[^"]*")\s*)+/;
+const allowedCallKeys=new Set(['id','name','namespace','arguments','input']);
+
+/** Parse pure text inference output and validate any proposed tool calls against the declared catalog and JSON Schema. */
+export function parseInferenceCompletion(rawText:string,tools:ProviderTool[]):CopilotCompletion{
+ if(!tools.length){
+  if(!rawText.trim())throw Error('Copilot 未完成回覆');
+  return {text:rawText,calls:[]};
+ }
+ const cleaned=rawText.replace(copilotStartupNotice,'').trim();
+ if(!cleaned)throw Error('Copilot 未完成回覆');
+ const unfenced=cleaned.replace(/^```(?:json)?\s*|\s*```$/g,'').trim();
+ const looksLikeEnvelope=unfenced.startsWith('{"type":')||unfenced.startsWith('{"type" :')||/\{\s*"type"\s*:\s*"tool_calls"/.test(unfenced);
+ const envelopeIndex=Math.max(
+  unfenced.lastIndexOf('{"type":"tool_calls"'),
+  unfenced.lastIndexOf('{"type": "tool_calls"'),
+  unfenced.lastIndexOf('{"type":"message"'),
+  unfenced.lastIndexOf('{"type": "message"'),
+ );
+ const candidate=envelopeIndex>=0?unfenced.slice(envelopeIndex):(unfenced.startsWith('{')&&unfenced.endsWith('}')?unfenced:'');
+ if(candidate||looksLikeEnvelope){
+  let parsed:any;
+  try{parsed=JSON.parse(candidate||unfenced);}catch{parsed=undefined;}
+  if(!object(parsed)){
+   if(looksLikeEnvelope||envelopeIndex>=0)throw Error('Copilot 要求未授權或無效的工具提案');
+   return {text:rawText,calls:[]};
+  }
+  if(parsed.type==='tool_calls'){
+   if(Object.keys(parsed).some(k=>k!=='type'&&k!=='calls')||!Array.isArray(parsed.calls)||!parsed.calls.length)throw Error('Copilot 要求未授權或無效的工具提案');
+   const calls:CopilotCall[]=[],declared=new Map<string,{name:string;args:Record<string,unknown>}>();
+   for(const rawCall of parsed.calls){
+    if(!object(rawCall)||Object.keys(rawCall).some(k=>!allowedCallKeys.has(k)))throw Error('Copilot 要求未授權或無效的工具提案');
+    const matched=matchDeclaredTool(rawCall,tools);
+    const args=matched?.source?.type==='custom'&&rawCall?.arguments===undefined&&typeof rawCall?.input==='string'?{input:rawCall.input}:rawCall?.arguments;
+    if(!matched||!validateArgumentsAgainstSchema(args,matched.parameters))throw Error('Copilot 要求未授權或無效的工具提案');
+    const explicitId=typeof rawCall.id==='string'&&rawCall.id?rawCall.id:undefined;
+    if(explicitId&&declared.has(explicitId)){
+     const known=declared.get(explicitId)!;
+     if(known.name!==matched.name||!isDeepStrictEqual(known.args,args))throw Error('Copilot ACP 工具提案參數不一致');
+     continue;
+    }
+    const previous=[...declared].find(([,item])=>item.name===matched.name&&isDeepStrictEqual(item.args,args));
+    const id=explicitId??previous?.[0]??'call_'+randomUUID();
+    declared.set(id,{name:matched.name,args:structuredClone(args)});
+    if(!calls.some(call=>call.toolCallId===id))calls.push({toolCallId:id,mcpServerName:'codex_handoff',mcpToolName:matched.name,arguments:structuredClone(args)});
+    if(calls.length>32)throw Error('Copilot 工具提案超過數量限制');
+   }
+   return {text:'',calls};
+  }
+  if(parsed.type==='message'){
+   if(Object.keys(parsed).some(k=>k!=='type'&&k!=='text')||typeof parsed.text!=='string')throw Error('Copilot 要求未授權或無效的工具提案');
+   if(!parsed.text.trim())throw Error('Copilot 未完成回覆');
+   return {text:parsed.text,calls:[]};
+  }
+  if(looksLikeEnvelope)throw Error('Copilot 要求未授權或無效的工具提案');
+ }
+ return {text:rawText,calls:[]};
 }
