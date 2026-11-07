@@ -5,12 +5,14 @@ on:
       - 'packages/workstation/session-management/**'
       - 'packages/workstation/http.mjs'
       - 'tests/workstation/session-management*'
+      - 'tests/workstation/session-execution*'
       - '.github/workflows/session-management.yml'
   push:
     branches: [main]
     paths:
       - 'packages/workstation/session-management/**'
       - 'tests/workstation/session-management*'
+      - 'tests/workstation/session-execution*'
 permissions:
   contents: read
 jobs:
@@ -24,5 +26,9 @@ jobs:
           node-version: '24'
       # This slice deliberately has no third-party dependencies. The repository's
       # existing workflow remains responsible for npm ci/build/full regression.
-      - run: node --test tests/workstation/session-management*.test.mjs
-      - run: node --check packages/workstation/http.mjs
+      - run: node --test tests/workstation/session-management*.test.mjs tests/workstation/session-execution*.test.mjs
+      - run: |
+          node --check packages/workstation/http.mjs
+          node --check packages/workstation/session-management/execution-controller.mjs
+          node --check packages/workstation/session-management/runtime-adapter.mjs
+          node --check scripts/mcp-session-node.mjs

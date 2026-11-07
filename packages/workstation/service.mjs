@@ -23,6 +23,7 @@ import {llmTasks} from './interaction-types.mjs';
 import {sdkServiceShutdownGraceMs} from './agent-lifecycle.mjs';
 import {openChat} from './chat.mjs';
 import {createAgentSupervisor,listAgentSessions,readAgentSession,readAgentSessionEvents} from './agent-supervisor.mjs';
+import {closeSessionExecution} from './session-management/http.mjs';
 import { workflowStatus } from './workflow.mjs';
 import { workflowState, recordedWorkflow } from './workflow-state.mjs';
 import { validateRequest, repositoryDetail, repositoryPath, readRepositoryFile } from './operations.mjs';
@@ -273,6 +274,7 @@ export async function createWorkstation(configuration) {
         child.once('close', () => { clearTimeout(timer); resolve(); });
       })));
       try {
+        await closeSessionExecution(service);
         if(chatOpening)await chatOpening;
         await chatService?.close();
         if(supervisorOpening)await supervisorOpening;
