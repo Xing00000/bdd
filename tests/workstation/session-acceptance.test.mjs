@@ -25,7 +25,7 @@ async function ready(t){
   await writeFile(path.join(worktree,'app.txt'),'implemented\n');
   const count=(text,key)=>Number(new RegExp('^# '+key+' (\\d+)\\s*$','m').exec(text)?.[1]);
   const runTests=async ({cwd})=>{
-    const env={...process.env};delete env.NODE_TEST_CONTEXT;const {stdout}=await execFile(process.execPath,['--test','tests/pass.test.cjs'],{cwd,timeout:10000,env});
+    const env={...process.env};delete env.NODE_TEST_CONTEXT;const {stdout}=await execFile(process.execPath,['--test','--test-reporter=tap','tests/pass.test.cjs'],{cwd,timeout:10000,env});
     const outcome={total:count(stdout,'tests'),passed:count(stdout,'pass'),failed:count(stdout,'fail'),skipped:count(stdout,'skipped'),cancelled:count(stdout,'cancelled'),exitCode:0};return outcome;
   };
   return {f,worktree,service:new SessionAcceptance(f.m,{runTests,profileId:'real-node-test'})};
