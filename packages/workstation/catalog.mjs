@@ -10,7 +10,6 @@ import { ensureDraft } from './authoring.mjs';
 import { importBoundRepository } from './projection.mjs';
 import { workspaceModules } from '../spec-toolkit/workspace.mjs';
 import { reindexReports } from './reports.mjs';
-import { savePaths } from './flows.mjs';
 
 export async function revisionOptions(root, git) {
   const raw = (await git.command(root, ['for-each-ref', '--format=%(refname)\t%(objectname)', 'refs/remotes/origin/', 'refs/tags/'])).stdout;
@@ -80,6 +79,7 @@ async function initializeMissingProducts(root, git) {
 export async function acquireRepository(context) {
   const { root, options, store, request, git } = context, repositoryId = request.repositoryId;
   const record = store.repository(repositoryId), previous = store.connection(repositoryId);
+  invariant(record.remoteUrl,'GIT_NOT_CONFIGURED','此工作區未設定 Git 來源；資料庫內容仍可編輯。',409);
   const status = { ...previous, status: 'LOADING', operationId: request.operationId, localPath: root, startedAt: new Date().toISOString(), error: null };
   store.setConnection(repositoryId, status);
   await mkdir(path.dirname(root), { recursive: true });
@@ -107,12 +107,11 @@ export async function acquireRepository(context) {
     }
     status.validatedPath=root;status.checkoutBases=checkoutBases;store.setConnection(repositoryId,status);
     if (!state.head && !await exists(path.join(root, 'workbench.yaml'))) {
-      const initialized = await initialize(root, { specRepositoryId: repositoryId, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
+      await initialize(root, { specRepositoryId: repositoryId, templateRoot: path.join(options.toolkitRoot, 'templates/spec-repo/v1'), toolkitRoot: path.join(options.toolkitRoot, 'packages') });
       status.managedGitmodulesHash = digest(await readFile(path.join(root, '.gitmodules'))); store.setConnection(repositoryId, status);
       // Initialization owns these exact new template files. Record the local baseline
       // here, not during SQLite saves, so our own empty .gitmodules is not mistaken
       // for a user's conflicting external edit on the first product preparation.
-      if (context.lifecycleBoundary === 'CREATE_FEATURE') await savePaths(root, initialized.files, git, repositoryId, 'Initialize feature workspace');
       state = await git.inspect(root);
     }
     let draft = await ensureDraft({ ...context, repositoryId });

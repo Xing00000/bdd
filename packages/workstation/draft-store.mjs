@@ -31,6 +31,13 @@ export function draftMethods(db) {
   };
   return {
     draft: read,
+    authoringChanges(){
+      return db.prepare(`SELECT * FROM (
+        SELECT h.repository_id,h.revision,h.operation_id,h.result_json,h.created_at,o.request_json,o.error_json,
+          ROW_NUMBER() OVER(PARTITION BY h.repository_id ORDER BY h.revision DESC) AS position
+        FROM authoring_history h JOIN operations o ON o.id=h.operation_id
+      ) WHERE position=1`).all().map(row=>({...row,result:JSON.parse(row.result_json),request:JSON.parse(row.request_json),error:row.error_json?JSON.parse(row.error_json):null}));
+    },
     draftSeed(repositoryId) {
       const row=db.prepare('SELECT changes_json FROM authoring_history WHERE repository_id=? ORDER BY revision LIMIT 1').get(repositoryId);
       return row ? JSON.parse(row.changes_json) : [];

@@ -113,7 +113,12 @@ export async function dispatch(service, request) {
     return {status,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:result};
   }
   if (method === 'GET' && parts.join('/') === 'workbench') result = { id: 'local', title: 'BDD 工作台', model: 'workbench/spec-repositories/projects', repositories: service.list().length };
-  else if (method === 'GET' && parts.join('/') === 'capabilities') result = { schemaVersion: 1, executionEnabled: service.options.enableExecution, configFormat: 'JSON-compatible YAML', nestedSubmodules: false, authentication: 'private-loopback deployment', toolkitUpgrade: true, reportReindex: true, legacyImport: Boolean(service.options.legacyFile) };
+  else if (method === 'GET' && parts.join('/') === 'capabilities') result = { schemaVersion: 1, workflowNodes:service.nodeDefinitions,executionEnabled: service.options.enableExecution, configFormat: 'JSON-compatible YAML', nestedSubmodules: false, authentication: 'private-loopback deployment', toolkitUpgrade: true, reportReindex: true, legacyImport: Boolean(service.options.legacyFile) };
+  else if(parts[0]==='nodes'&&parts.length===2&&method==='GET')result=await service.readNode(parts[1]);
+  else if(parts.join('/')==='node-responses'&&method==='POST'){
+    invariant(Object.keys(input).every(key=>['key','response'].includes(key)),'INVALID_ARGUMENT','Only key and response are accepted');
+    result=await service.submitNode(input.key,input.response);
+  }
   else if (parts[0] === 'spec-repositories' && parts.length === 1) {
     if (method === 'GET') result = service.list();
     else if (method === 'POST') { result = service.register(input); status = 201; }

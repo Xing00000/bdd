@@ -4,7 +4,7 @@
 
 ## 責任模型
 
-工作台管理多個 Spec Repo 綁定；Project 以 `repositoryId + projectId` 定位。沒有全域產品工作區，也不要求使用者管理 Git 分支或提交。
+工作台管理多個資料庫工作區，Git 來源為選填的資料交換設定；Project 以 `repositoryId + projectId` 定位。沒有全域產品工作區，也不要求使用者管理 Git 分支或提交。
 
 ```text
 使用者編輯／儲存
@@ -12,13 +12,13 @@
   → 已儲存；不提交或修改 checkout、不需要遠端連線
 
 建立功能
-  → 初始化 Spec／產品來源並建立 Git 起點
+  → SQLite 分配身分並原子保存文件；不取得 Git
 中間編輯／確認／開發／測試
   → SQLite 修訂與工作目錄 → 內容摘要及獨立檔案快照
 人工驗收通過
-  → 驗證當前內容與報告 → 固定產品／Spec／證據 Git 版本
-明確遠端同步
-  → 只分享已固定版本；未固定草稿不得隱含提交
+  → 驗證當前內容與報告 → SQLite 保存人工決定
+明確匯出／遠端同步
+  → 匯出資料庫文件；同步時核對人工驗收並建立產品／Spec／證據版本
 ```
 
 ## 主要模組
@@ -37,10 +37,24 @@
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
 | `src/http/server.ts` | 共用後端的相容性 API／runtime 測試 host，只回傳 API 與正式產物，不供應網站／SPA；`ui/` 已移除。 |
 | `packages/workstation/chat.mjs`、`public/chat.js` | 正式入口的聊天室接線；重用 `src/application/chat.ts` 與 `src/adapters/sqlite/chat.ts`，聊天資料存同一個 `WB_HOME/metadata.sqlite`。Codex 擁有模型上下文，SQLite 擁有原始訊息。 |
-| `packages/workstation/chat-tools.mjs` | 聊天專用的私有 loopback MCP；重用既有 service 的專案／進度讀取、需求提案產生／讀回，以及 `workbench_save_feature` 將既有提案建立為新的功能草稿。儲存重用 `workflow.requirement.save` 的驗證、SQLite authoring 與首次 Git checkpoint，不更新既有功能、不確認任何階段。不暴露 `agent-supervisor` 或任意 shell／階段確認，避免繞過 Codex SDK 另起派工通道。 |
+| `packages/workstation/chat-tools.mjs` | 聊天專用私有 loopback MCP。專案／進度讀取加上 `workbench_get_node(nodeId)` 與 `workbench_submit_node(key,response)`；Chat/ACP 依 node 的 responseSchema 撰寫文件，透過既有保存流程持久化，不派 CLI Agent 寫文件、不確認人工關卡。需求專用建立／提案／保存工具不再出現在聊天目錄。 |
 | `packages/workstation/agent-supervisor.mjs`、`scripts/mcp-agent-supervisor.mjs` | 單一共用的長駐互動式 CLI Agent Supervisor（支援 ACP 與 PTY 互動模式）；提供 Codex SDK 原生 MCP 工具 `agent_start`、`agent_send`、`agent_events`、`agent_list`、`agent_cancel`、`agent_stop` 與工作站 `/repository-api/v1/agent-sessions` 人類雙向介入入口（明確支援 `mode: 'queue' | 'interrupt'` 策略與 `QUEUED`/`DELIVERED`/`PROCESSED` 持久化狀態）。 |
 
-## SQLite schema 10
+## BDD node 契約
+
+`packages/spec-toolkit/workflow-nodes.ts` 唯一擁有五個階段的身分、顯示名稱、審核種類、文件路徑與 response schema。`workflow-agent-stages.ts`、spec-toolkit 審核順序及 UI 均由此派生；`VERIFIED` 保留為驗收結果。`workflow-state.mjs` 繼續以來源摘要、人工確認與封存證據推導狀態，不新增可由模型寫入的平行狀態。
+
+`packages/workstation/workflow-nodes.mjs` 將既有 feature 投影為穩定 nodeId，另提供尚未分配 feature 的需求建立 node。HTTP `GET /repository-api/v1/nodes/:nodeId` 回傳上下文、responseSchema 與提交 key；`POST /repository-api/v1/node-responses` 只接收 `{key,response}`。私有 MCP 使用相同 service。讀取 node 只發出 key，不預先取得 Git 遠端；建立與提交不取得 Git 來源；匯入是獨立的明確操作。
+
+`workflow_node_keys` 將 key 綁定 repository、feature、階段、契約版本／摘要、authoring revision 與固定 operationId。提交前及 worker 取得作業後檢查版本；worker 內部的首次匯入不是外部編輯。文件保存仍由 authoring 的 CAS、來源 token／hash 與審核鎖保護。同一 key 同一回覆可安全讀回原收據，換回覆拒絕。需求完整提交通過官方 Cucumber parser；明確 `draft:true` 保留手動未完成草稿的既有保存語意，兩者都不授予人工確認。
+
+需求 node 保存原文與 Gherkin；設計／測試 node 只允許契約列出的文件路徑；實作／驗收 node 提交既有執行請求，並由原本的人工關卡與真實 runner 判定結果。提交文字不能宣告 VERIFIED。
+
+worker 結束後喚醒 SSE；snapshot 直接讀取與原文同交易保存的 authoring_history 收據作為 `nodeChanges`，不以 Git checkpoint 成功作為刷新前提。HTTP/MCP 收據分列 `saved`、operation status 與 error；匯出衝突可同時為 saved=true、status=FAILED，不能當作同步成功。聊天室 SSE 傳送更新，前端重新讀取工作台；未儲存表單保持原樣，提供查看新需求按鈕並呈現同步錯誤。舊需求 API 保留給既有相容性 consumers；正式需求與文件編輯已使用通用 node 介面。
+
+零工具 ACP 傳輸若回傳 malformed tool JSON，嚴格 parser 拒絕且不執行；在同一 ACP session 請模型重新序列化。所有更正共用原 ChatSettings.timeoutMs 與取消訊號，ACP completion 結果含 validation.rejectedProposals，超時明確報錯；不修補 JSON，不重試授權／schema 違規。這是傳輸驗證，不增加需求專用工具。
+
+## SQLite schema 13
 
 `spec_repositories` 保存綁定網址，不因連線失敗取消登錄。以下是需要備份的正式資料，不是可丟棄快取：
 
@@ -84,7 +98,7 @@ CLI 終端採事件推送：PTY／ACP 輸出先取得持久化事件序號，再
 
 一般 CLI 派工從 registry 的規格庫位置及 `workbench.yaml.projects` 推導正式產品工作目錄；匯入後以目前 SQLite authoring 修訂為設定 owner，匯入前才讀 checkout。`agent-workspaces.mjs` 重用 configuration validator 和 safePath，不另存白名單。MCP `agent_workspaces` 與 GET `/repository-api/v1/agent-sessions/workspaces` 提供相同目錄資料；`agent_start` 接受 repositoryId/projectId 或 cwd，單一候選可自動選取，多個候選必須明確選擇。聊天室啟動表單提供產品工作目錄選單。明確任務 allowedRoots／管理者環境設定保留原限制；沒有已登錄產品的通用 Supervisor 沿用既有行為。已驗證的任務代理可透過帶 token 的控制通道轉送其 worktree，不能把聊天 scratch 目錄誤當成產品的唯一允許範圍。
 
-Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<REQ>/<feature>/<run>`，產品仍是 `projects/<id>` submodule。一般 `prepareProjection` 只將固定 SQLite snapshot 輸出為工作檔案，保留衝突檢查。Git checkpoint 只在建立功能與人工驗收完成時產生。`repository_projection.revision` 記錄檔案輸出修訂，`checkpointRevision` 記錄已固定的 Git 修訂，兩者不可混用。只有 `checkpointKind: ACCEPTED` 且沒有較新草稿才可同步，不隱含提交。
+Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<REQ>/<feature>/<run>`，產品仍是 `projects/<id>` submodule。一般 `prepareProjection` 只將固定 SQLite snapshot 輸出為工作檔案，保留衝突檢查。Git checkpoint 只在明確 repository.sync 時產生。`repository_projection.revision` 記錄檔案輸出修訂，`checkpointRevision` 記錄已固定的 Git 修訂，兩者不可混用。明確同步先核對所選功能仍匹配的人工驗收，再匯出固定版本並發布；保存和人工驗收不隱含提交。
 
 已存在的檔案必須符合上次輸出／匯入摘要或本次預期內容。外部修改不同則暫停，回報「SQLite 已儲存、Repo 尚未更新」。原稿、資料庫內容與同步歷史都保留，不執行 reset、clean 或 Force Push。跨 Repo 不是單一交易，部分同步以回執分辨。
 
@@ -116,9 +130,9 @@ Toolkit 1.4.0 將此模組納入正式 manifest。升級既有 req-tags 工具�
 
 驗收頁以上方 Playwright HTML 報告、下方驗收意見與「LLM 修改實作／驗收通過」組成。意見輸入本身就是使用者審閱的派工文字，點選修改後原樣傳入 `workflow.develop`，不再開另一個 Prompt 表單；派工摘要仍由 `agent-task.mjs` 驗證。工作站在同一開發作業中先以 SQLite revision CAS 保存該報告的 feedback，再派出 Agent；意見與真實執行結果由同一實作互動保存。修改後的測試結果保留為新報告，歷史互動與報告不刪除。
 
-完整自動驗證通過只會進入 `AWAITING_ACCEPTANCE`／`VERIFICATION`，不操作 Git。人工驗收唯一 owner 是 `acceptance.mjs`，`workflow.accept` 核對當前完整報告的 run ID、manifest digest、規格／產品內容摘要及確認者，將 `acceptance.json` 保存於 SQLite 後才固定 Git checkpoint 與證據；不改寫封存測試結果。只有仍匹配且沒有待修意見的人工確認才導出 `COMPLETE`／`VERIFIED`；新報告、規格／產品變動或新的驗收意見使舊確認失去目前適用性，歷史紀錄仍保留。來源編輯 API 禁止偽造 acceptance 檔案。
+完整自動驗證通過只會進入 `AWAITING_ACCEPTANCE`／`VERIFICATION`，不操作 Git。人工驗收唯一 owner 是 `acceptance.mjs`，`workflow.accept` 核對當前完整報告的 run ID、manifest digest、規格／產品內容摘要及確認者，將 `acceptance.json` 原子保存於 SQLite；不改寫封存測試結果。只有仍匹配且沒有待修意見的人工確認才導出 `COMPLETE`／`VERIFIED`；新報告、規格／產品變動或新的驗收意見使舊確認失去目前適用性，歷史紀錄仍保留。來源編輯 API 禁止偽造 acceptance 檔案。
 
-Git checkpoint 或本機 evidence publication 失敗時，保留同一筆人工確認並顯示 `ACCEPTANCE_PENDING`，不能顯示完成或同步該版本。重試會核對同一報告與目前內容，不新增重複確認。所有必要步驟成功後，才以 SQLite revision CAS 原子記錄 `completedAcceptances` 及 `checkpointKind: ACCEPTED`；驗收期間的新草稿不能被順帶認證。
+Git checkpoint 或 evidence publication 是明確同步的一部分；失敗只影響輸出狀態，不撤銷資料庫內仍匹配的人工確認。同步以 SQLite revision CAS 核對 `completedAcceptances` 及輸出 checkpoint，並拒絕同期修改；不能把新草稿順帶認證。
 
 每次派工保存固定 SQL 修訂的任務資料，`scripts/mcp-agent-task.mjs` 以 stdio 提供 `workbench_get_task` 與 `workbench_read_artifact`。前者提供工作目錄、允許寫入範圍、驗證入口、回報與失敗資料及 artifact 名稱；後者只能讀取該任務映射的所選功能和必要共用測試原文，不接受任意檔案路徑，不提供寫入工具。實作及測試計劃原有後端審閱、範圍、型別及獨立驗證 gate 保留。
 
@@ -138,7 +152,7 @@ LLM 結束後獨立檢查禁止空白／僅拋錯 handler 與 skip／focus、Typ
 
 測試確認要通過實作檢查、真實生成及 discovery，必要依賴只有一次安裝授權。安裝新增的 lockfile 與測試確認只能回寫原先受審閱的修訂，不能覆蓋同期新草稿。
 
-一般功能測試將固定 SQL 修訂與產品工作檔案複製成獨立候選，不呼叫 Git、不建立 source/evidence commit。manifest 使用 `sourceKind: WORKSPACE`、`specDigest`、`inputDigest` 及各產品 `contentDigest`，`testedSpecCommit` 為 `null`；測試前後重新驗證內容，外部修改不能沿用舊通過結果。只有人工驗收完成才建立 Git 版本與報告發布來源，受測的內容摘要保持不變。歷史版本回歸沿用既有 Git SHA 路徑，不能將其與工作樹摘要混為一談。
+一般功能測試將固定 SQL 修訂與產品工作檔案複製成獨立候選，不呼叫 Git、不建立 source/evidence commit。manifest 使用 `sourceKind: WORKSPACE`、`specDigest`、`inputDigest` 及各產品 `contentDigest`，`testedSpecCommit` 為 `null`；測試前後重新驗證內容，外部修改不能沿用舊通過結果。只有明確同步才建立 Git 版本與報告發布來源，受測的內容摘要保持不變。歷史版本回歸沿用既有 Git SHA 路徑，不能將其與工作樹摘要混為一談。
 
 `specSourceDigest` 對完整 Spec source 使用固定 UTF-8 路徑排序，排除精確路徑上的工作台 review／acceptance／feedback／workflow 紀錄；根目錄與其他目錄的 helper、設定及工具仍納入。判定報告是否適用時，同時核對磁碟來源與未輸出的 SQL 草稿。驗收 checkpoint 納入已核對來源及其刪除，再由 `source-checkpoint.mjs` 批次讀取 Git objects，比對真正提交的位元組；發布與匯入證據也驗證相同來源摘要。原始 `specDigest`／`inputDigest` 不因新增人工確認而重算或改寫。
 
@@ -152,14 +166,14 @@ LLM 結束後獨立檢查禁止空白／僅拋錯 handler 與 skip／focus、Typ
 
 `requirements.mjs` 提供來源、格式草稿、結構診斷與成對儲存。`requirement-documents.mjs` 只做受限文字提取，不執行文件中的任何程式。既有檔案首次開啟不改寫；若沒有來源描述，僅上方留空。
 
-正式 Gherkin 保存為 `spec/<REQ>/<feature>/<feature>.feature`；原始描述保存為同層 `requirement-source.json`，兩者在 `authoring_files` 與 `authoring_history` 的同一 SQL 交易更新。第一次保存新功能時建立 Git 檢查點；後續保存只更新 SQLite，需要執行時才把草稿投影至工作目錄，完成人工驗收時再建立下一個 Git 檢查點。後續確認的摘要綁定下方 `.feature` 而不是可隨時補充的來源素材。
+正式 Gherkin 保存為 `spec/<REQ>/<feature>/<feature>.feature`；原始描述保存為同層 `requirement-source.json`，兩者在 `authoring_files` 與 `authoring_history` 的同一 SQL 交易更新。建立、編輯與人工驗收只更新 SQLite；明確匯出或需要執行時才把資料投影至工作目錄，Git 版本只由明確同步建立。後續確認的摘要綁定下方 `.feature` 而不是可隨時補充的來源素材。
 
 生成採用明確標示的本機格式整理，不冒充語意推理。輸出使用 Feature／Scenario／Given／When／Then 及穩定案例標記；瀏覽器回歸另用固定版本的官方 Cucumber parser 驗證輸出。人工編輯的儲存路徑保留原始 bytes，不會因診斷失敗拒絕草稿保存。執行前的完整 BDD discovery 是另一個關卡。
 
 
 ## 綁定與歷史版本目錄
 
-register 只保存綁定與 `DEFERRED` 連線狀態，不排入 Git 作業。建立功能時才初始化來源；`catalog.mjs` 的 QUEUED → LOADING → READY／READY_WITH_WARNINGS／FAILED 流程保留給明確的版本維護。既有遠端內容安全匯入作者模型；已有草稿衝突時保留兩份，歷史版本仍可唯讀查看。取得已宣告的 submodule 不切換已初始化產品的分支或捨棄工作區內容。
+register 只保存綁定與 `DEFERRED` 連線狀態，不排入 Git 作業。建立功能不取得來源；`catalog.mjs` 的 QUEUED → LOADING → READY／READY_WITH_WARNINGS／FAILED 流程保留給明確的版本維護。既有遠端內容安全匯入作者模型；已有草稿衝突時保留兩份，歷史版本仍可唯讀查看。取得已宣告的 submodule 不切換已初始化產品的分支或捨棄工作區內容。
 
 不可變 Spec 快照位於 `catalogs/<binding>/<SHA>/repo`；產品版本查詢使用 `version-products/<binding>/<remote-hash>/repo`，不借用編輯中的產品目錄。Git clone 後明確取得所選 SHA，以支援只存在於 remote-tracking refs 的版本。
 
@@ -243,3 +257,15 @@ Schema 12 adds `prompts`, `prompt_revisions` and migration provenance; `agent_ta
 前端 `design-view.js` 預設預覽，只有明確按編輯才顯示 Markdown 原文。生成、儲存、重載與跨階段切換都回到預覽；切到預覽不會自動儲存。預覽使用鎖定版本的 markdown-it，停用 raw HTML，並在無腳本權限 iframe 呈現。問答以 DOM text nodes 與原生 radio/input 建立，答案寫回同一文件，由既有儲存按鈕或「儲存系統決策」提交；確認仍是獨立的人類動作。
 
 四種可編輯預設功能 Prompt 的文字唯一來源為 `packages/workstation/seeds/prompts.json`。啟動時驗證 seed schema、purpose 唯一性與模板變數，seedAgentSettings 與新 registry 初始化都從此派生。自訂 Prompt 與既有 revision 不因 Git seed 更新被覆寫；工作台自身的權限、產出格式與階段不變量仍由程式 owner 控制。
+
+
+### 聊天建立需求與畫面同步
+
+需求來源與 Gherkin 由既有 SQLite authoring 流程管理。Chat／ACP 讀取 node 契約後提交 key + response，完整需求原文與模型文件分開保存；完整提交使用官方 parser 驗證，無效內容不轉成本地格式化結果冒充成功。
+
+文件、修訂與收據同時寫入 authoring_history。worker 結束喚醒 SSE，snapshot 從資料庫讀取每個工作區最新收據；重啟不丟失保存事實。網頁按 operationId 去重，已在頁面載入前保存的歷史收據不觸發導航；新保存立即刷新，未儲存編輯或操作中則保留畫面並提供查看入口。Git 匯入／匯出失敗只影響該操作，不改變保存成功。ACP 解析拒絕 malformed JSON，必要的更正由同 session 模型重新產生，沿用原時間預算。
+
+正式驗收 owner 為規格庫的 `REQ-WB-101/full-ui`，情境 `UI-CHAT-COPILOT-001` 與 `UI-CHAT-KIRO-001`。產品 `tests/chat-ui/chat-create-driver.mjs` 只提供真實操作與斷言；由目前的 Playwright runner 傳入 expect、導覽及時間預算，避免跨規格庫載入兩份 test runner。驗收包含實際工具呼叫、SQLite 原文與文件、Cucumber 解析、原頁面不重載、自動顯示、重載持久化、第二次真實建立與未儲存草稿保護，沒有模型 peer 或路由 mock。
+
+
+Schema 13 允許工作區不設定 Git URL。既有 schema 12 依 [SQLite 官方 generalized ALTER TABLE 程序](https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes) 在單一交易重建 registry，保留原 row、索引、trigger 與外鍵；提交前執行 foreign_key_check，之後恢復 foreign_keys。沒有空 URL、假遠端或第二套工作區資料。驗證包含舊資料保留、純資料庫註冊、無 Git 的完整建立／編輯／重啟流程。

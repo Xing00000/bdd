@@ -1,4 +1,5 @@
 import {installPromptCatalog,migrateAgentPrompts} from './prompt-catalog.mjs';
+import {installWorkflowNodes,workflowNodeMethods} from './workflow-nodes.mjs';
 import {installAgentCatalog,agentCatalogMethods} from './agent-catalog.mjs';
 import {installAgentSupervisorSchema} from './agent-supervisor.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -18,7 +19,7 @@ export function openStore(home) {
   const db = new DatabaseSync(path.join(home, 'metadata.sqlite'));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  invariant(version >= 0 && version <= 12, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
+  invariant(version >= 0 && version <= 13, 'METADATA_VERSION_UNSUPPORTED', 'Do not open a newer workstation database with an older binary');
   if (version > 0 && version < 3) {
     const backup = path.join(home, 'before-repository-model-v3.sqlite');
     if (!existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); chmodSync(backup, 0o600); }
@@ -35,6 +36,8 @@ export function openStore(home) {
   if(version>0&&version<8) { const backup=path.join(home,'before-local-directories-v8.sqlite'); if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);} }
   if(version>0&&version<11){const backup=path.join(home,'before-agent-catalog-v11.sqlite');if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}}
   if(version>0&&version<12){const backup=path.join(home,'before-prompt-catalog-v12.sqlite');if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}}
+  const optionalRemoteMigration=db.prepare('PRAGMA table_info(spec_repositories)').all().some(column=>column.name==='remote_url'&&column.notnull);
+  if(optionalRemoteMigration)db.exec('PRAGMA foreign_keys=OFF');
   db.exec('BEGIN IMMEDIATE');
   try {
     const old = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='workspaces'").get();
@@ -52,7 +55,7 @@ export function openStore(home) {
     }
   db.exec(`
     CREATE TABLE IF NOT EXISTS spec_repositories (
-      id TEXT PRIMARY KEY, title TEXT NOT NULL, remote_url TEXT NOT NULL,
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, remote_url TEXT,
       branch TEXT, created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS operations (
@@ -101,13 +104,24 @@ export function openStore(home) {
       previous_path TEXT NOT NULL, local_path TEXT NOT NULL, created_at TEXT NOT NULL,
       PRIMARY KEY(repository_id,operation_id)
     );
-    PRAGMA user_version=12;
+    PRAGMA user_version=13;
   `);
   if(!db.prepare('PRAGMA table_info(spec_repositories)').all().some(c=>c.name==='local_path')) db.exec('ALTER TABLE spec_repositories ADD COLUMN local_path TEXT');
+  if(optionalRemoteMigration){
+    // SQLite's generalized ALTER TABLE procedure preserves dependent FKs.
+    const definitions=db.prepare("SELECT sql FROM sqlite_schema WHERE tbl_name='spec_repositories' AND type IN ('index','trigger') AND sql IS NOT NULL").all();
+    db.exec(`CREATE TABLE new_spec_repositories(id TEXT PRIMARY KEY,title TEXT NOT NULL,remote_url TEXT,branch TEXT,created_at TEXT NOT NULL,local_path TEXT);
+      INSERT INTO new_spec_repositories SELECT id,title,remote_url,branch,created_at,local_path FROM spec_repositories;
+      DROP TABLE spec_repositories;
+      ALTER TABLE new_spec_repositories RENAME TO spec_repositories;`);
+    for(const definition of definitions)db.exec(definition.sql);
+    invariant(db.prepare('PRAGMA foreign_key_check').all().length===0,'METADATA_MIGRATION_CONFLICT','Migration would violate existing foreign keys');
+  }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_repository_local_path ON spec_repositories(local_path) WHERE local_path IS NOT NULL');
   installAgentCatalog(db);
   installPromptCatalog(db);
   installDraftSchema(db);
+  installWorkflowNodes(db);
   installProgressSchema(db);
   installAgentSupervisorSchema(db);
   if(!db.prepare('PRAGMA table_info(operations)').all().some(column=>column.name==='interaction_type'))db.exec('ALTER TABLE operations ADD COLUMN interaction_type TEXT');
@@ -120,6 +134,7 @@ export function openStore(home) {
   if(version<11){const catalog=agentCatalogMethods(db,callback=>callback());for(const row of db.prepare('SELECT repository_id,settings_json FROM repository_preferences').all())catalog.ensureAgentDefaults(row.repository_id,JSON.parse(row.settings_json).agent);}
   if(version<12)migrateAgentPrompts(db);
   db.exec('COMMIT');
+  if(optionalRemoteMigration)db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
   function keyFor(request,result){
     const parent=request.input?.parentOperationId?db.prepare('SELECT interaction_key FROM operations WHERE id=? AND repository_id=?').get(request.input.parentOperationId,request.repositoryId):null;
@@ -137,6 +152,7 @@ export function openStore(home) {
   const atomic=callback=>{const own=!db.isTransaction;if(own)db.exec('BEGIN IMMEDIATE');try{const result=callback();if(own)db.exec('COMMIT');return result;}catch(error){if(own)db.exec('ROLLBACK');throw error;}};
   return {
     ...draftMethods(db),
+    ...workflowNodeMethods(db),
     ...agentCatalogMethods(db,atomic),
     chatStorage(schemaSql) {
       atomic(()=>{if(!db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='chat_rooms'").get())db.exec(schemaSql);});
@@ -183,7 +199,7 @@ export function openStore(home) {
     register(input) {
       invariant(!db.prepare('SELECT id FROM spec_repositories WHERE id=?').get(input.id), 'REPOSITORY_EXISTS', 'Spec repository ID already exists', 409);
       db.prepare('INSERT INTO spec_repositories(id,title,remote_url,branch,created_at,local_path) VALUES(?,?,?,?,?,?)')
-        .run(input.id, input.title, input.remoteUrl, input.branch ?? null, new Date().toISOString(), input.localPath ?? null);
+        .run(input.id, input.title, input.remoteUrl??null, input.branch ?? null, new Date().toISOString(), input.localPath ?? null);
       return this.repository(input.id);
     },
     setRepositoryLocation(repositoryId, expectedStoredPath, localPath, previousPath, operationId, validate) {

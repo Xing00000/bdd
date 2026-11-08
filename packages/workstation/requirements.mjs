@@ -3,6 +3,15 @@ import { readFile } from 'node:fs/promises';
 import { id, invariant, digest, identity, safePath, exists, readJson, writeJson, atomicWrite } from '../contracts/index.mjs';
 import { createFeature, scan, assertFileEditable } from '../spec-toolkit/index.mjs';
 import { testIdentity } from '../spec-toolkit/tags.mjs';
+import {Parser,AstBuilder,GherkinClassicTokenMatcher} from '@cucumber/gherkin';
+import {IdGenerator} from '@cucumber/messages';
+
+export function validateAuthoredRequirement(text){
+  requirementText(text,'Gherkin',{empty:false});
+  invariant(!requirementDiagnostics(text).length,'INVALID_GHERKIN','Gherkin 結構不完整，內容未保存。');
+  try {new Parser(new AstBuilder(IdGenerator.incrementing()),new GherkinClassicTokenMatcher()).parse(text);}
+  catch(error){invariant(false,'INVALID_GHERKIN',`Gherkin 語法錯誤：${error.message}`);}
+}
 
 export const MAX_REQUIREMENT_BYTES = 256 * 1024;
 export function requirementText(value, label, { empty = true } = {}) {

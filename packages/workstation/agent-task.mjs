@@ -7,7 +7,7 @@ import {negotiateProtocolVersion} from './mcp-protocol.mjs';
 import {requirementText} from './requirements.mjs';
 
 export const gherkinOutputFile='gherkin.feature';
-const gitBoundaryRule=' Do not run any Git commands, including read-only inspection, clone, fetch, add, commit or push. The workstation owns Git only at feature creation and completed human acceptance.';
+const gitBoundaryRule=' Do not run any Git commands, including read-only inspection, clone, fetch, add, commit or push. The database owns all authoring content and human decisions. The workstation operates Git only for explicit import/export/synchronization.';
 export function gherkinInput(input){
   invariant(typeof input.editorKey==='string'&&/^(?:new-[A-Za-z0-9-]+|[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)$/.test(input.editorKey)&&input.editorKey.length<=180,'INVALID_EDITOR','需求編輯識別無效。');
   return {editorKey:input.editorKey,description:requirementText(input.description,'需求描述',{empty:false}),previousGherkin:requirementText(input.previousGherkin??'','Gherkin')};

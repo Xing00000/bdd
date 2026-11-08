@@ -29,7 +29,21 @@ async function setup(t,{product=true}={}) {
 }
 const featureIds={requirementId:'REQ-001',featureId:'login'};
 async function createFeature(f) {
-  return f.job('workflow.create',{...featureIds,title:'Login',projectIds:f.setupInput.projects.map(project=>project.id)});
+  const created=await f.job('workflow.create',{...featureIds,title:'Login',projectIds:f.setupInput.projects.map(project=>project.id)});
+  await exportFixture(f);
+  return created;
+}
+async function exportFixture(f){
+  await f.job('repository.acquire');
+  if(!(await git.inspect(f.root)).head)await commitAll(f.root,'Explicit fixture initialization');
+  const detail=await f.service.detail('SPEC-flow');
+  for(const project of detail.preferences.projects){
+    if(!(await git.modules(f.root)).some(module=>module.id===project.id))await git.addModule(f.root,{projectId:project.id,url:project.url,commit:await git.remoteHead(project.url,'main')},await git.inspect(f.root));
+  }
+  await f.job('repository.prepare');
+  const store=openStore(f.home);
+  try{const state=await git.commitSelected(f.root,{paths:[...store.draft('SPEC-flow').files.filter(file=>file.target==='spec').map(file=>file.path),'.gitmodules',...(await git.modules(f.root)).map(module=>module.path)],message:'Explicitly export fixture sources'},await git.inspect(f.root));store.setProjection('SPEC-flow',{...store.projection('SPEC-flow'),head:state.head,branch:state.branch});}
+  finally{store.close();}
 }
 async function approveFixtureSources(f,ids=featureIds) {
   const store=openStore(f.home);
@@ -61,6 +75,7 @@ test('single setup saves bindings to SQLite without cloning, pushing or installi
 });
 test('source save writes SQLite only; materialization preserves HEAD and unrelated staging',async t=>{
   const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',projectIds:['product']});
+  await exportFixture(f);
   const relative='spec/REQ-001/login/login.sd.md',bytes=Buffer.from((await f.service.readFile('SPEC-flow',relative)).content);
   const createdHead=await git.resolve(f.root);
   await writeFile(path.join(f.root,'external.txt'),'not selected');await git.command(f.root,['add','external.txt']);
@@ -88,6 +103,7 @@ test('saving a detached product materializes working files without creating a Gi
 });
 test('formal candidate freezes uncommitted product bytes without a Git version or remote sync',async t=>{
   const f=await setup(t);await f.job('workflow.create',{requirementId:'REQ-001',featureId:'login',title:'Login',projectIds:['product']});
+  await exportFixture(f);
   await f.job('repository.save',{kind:'project',projectId:'product',path:'message.txt',expectedHash:digest('before'),content:'local-only'});
   await approveFixtureSources(f);
   const specHead=await git.resolve(f.root),productHead=await git.resolve(path.join(f.root,'projects/product'));
@@ -112,7 +128,7 @@ test('sync conflicts preserve local and remote histories and perform no product 
   await acceptFixture(f);
   const before=await git.inspect(f.root),remote=(await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim();
   const result=await f.job('repository.sync',{}, {fail:true});assert.equal(result.error.code,'SYNC_CONFLICT');assert.equal(result.error.details.sync.completed.length,0);
-  assert.deepEqual(await git.inspect(f.root),before);assert.equal((await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim(),remote);
+  assert.equal((await git.command(f.root,['merge-base','--is-ancestor',before.head,await git.resolve(f.root)])).exitCode,0,'Explicit export may add a commit but must preserve local history');assert.equal((await git.command(undefined,['--git-dir',f.remote,'rev-parse','main'])).stdout.trim(),remote);
   assert.equal((await git.command(undefined,['--git-dir',f.productRemote,'show','main:message.txt'])).stdout,'before');
 });
 test('sync never adopts a changed push destination without a new setup',async t=>{
@@ -189,8 +205,10 @@ test('adding a product after starting work does not discard unrelated drafts or 
   const result = await f.job('repository.setup', { reviewer: 'Human', projects: [{id:'myproduct', url}] });
   assert.equal(result.result.ready, true);
   assert.equal((await f.service.detail('SPEC-flow')).modules[0].id, 'myproduct');
-  const deferred=await f.job('repository.prepare',{}, {fail:true});assert.equal(deferred.error.code,'FEATURE_INITIALIZATION_REQUIRED');assert.equal((await git.modules(f.root)).length,0);
+  const exported=await f.job('repository.prepare');assert.equal(exported.result.prepared,true);assert.equal((await git.modules(f.root)).length,0);
   await f.job('workflow.create',{requirementId:'REQ-002',featureId:'product',title:'Product feature',projectIds:['myproduct']});
+  assert.equal((await git.modules(f.root)).length,0,'Creation only saves database content');
+  await exportFixture(f);
   assert.equal((await git.modules(f.root))[0].id, 'myproduct');
   const after = await git.inspect(f.root);
   assert.deepEqual(after.changes.map(x => x.path).sort(), ['draft.md', 'staged.md']);
@@ -238,7 +256,9 @@ test('submodule registration respects an externally edited gitmodules file witho
   const head = await repository(target, { 'README.md': 'sample' });
   const before = await git.inspect(f.root);
   await f.job('repository.setup', { reviewer: 'Human', projects: [{ id: 'extra', url: target }] });
-  const result = await f.job('workflow.create', {requirementId:'REQ-002',featureId:'extra',title:'Extra feature',projectIds:['extra']}, { fail: true });
+  const created = await f.job('workflow.create', {requirementId:'REQ-002',featureId:'extra',title:'Extra feature',projectIds:['extra']});
+  assert.equal(created.result.saved,true);
+  const result = await f.job('submodule.add',{projectId:'extra',url:target,commit:head},{fail:true});
   assert.equal(result.error.code, 'SUBMODULE_SETTINGS_CONFLICT');
   assert.deepEqual(await git.inspect(f.root), before);
   assert.equal(await readFile(path.join(f.root, '.gitmodules'), 'utf8'), '# pending external edit\n');
@@ -259,7 +279,7 @@ test('plain-language requirement creates stable IDs and multiple Gherkin cases w
   assert.equal(requirement.title,'使用者登入');
   const next=(await f.job('workflow.create',{title:'退出登入',acceptance:'按下退出後進入未登入狀態',guided:true})).result;
   assert.equal(next.key,'REQ-002/feature');
-  assert.equal((await git.inspect(f.root)).clean,true);
+  assert.equal(await exists(f.root),false);
 });
 
 test('guided requirement revisions are saved locally and remain editable without Git knowledge', async t => {
@@ -272,7 +292,7 @@ test('guided requirement revisions are saved locally and remain editable without
   const meta=JSON.parse((await f.service.readFile('SPEC-flow','spec/REQ-001/feature/feature.yaml')).content);
   assert.deepEqual(meta.caseIds,['CASE-001','CASE-002']);
   assert.match((await f.service.readFile('SPEC-flow',pathname)).content,/Given 系統已準備好讓使用者操作 會員登入/);
-  assert.equal((await git.inspect(f.root)).clean,true);
+  assert.equal(await exists(f.root),false);
   assert.equal((await git.command(undefined,['--git-dir',f.remote,'show-ref'],{allowFailure:true})).exitCode,1);
   const stale=await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'衝突覆寫',acceptance:'覆寫',expectedHash:digest(before)},{fail:true});
   assert.equal(stale.error.code,'CONTENT_CHANGED');

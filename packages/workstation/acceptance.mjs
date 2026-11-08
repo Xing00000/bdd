@@ -25,13 +25,12 @@ export async function saveAcceptance(root,input,context,snapshot){
  invariant(typeof snapshot.settings.reviewer==='string'&&snapshot.settings.reviewer.trim(),'REVIEWER_REQUIRED','請先在設定填寫確認者。');
  feature.review=await reviewState(root,feature.requirementId,feature.id);feature.feedback=await readFeedback(root,key);feature.acceptance=await readAcceptance(root,feature.requirementId,feature.id);
  const modules=await liveWorkflowModules(context,snapshot),specSourceDigest=await liveWorkflowSpecSourceDigest(context,snapshot,root),workflow=workflowState(feature,modules,store.runs(request.repositoryId),store.reports(request.repositoryId),data.config.specRepositoryId,store.projection(request.repositoryId),specSourceDigest);
- invariant(['AWAITING_ACCEPTANCE','ACCEPTANCE_PENDING'].includes(workflow.status),'ACCEPTANCE_NOT_READY','需要目前版本的完整通過報告，且尚未完成人工驗收。',409);
+ invariant(workflow.status==='AWAITING_ACCEPTANCE','ACCEPTANCE_NOT_READY','需要目前版本的完整通過報告，且尚未完成人工驗收。',409);
  invariant(workflow.latestReport.runId===input.runId&&workflow.latestReport.manifestDigest===input.expectedManifestDigest,'REPORT_CHANGED','報告已變更，請重新檢視後再驗收。',409);
  const directory=await artifactDirectory({home:options.home,store,repositoryId:request.repositoryId,runId:input.runId,reportKey:input.reportKey});
  invariant(identity(await verifyBundle(directory))===input.expectedManifestDigest,'REPORT_CHANGED','報告內容已變更。',409);
- if (workflow.status === 'ACCEPTANCE_PENDING') return { key, acceptance: workflow.acceptance, nextStage: 'VERIFICATION', status: 'ACCEPTANCE_PENDING' };
  const value=feature.acceptance;invariant(value.items.length<feedbackLimits.entries,'ACCEPTANCE_LIMIT','人工驗收紀錄已達上限。');
- const entry={id:request.operationId,runId:input.runId,manifestDigest:input.expectedManifestDigest,sourceDigests:workflow.sourceDigests,reviewer:snapshot.settings.reviewer,message,createdAt:new Date().toISOString(),requiresCheckpoint:true};
+ const entry={id:request.operationId,runId:input.runId,manifestDigest:input.expectedManifestDigest,sourceDigests:workflow.sourceDigests,reviewer:snapshot.settings.reviewer,message,createdAt:new Date().toISOString()};
  value.items.push(entry);await writeJson(await safePath(root,acceptancePath(feature.requirementId,feature.id)),value);
- return {key,acceptance:entry,nextStage:'VERIFICATION',status:'ACCEPTANCE_PENDING'};
+ return {key,acceptance:entry,nextStage:'VERIFIED',status:'COMPLETE'};
 }

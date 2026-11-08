@@ -1,5 +1,5 @@
 /** Read-only execution viewer with structured messages queued for the next SDK turn. */
-export function operationTerminal({api,note,onInteractions}){
+export function operationTerminal({api,note,onInteractions,onComplete}){
   const $=s=>document.querySelector(s),active=s=>['QUEUED','RUNNING','CANCELLING'].includes(s);
   const drafts=new Map();let current=null,terminal=null,observer=null,timer,library;
   const canSend=session=>(Boolean(session?.agentSessionId)||(session?.status==='RUNNING'&&session.phase==='RUNNING'))&&!session?.sending;
@@ -19,7 +19,7 @@ export function operationTerminal({api,note,onInteractions}){
       if(current===session){
         onInteractions?.(value.interactions??[]);
         if($('#operation-sdk-message').value===message)$('#operation-sdk-message').value='';
-        $('#operation-sdk-input-status').textContent=session.agentSessionId?'已送入互動式 CLI Agent Session；結果會即時附加於對話事件與互動紀錄。':'已排入佇列；實際處理結果會顯示於互動歷程。';
+        $('#operation-sdk-input-status').textContent=session.agentSessionId?'已送入互動式 CLI Agent Session。':'已排入佇列；訊息會在後續回合處理。';
       }
     }catch(error){if(current===session){$('#operation-sdk-input-status').textContent=error.message;note(error.message,true);}}
     finally{session.sending=false;if(current===session)inputState(session);}
@@ -52,6 +52,7 @@ export function operationTerminal({api,note,onInteractions}){
         showInput();terminal.write(value.output);session.offset=value.nextOffset;
         $('#operation-terminal-status').textContent=[value.status,value.phase,value.latestExit&&`exit ${value.latestExit.exitCode}`,value.error?.message].filter(Boolean).join(' · ');
         if(active(value.status)||value.hasMore)timer=setTimeout(poll,value.hasMore?0:350);
+        else onComplete?.();
       }catch(error){if(current===session){$('#operation-terminal-status').textContent=error.message;timer=setTimeout(poll,1000);}}
     }void poll();
   }

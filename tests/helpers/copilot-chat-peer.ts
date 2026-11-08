@@ -9,6 +9,7 @@ export interface CopilotPeerOptions {
  legacyModels?:boolean;
  capabilities?:Record<string,unknown>;
  responseText?:string;
+ responseTexts?:string[];
  delayMs?:number;
  hangMethods?:string[];
  methodDelayMs?:Record<string,number>;
@@ -51,7 +52,7 @@ async function request(q){
  if(q.method==='session/new'){
   if(options.authenticated===false)return fail(q,'Authentication required');
   const sessionId=options.reuseSessionId?(sharedSessionId??='fixture-'+randomUUID()):'fixture-'+randomUUID(),session={...p,model:undefined};
-  sessions.set(sessionId,session);trace({type:'session-created',sessionId});event(sessionId,{sessionUpdate:'available_commands_update',availableCommands:[]});
+  sessions.set(sessionId,{...session,promptIndex:0});trace({type:'session-created',sessionId});event(sessionId,{sessionUpdate:'available_commands_update',availableCommands:[]});
   return respond(q,{sessionId,...modelState(),...(options.currentModeId?{modes:{currentModeId:options.currentModeId}}:{})});
  }
  if(q.method==='session/set_config_option'||q.method==='session/set_model'){
@@ -64,7 +65,7 @@ async function request(q){
  if(q.method==='session/close'||q.method==='session/delete'){stop(p.sessionId);sessions.delete(p.sessionId);if(options.latePermissionMs)setTimeout(()=>send({jsonrpc:'2.0',id:'late-'+p.sessionId,method:'session/request_permission',params:{sessionId:p.sessionId,toolCall:{toolCallId:'retired-call',title:'bash',rawInput:{}},options:[]}}),options.latePermissionMs);return respond(q,{});}
  if(q.method==='session/prompt'){
   const session=sessions.get(p.sessionId);if(!session)return fail(q,'Session missing');
-  prompts.set(p.sessionId,q);const prompt=p.prompt.map(part=>part.text).join('');
+  prompts.set(p.sessionId,q);const prompt=p.prompt.map(part=>part.text).join(''),promptIndex=session.promptIndex++;
   if(prompt.includes('[[orphan-exit]]')){const descendant=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',process.stdout,process.stderr]});trace({type:'descendant',childPid:descendant.pid});return process.exit(92);}
   if(prompt.includes('[[crash]]'))return process.exit(91);
   if(prompt.includes('[[invalid-rpc]]'))return process.stdout.write('{invalid-json\\n');
@@ -86,7 +87,7 @@ async function request(q){
    if(prompt.includes('[[error]]')){prompts.delete(p.sessionId);return fail(q,'Protocol fixture failure');}
    if(prompt.includes('[[empty]]'))return finish({stopReason:'end_turn'});
    if(prompt.includes('[[non-text]]')){event(p.sessionId,{sessionUpdate:'agent_message_chunk',content:{type:'image',data:'',mimeType:'image/png'}});return finish({stopReason:'end_turn'});}
-   const text=prompt.includes('[[echo]]')?prompt:options.responseText??'Protocol peer text response',split=Math.ceil(text.length/2);
+   const text=prompt.includes('[[echo]]')?prompt:options.responseTexts?.[promptIndex]??options.responseText??'Protocol peer text response',split=Math.ceil(text.length/2);
    event(p.sessionId,{sessionUpdate:'agent_message_chunk',content:{type:'text',text:text.slice(0,split)}});
    event(p.sessionId,{sessionUpdate:'agent_message_chunk',content:{type:'text',text:text.slice(split)}});
    finish({stopReason:prompt.includes('[[truncated]]')?'max_tokens':'end_turn'});

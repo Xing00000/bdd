@@ -57,16 +57,15 @@ export function workflowState(feature, modules = [], runs = [], reports = [], sp
   const verified = !pending && !feedback.length && Boolean(latest?.qualified);
   const sourceDigests={gherkin:feature.review.hashes.gherkin,sd:feature.review.hashes.sd,tests:feature.review.hashes.tests};
   const acceptance=verified?(feature.acceptance?.items??[]).findLast(a=>a.runId===latest.runId&&a.manifestDigest===identity(latest.manifest)&&identity(a.sourceDigests)===identity(sourceDigests)):null;
-  const acceptancePending = Boolean(acceptance?.requiresCheckpoint && !checkpoint?.completedAcceptances?.includes(acceptance.id));
   const stage = pending ? reviewStage(feature.review.confirmed)
-    : acceptance && !acceptancePending ? 'VERIFIED' : verified ? 'VERIFICATION' : 'IMPLEMENTATION';
+    : acceptance ? 'VERIFIED' : verified ? 'VERIFICATION' : 'IMPLEMENTATION';
   return {
     schemaVersion: 1, specRepositoryId, requirementId: feature.requirementId, featureId: feature.id,
     key: feature.key ?? `${feature.requirementId}/${feature.id}`, stage,
-    status: pending ? 'AWAITING_REVIEW' : acceptancePending ? 'ACCEPTANCE_PENDING' : acceptance ? 'COMPLETE' : verified ? 'AWAITING_ACCEPTANCE' : 'READY_TO_RUN',
+    status: pending ? 'AWAITING_REVIEW' : acceptance ? 'COMPLETE' : verified ? 'AWAITING_ACCEPTANCE' : 'READY_TO_RUN',
     requiredReview: pending ?? null, feedback,
     needsChanges: feedback.length>0,
-    nextAction: pending ? 'HUMAN_REVIEW' : acceptancePending ? 'RETRY_ACCEPTANCE' : acceptance ? 'NONE' : verified ? 'HUMAN_ACCEPTANCE' : 'RUN_VERIFICATION',
+    nextAction: pending ? 'HUMAN_REVIEW' : acceptance ? 'NONE' : verified ? 'HUMAN_ACCEPTANCE' : 'RUN_VERIFICATION',
     sourceDigests, acceptance:acceptance??null,
     reviewPath: `spec/${feature.requirementId}/review.json`, confirmed: feature.review.confirmed,
     verification: verified ? 'VERIFIED' : history.some(r => r.manifest.verification === 'VERIFIED' && !r.current) ? 'STALE'

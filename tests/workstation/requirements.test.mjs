@@ -54,9 +54,8 @@ test('unsupported, invalid UTF-8, corrupt, oversized and entity-bearing imports 
     {name:'x.docx',base64:docxArchive('<w:p>oversize</w:p>',{unsafeSize:true}).toString('base64')}
   ])assert.throws(()=>importRequirementDocument(input));
 });
-test('creating a feature saves both fields atomically, checkpoints its source, and survives restart',async t=>{
-  const f=await setup(t),saved=await save(f);assert.equal(saved.storage,'sqlite');assert.equal(saved.key,'REQ-001/feature');assert.equal(await exists(path.join(f.home,'repositories/SPEC-editor/repo')),true);
-  assert.ok(await git.resolve(path.join(f.home,'repositories/SPEC-editor/repo')));
+test('creating a feature saves both fields atomically without a Git checkout and survives restart',async t=>{
+  const f=await setup(t),saved=await save(f);assert.equal(saved.storage,'sqlite');assert.equal(saved.key,'REQ-001/feature');assert.equal(await exists(path.join(f.home,'repositories/SPEC-editor/repo')),false);
   await f.restart();const value=await f.service.requirement('SPEC-editor','REQ-001','feature');assert.equal(value.description,description);assert.equal(value.gherkin,manual);
   const db=new DatabaseSync(path.join(f.home,'metadata.sqlite'),{readOnly:true});const changes=JSON.parse(db.prepare('SELECT changes_json FROM authoring_history ORDER BY revision DESC LIMIT 1').get().changes_json);db.close();assert.ok(changes.some(x=>x.path.endsWith('.feature')));assert.ok(changes.some(x=>x.path.endsWith('requirement-source.json')));
 });

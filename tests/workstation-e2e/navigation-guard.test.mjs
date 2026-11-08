@@ -16,7 +16,7 @@ test('cancelling a requirement switch restores the selected requirement and keep
   const browser=await chromium.launch();t.after(()=>browser.close());const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`http://127.0.0.1:${app.server.address().port}/?repo=${repositoryId}&view=features&feature=REQ-001%2Ffirst`);
   await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
-  const select=page.locator('#feature-select'),description=page.locator('#requirement-description');
+  const select=page.locator('#feature-select'),description=page.locator('#requirement-gherkin');
   await description.fill('First requirement unsaved draft');await select.selectOption('REQ-002/second');
   const dialog=page.getByRole('dialog');await expect(dialog).toContainText('有尚未儲存的編輯');await dialog.getByRole('button',{name:'取消',exact:true}).click();
   await expect(select).toHaveValue('REQ-001/first');await expect(description).toHaveValue('First requirement unsaved draft');

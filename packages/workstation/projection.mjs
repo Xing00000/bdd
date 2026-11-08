@@ -1,7 +1,7 @@
 import { canonicalLocation, checkRepositoryIdentity, remoteIdentity } from './locations.mjs';
 /** Working files are a SQLite projection. Only explicit lifecycle boundaries commit. */
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { invariant, digest, identity, exists, safePath, atomicWrite } from '../contracts/index.mjs';
 import { ensureDraft, sourceFiles, inDraftView } from './authoring.mjs';
 import { configuration, reviewState } from '../spec-toolkit/index.mjs';
@@ -20,11 +20,12 @@ export async function prepareProjection(context) {
   const { root, store, request } = context, repositoryId = request.repositoryId;
   const snapshot = await ensureDraft({ ...context, repositoryId }), prior = store.projection(repositoryId);
   invariant(snapshot.settings.configured, 'SETUP_REQUIRED', '請先儲存基本設定。');
-  invariant(canonicalLocation(root) === root && await exists(root), 'FEATURE_INITIALIZATION_REQUIRED', '請先建立功能以初始化工作目錄；編輯與執行不會自動操作 Git。', 409);
-  const targets = [{ target: 'spec', directory: root }, ...(snapshot.settings.projects ?? []).map(project => ({ target: `project:${project.id}`, directory: path.join(root, 'projects', project.id) }))];
+  invariant(canonicalLocation(root) === root, 'LOCAL_PATH_CHANGED', '工作目錄位置已變更，未輸出資料庫內容。', 409);
+  await mkdir(root,{recursive:true});
+  const targets = [{ target: 'spec', directory: root }, ...(snapshot.settings.projects ?? []).filter(project=>snapshot.files.some(file=>file.target===`project:${project.id}`)).map(project => ({ target: `project:${project.id}`, directory: path.join(root, 'projects', project.id) }))];
   // All files are checked before writing any of them. External edits remain on disk.
   for (const target of targets) {
-    invariant(await exists(target.directory), 'FEATURE_INITIALIZATION_REQUIRED', '產品原始碼尚未初始化；請在建立功能時取得產品。', 409);
+    await mkdir(target.directory,{recursive:true});
     for (const file of snapshot.files.filter(file => file.target === target.target)) {
       const current = await fileHash(target.directory, file.path), old = prior?.files?.find(previous => key(previous) === key(file))?.sha256 ?? file.baseHash;
       invariant(current === file.sha256 || current === old || current === null && old === null, 'EXPORT_CONFLICT',
@@ -40,12 +41,10 @@ export async function prepareProjection(context) {
   return snapshot;
 }
 
-/** Feature creation and completed human acceptance are the only automatic Git boundaries. */
+/** Git commits belong to explicit export/synchronization, never authoring. */
 export async function checkpointProjection(context) {
   const {root,store,options,request,git}=context,repositoryId=request.repositoryId;
-  invariant(request.operation === 'workflow.create' || request.operation === 'workflow.accept'
-    || request.operation === 'workflow.requirement.save' && !request.input.requirementId && !request.input.featureId,
-  'GIT_BOUNDARY_REQUIRED', '只有建立功能與完成人工驗收可以建立 Git 版本。', 409);
+  invariant(request.operation === 'repository.sync','GIT_BOUNDARY_REQUIRED','只有明確同步可以建立 Git 版本。',409);
   store.repairImportBaselines(repositoryId);
   let snapshot=await ensureDraft({...context,repositoryId});
   if (context.expectedRevision !== undefined) invariant(snapshot.revision === context.expectedRevision, 'CONTENT_CHANGED', '驗收期間已儲存新草稿；原確認已保留，未把新草稿一起提交。', 409);
@@ -58,6 +57,7 @@ export async function checkpointProjection(context) {
     'CONTENT_CHANGED', '驗收報告與目前規格來源不同；請重新驗證。', 409);
   }
   const record=store.repository(repositoryId),prior=store.projection(repositoryId);
+  invariant(record.remoteUrl,'GIT_NOT_CONFIGURED','此工作區未設定 Git 來源；資料庫內容已保留。',409);
   invariant(snapshot.settings.configured,'SETUP_REQUIRED','請先儲存基本設定。');
   const receipt={...(prior??{}),status:'PREPARING',sourceRevision:snapshot.revision};
   try {
@@ -65,8 +65,13 @@ export async function checkpointProjection(context) {
     if(fresh) {
       await git.clone(record.remoteUrl,root,record.branch??undefined);
       if(await exists(path.join(root,'workbench.yaml')))snapshot=await importBoundRepository(context,snapshot);
+    }else if(!await exists(path.join(root,'.git'))){
+      await git.init(root);
+      await git.command(root,['remote','add','origin',record.remoteUrl]);
     }
     await checkRepositoryIdentity(root,record,git);
+    const origin=(await git.remotes(root)).find(remote=>remote.name==='origin');
+    invariant(origin&&remoteIdentity(origin.pushUrl)===remoteIdentity(record.remoteUrl),'SYNC_DESTINATION_CHANGED','Git 上傳位置與工作區設定不同；資料庫內容已保留，尚未提交或上傳。',409);
     // A repository configuration error is an export/sync error, not a save error.
     const specFiles=snapshot.files.filter(f=>f.target==='spec');
     const preflight=async(target,files)=>{
@@ -123,8 +128,8 @@ export async function checkpointProjection(context) {
       for(const file of files)if(await fileHash(target,file.path)!==file.sha256)await atomicWrite(await safePath(target,file.path),file.content);
       if(files.length||deleted.length) {
         await savePaths(target,[...files,...deleted].map(f=>f.path),git,repositoryId,`Export product SQLite revision ${snapshot.revision}`);
-        await savePaths(root,[module.path],git,repositoryId,`Record saved product ${p.id}`);
       }
+      await savePaths(root,[module.path],git,repositoryId,`Record exported product ${p.id}`);
       destinations.push({id:p.id,...await targetFor(target,git,branch)});
       receipt.files.push(...files.map(({target,path,sha256})=>({target,path,sha256})));store.setProjection(repositoryId,receipt);
     }
