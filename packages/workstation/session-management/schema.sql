@@ -1,4 +1,6 @@
 -- Additive schema. Never use PRAGMA user_version: the existing workbench owns it.
+-- Historical v1 bootstrap. SessionManager applies execution v2 and normalization
+-- v3 in the same initialization transaction; this file alone is not current DDL.
 CREATE TABLE sm_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE sm_workstations(id TEXT PRIMARY KEY, max_workers INTEGER NOT NULL CHECK(max_workers BETWEEN 1 AND 64));
 CREATE TABLE sm_projects(

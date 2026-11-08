@@ -108,13 +108,14 @@ async function navigate(patch,{protect=true,replace=false}={}) {
   if(state.view==='agents')url.searchParams.set('view','agents');
   if(state.repositoryId){url.searchParams.set('repo',state.repositoryId);url.searchParams.set('view',state.view);if(state.featureKey)url.searchParams.set('feature',state.featureKey);url.searchParams.set('stage',state.stage);if(state.projectId)url.searchParams.set('project',state.projectId);}
   if(state.chatId){if(!state.repositoryId&&state.view!=='agents')url.searchParams.set('view','chat');url.searchParams.set('chat',state.chatId);}
-  history[replace?'replaceState':'pushState']({},'',url);if(mobileNavigation.matches){$('#sidebar').classList.remove('open');updateNavigationToggle();}
+  history[replace?'replaceState':'pushState']({},'',url);
   if(chatOnly){
     if(state.chatId){$('#chat-view').hidden=false;await chat.open(state.chatId);}
     else{chat.leave();$('#chat-view').hidden=true;}
     return;
   }
   await refresh();
+  if(!replace){chat.closeMenu({revealWorkspace:true});$('#content').focus({preventScroll:true});}
 }
 async function route() { const q=new URLSearchParams(location.search);await navigate({repositoryId:q.get('repo'),view:q.get('view')??'features',featureKey:q.get('feature'),projectId:q.get('project'),stage:q.get('stage')??'GHERKIN',chatId:q.get('chat')},{protect:false,replace:true}); }
 async function refresh() {
@@ -233,8 +234,10 @@ async function flow(name,input,options={}) {
   }
 }
 function renderNavigation() {
+  const settingsNav=$('#repository-settings-nav');settingsNav.replaceChildren();for(const repository of state.repositories){const item=button(repository.title+' 設定',()=>navigate({repositoryId:repository.id,view:'settings',featureKey:null,projectId:null,stage:'GHERKIN'}));item.setAttribute('aria-current',repository.id===state.repositoryId&&state.view==='settings'?'page':'false');settingsNav.append(item);}if(!state.repositories.length)settingsNav.append(el('p','尚未綁定規格庫','muted'));
+  all('[data-home]').forEach(node=>node.setAttribute('aria-current',!state.repositoryId&&state.view!=='agents'?'page':'false'));$('#open-agent-manager').setAttribute('aria-current',state.view==='agents'?'page':'false');
   const opened=new Set(all('#repository-nav details[open]').map(n=>n.dataset.repositoryId));
-  $('#repository-nav').replaceChildren();for(const r of state.repositories){const n=button('',()=>navigate({repositoryId:r.id,featureKey:null,projectId:null,view:'features',stage:'GHERKIN'}),'repo-nav');n.setAttribute('aria-label',`開啟規格庫 ${r.title}`);n.append(el('strong',r.title),el('small',r.remoteUrl));n.classList.toggle('active',r.id===state.repositoryId);$('#repository-nav').append(n);const menu=el('nav',undefined,'repository-menu');menu.setAttribute('aria-label',`${r.title} 功能`);for(const [view,label] of [['features','需求流程'],['projects','專案'],['versions','版本與回歸'],['settings','設定']]){const item=button(label,()=>navigate(r.id===state.repositoryId?{view}:{repositoryId:r.id,view,featureKey:null,projectId:null,stage:'GHERKIN'}));item.dataset.view=view;item.dataset.repositoryId=r.id;menu.append(item);}const group=detailGroup('設定與功能',[menu],opened.has(r.id),'repository-group');group.dataset.repositoryId=r.id;$('#repository-nav').append(group);}
+  $('#repository-nav').replaceChildren();if(!state.repositories.length)$('#repository-nav').append(el('p','尚未綁定規格庫','muted'));for(const r of state.repositories){const n=button('',()=>navigate({repositoryId:r.id,featureKey:null,projectId:null,view:'features',stage:'GHERKIN'}),'repo-nav');n.setAttribute('aria-label',`開啟規格庫 ${r.title}`);n.append(el('strong',r.title),el('small',r.remoteUrl));n.classList.toggle('active',r.id===state.repositoryId);n.setAttribute('aria-current',r.id===state.repositoryId?'page':'false');$('#repository-nav').append(n);const menu=el('nav',undefined,'repository-menu');menu.setAttribute('aria-label',`${r.title} 功能`);for(const [view,label] of [['features','需求流程'],['projects','專案'],['versions','版本與回歸'],['settings','設定']]){const item=button(label,()=>navigate(r.id===state.repositoryId?{view}:{repositoryId:r.id,view,featureKey:null,projectId:null,stage:'GHERKIN'}));item.dataset.view=view;item.dataset.repositoryId=r.id;item.setAttribute('aria-current',r.id===state.repositoryId&&view===state.view?'page':'false');menu.append(item);}const group=detailGroup('設定與功能',[menu],opened.has(r.id),'repository-group');group.dataset.repositoryId=r.id;$('#repository-nav').append(group);}
 }
 function renderHome() {
   $('#breadcrumbs').textContent='工作台';$('#repository-cards').replaceChildren();$('#empty-state').hidden=state.repositories.length>0;
@@ -680,10 +683,6 @@ async function showReport(runId,key,panelId='report-view',expectedFeature=null) 
 function on(selector,event,fn) { $(selector).addEventListener(event,e=>{if(event==='submit')e.preventDefault();safe(()=>fn(e));}); }
 for(const s of ['#bind-home','#bind-empty','#bind-sidebar'])on(s,'click',bindRepository);
 all('[data-home]').forEach(n=>n.onclick=e=>{e.preventDefault();safe(()=>navigate({repositoryId:null,view:'features',featureKey:null,projectId:null}));});all('[data-view]').forEach(n=>n.onclick=()=>safe(()=>navigate({view:n.dataset.view})));
-const mobileNavigation=matchMedia('(max-width: 760px)');
-function updateNavigationToggle(){const expanded=mobileNavigation.matches?$('#sidebar').classList.contains('open'):!$('.shell').classList.contains('sidebar-collapsed');$('#menu-toggle').setAttribute('aria-expanded',String(expanded));$('#menu-toggle').setAttribute('aria-label',expanded?'收合導覽':'展開導覽');}
-on('#menu-toggle','click',()=>{if(mobileNavigation.matches)$('#sidebar').classList.toggle('open');else $('.shell').classList.toggle('sidebar-collapsed');updateNavigationToggle();});
-mobileNavigation.addEventListener('change',updateNavigationToggle);updateNavigationToggle();
 on('#close-dialog','click',()=>closeDialog());on('#cancel-dialog','click',()=>closeDialog());
 $('#form-dialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog();});
 on('#cancel-job','click',()=>state.jobId&&api(`/operations/${state.jobId}/cancel`,'POST',{}));
@@ -826,6 +825,6 @@ on('#develop','click',()=>development.start());on('#stop-development','click',()
 const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:()=>{resizeWorkflowEditor($('#source-editor'));renderNext();}});
 const catalogView=agentCatalogView({api,el,button,note,ask,onDirty:()=>{state.formDirty=true;},onSaved:()=>{state.formDirty=false;}});
 on('#open-agent-manager','click',()=>navigate({view:'agents',repositoryId:null,featureKey:null,projectId:null}));
-const chat=chatRoomsView({api,el,button,navigate:id=>navigate({chatId:id},{protect:false}),workspace:()=>navigate({chatId:null},{protect:false}),note});
+const chat=chatRoomsView({api,el,button,navigate:id=>navigate({chatId:id},{protect:false}),note,workspace:()=>({repositoryId:state.repositoryId,projectId:state.projectId})});
 // Initialize the route only after every view state and handler exists.
 await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'測試執行已停用';await route();});

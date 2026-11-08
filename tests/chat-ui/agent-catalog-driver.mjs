@@ -1,3 +1,4 @@
+import {openMenu} from './navigation-helpers.mjs';
 import {expect} from '@playwright/test';
 import {mkdtemp,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -15,7 +16,7 @@ export async function* agentCatalogScenario(page,info){
  const setup=await app.service.wait('OP-catalog-setup');expect(setup.status,JSON.stringify(setup.error)).toBe('SUCCEEDED');
  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));url=`http://127.0.0.1:${app.server.address().port}`;
  try{
-  await page.goto(url);yield {phase:'opened'};await page.getByRole('button',{name:'Agent、Prompt 與 Skill 管理',exact:true}).click();await expect(page.getByRole('heading',{name:'Agent、Prompt 與 Skill 管理'})).toBeVisible();
+  await page.goto(url);yield {phase:'opened'};await openMenu(page,'settings');await page.getByRole('button',{name:'Agent、Prompt 與 Skill 管理',exact:true}).click();await expect(page.getByRole('heading',{name:'Agent、Prompt 與 Skill 管理'})).toBeVisible();
   await page.getByRole('button',{name:'新增 Skill',exact:true}).click();const editor=page.locator('.catalog-editor');
   await editor.getByRole('textbox',{name:'名稱',exact:true}).fill('命名技能');await editor.getByRole('textbox',{name:'Skill 內容',exact:true}).fill('Read the attached resource references/title.txt using the workbench task MCP. Use its entire content verbatim as the Feature title. Follow all task rules.');
   await editor.getByLabel('加入 Skill 資源檔',{exact:true}).setInputFiles({name:'title.txt',mimeType:'text/plain',buffer:Buffer.from(marker)});await editor.getByRole('textbox',{name:'資源相對路徑',exact:true}).fill('references/title.txt');

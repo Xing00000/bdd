@@ -25,7 +25,10 @@ async function directories(root, relative) {
   return entries.filter(x => x.isDirectory() && !x.name.startsWith('_')).map(x => id(x.name)).sort();
 }
 export async function configuration(root) {
-  const config = version(await readJson(await safePath(root, 'workbench.yaml', { missing: false })));
+  return validateConfiguration(await readJson(await safePath(root, 'workbench.yaml', { missing: false })));
+}
+export function validateConfiguration(value) {
+  const config = version(value);
   validateContract('workbench', config);
   id(config.specRepositoryId, 'specRepositoryId');
   invariant(identity(config.layout) === identity(layout), 'INVALID_LAYOUT', 'v1 requires spec/, tests/, reports/ and projects/');

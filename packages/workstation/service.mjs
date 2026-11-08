@@ -76,10 +76,13 @@ export async function createWorkstation(configuration) {
       return supervisorOpening;
     },
     agentSessions(query={}){return listAgentSessions(options.home,query);},
+    async agentWorkspaces(){return {workspaces:await (await this.supervisor()).workspaces()};},
     agentSession(sessionId){return readAgentSession(options.home,sessionId);},
     agentSessionEvents(sessionId,query={}){return readAgentSessionEvents(options.home,sessionId,query);},
+    async subscribeAgentSession(sessionId,options){return (await this.supervisor()).subscribe(sessionId,options);},
     async startAgentSession(input={}){return (await this.supervisor()).start({...input,fromMcp:true});},
     async sendAgentSessionMessage(sessionId,input={}){return (await this.supervisor()).send(sessionId,{...input,actor:input.actor??'human'});},
+    async sendAgentTerminalInput(sessionId,input={}){return (await this.supervisor()).terminalInput(sessionId,input.data);},
     async cancelAgentSessionTurn(sessionId,input={}){return (await this.supervisor()).cancel(sessionId,{actor:input.actor??'human'});},
     async stopAgentSession(sessionId,input={}){return (await this.supervisor()).stop(sessionId,{actor:input.actor??'human'});},
     catalog(){return store.agentCatalog();},
@@ -150,7 +153,7 @@ export async function createWorkstation(configuration) {
     register(input) {
       const repositoryId = id(input.id ?? `SPEC-${randomUUID()}`);
       remoteUrl(input.remoteUrl, options);
-      invariant(!store.repositories().some(r => remoteIdentity(r.remoteUrl) === remoteIdentity(input.remoteUrl)), 'REPOSITORY_ALREADY_BOUND', '這個規格庫已綁定，請從左側開啟；本地目錄可在設定修改。', 409);
+      invariant(!store.repositories().some(r => remoteIdentity(r.remoteUrl) === remoteIdentity(input.remoteUrl)), 'REPOSITORY_ALREADY_BOUND', '這個規格庫已綁定，請從導覽選單開啟；本地目錄可在設定修改。', 409);
       if (input.branch) branchName(input.branch);
       invariant(typeof input.title === 'string' && input.title.trim() && input.title.length <= 200, 'INVALID_TITLE', 'Repository title is required');
       const selected=validateLocation(options,repositoryId,input.localPath,store.repositories());

@@ -7,8 +7,11 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import {registeredAgentWorkspaces} from './agent-workspaces.mjs';
+import {publishAgentSession,subscribeLocalAgentSession,subscribeRemoteAgentSession,agentSessionEnded,agentStreamBufferBytes} from './agent-session-stream.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { invariant, id, errorResult } from '../contracts/index.mjs';
@@ -16,6 +19,8 @@ import { appendExecutionLog, installProgressSchema } from '../git-core/progress-
 import { negotiateProtocolVersion } from './mcp-protocol.mjs';
 
 const require = createRequire(import.meta.url);
+const execFileAsync = promisify(execFile);
+const localControlUrls=new Set();
 const defaultCopilotLoader = () => path.join(path.dirname(require.resolve('@github/copilot/package.json')), 'npm-loader.js');
 export const AGENT_PROFILES = Object.freeze(['copilot', 'kiro', 'codex', 'claude']);
 
@@ -232,7 +237,7 @@ function decodeEvent(row) {
 }
 
 function recordSessionEvent(home, sessionId, { actor, kind, content, meta, operationId }) {
-  return withDb(home, db => {
+  const event=withDb(home, db => {
     const now = new Date().toISOString();
     const result = db.prepare(
       'INSERT INTO agent_session_events(session_id,actor,kind,content,meta_json,created_at) VALUES(?,?,?,?,?,?)'
@@ -244,12 +249,14 @@ function recordSessionEvent(home, sessionId, { actor, kind, content, meta, opera
       const line = prefix ? `${prefix}${content}${String(content).endsWith('\n') ? '' : '\n'}` : String(content);
       try { appendExecutionLog(db, parentOpId, line); } catch {}
     }
-    return Number(result.lastInsertRowid);
+    return decodeEvent(db.prepare('SELECT * FROM agent_session_events WHERE seq=?').get(Number(result.lastInsertRowid)));
   });
+  publishAgentSession(home,sessionId,{type:'event',event});
+  return event.seq;
 }
 
 function updateSessionState(home, sessionId, fields) {
-  return withDb(home, db => {
+  const session=withDb(home, db => {
     const now = new Date().toISOString();
     const sets = ['updated_at=?'], values = [now];
     for (const [column, value] of Object.entries(fields)) {
@@ -260,6 +267,8 @@ function updateSessionState(home, sessionId, fields) {
     db.prepare(`UPDATE agent_sessions SET ${sets.join(',')} WHERE session_id=?`).run(...values);
     return decodeSession(db.prepare('SELECT * FROM agent_sessions WHERE session_id=?').get(sessionId));
   });
+  if(agentSessionEnded(fields.status))publishAgentSession(home,sessionId,{type:'closed',status:fields.status});
+  return session;
 }
 
 function updateMessageState(home, messageId, fields) {
@@ -364,7 +373,7 @@ function terminateProcessGroup(child, graceMs = 500) {
       if (!groupExists(pid) || Date.now() >= deadline) { done(); return; }
       poll = setTimeout(() => waitForGroup(deadline), 25);
     };
-    child.once('close', () => {
+    child.once?.('close', () => {
       if (!groupExists(pid)) done();
     });
     if (!groupExists(pid) && (child.exitCode !== null || child.signalCode !== null)) {
@@ -513,35 +522,68 @@ async function createAcpDriver({ home, sessionId, operationId, command, args, cw
 }
 
 async function createPtyDriver({ home, sessionId, operationId, command, args, cwd, env, settleMs = 120, onUnexpectedClose }) {
-  const child = spawn(command, args, {
-    cwd,
-    env: { ...env, TERM: 'xterm-256color' },
-    detached: process.platform !== 'win32',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let closed = false, activeCollector = null;
-  const onData = chunk => {
-    const text = String(chunk);
-    if (!text) return;
+  const socket = `bdd-${randomUUID()}`;
+  const tmux = (...arguments_) => execFileAsync('tmux', ['-L', socket, ...arguments_], { env });
+  // A separate tmux server gives this session its own lifetime and socket.
+  await tmux('new-session', '-d', '-s', sessionId, '-c', cwd, '--', command, ...args);
+  let child;
+  try {
+    const {stdout} = await tmux('display-message', '-p', '-t', sessionId, '#{pane_pid}');
+    const pid = Number(stdout.trim());
+    invariant(Number.isSafeInteger(pid) && pid > 0, 'AGENT_START_FAILED', 'tmux did not provide a valid pane process ID', 500);
+    child = require('node-pty').spawn('tmux', ['-L', socket, 'attach-session', '-t', sessionId], {
+      cwd, env: { ...env, TERM: 'xterm-256color' }, name: 'xterm-256color', cols: 120, rows: 40,
+    });
+    child.agentPid = pid;
+  } catch (error) {
+    await tmux('kill-session', '-t', sessionId).catch(() => {});
+    throw error;
+  }
+  let closed = false, activeCollector = null, disposal = null;
+  const attachmentExit=new Promise(resolve=>child.onExit(resolve));
+  const reapPane = async () => {
+    await terminateProcessGroup({pid: child.agentPid});
+    invariant(!groupExists(child.agentPid), 'AGENT_STOP_FAILED', 'CLI Agent process group is still running', 500);
+    // The pane group is gone before tmux is released. A natural pane exit
+    // already shuts down the per-session server; no kill is needed then.
+    try { await tmux('has-session', '-t', sessionId); }
+    catch (error) { if(error.code===1)return;throw error; }
+    await tmux('kill-session', '-t', sessionId);
+  };
+  const outputSubscription=child.onData(text => {
+    if (closed||!text) return;
     recordSessionEvent(home, sessionId, { actor: 'agent', kind: 'output', content: text, operationId });
     if (activeCollector) activeCollector.onChunk(text);
-  };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
-  child.once('close', (code, signal) => {
+  });
+  child.onExit(({exitCode}) => {
+    outputSubscription.dispose();
     if (!closed) {
       closed = true;
-      const err = new Error(`CLI Agent PTY 程序已結束（exit ${code ?? signal}）`);
+      disposal=(async()=>{
+      const err = new Error(`CLI Agent tmux 工作階段已結束（exit ${exitCode}）`);
       err.code = 'AGENT_PROCESS_EXITED';
-      updateSessionState(home, sessionId, { status: code === 0 ? 'STOPPED' : 'FAILED', ...(code === 0 ? {} : { error_json: JSON.stringify(errorResult(err)) }), finished_at: new Date().toISOString(), control_url: null, control_token: null });
       if (activeCollector) activeCollector.reject(err);
-      onUnexpectedClose?.(err);
+      try {
+        await reapPane();
+        updateSessionState(home, sessionId, { status: 'FAILED', error_json: JSON.stringify(errorResult(err)), finished_at: new Date().toISOString(), control_url: null, control_token: null });
+        onUnexpectedClose?.(err);
+      } catch (error) {
+        // Keep the owner/control channel so a failed cleanup remains retryable.
+        closed=false;
+        updateSessionState(home, sessionId, {status:'FAILED',error_json:JSON.stringify(errorResult(error))});
+        onUnexpectedClose?.(error,false);
+      }
+      })();
     }
   });
 
   return {
-    pid: child.pid,
+    pid: child.agentPid,
     acpSessionId: null,
+    writeInput(data) {
+      invariant(!closed, 'AGENT_SESSION_CLOSED', 'CLI Agent 工作階段已結束', 409);
+      child.write(data);
+    },
     async sendTurn(message, timeoutMs = 10000) {
       if (closed) throw new Error('CLI Agent PTY 工作階段已關閉');
       return new Promise((resolve, reject) => {
@@ -569,19 +611,25 @@ async function createPtyDriver({ home, sessionId, operationId, command, args, cw
           },
         };
         activeCollector = collector;
-        child.stdin.write(message.endsWith('\n') ? message : message + '\n');
+        child.write(message.endsWith('\n') ? message : message + '\n');
       });
     },
     async cancelTurn() {
       if (closed) return;
-      try { child.stdin.write('\x03\n'); } catch {}
+      child.write('\x03');
       if (activeCollector) activeCollector.finish('cancelled');
     },
     async stop() {
+      if(disposal)await disposal;
       if (closed) return;
       closed = true;
+      outputSubscription.dispose();
       if (activeCollector) activeCollector.finish('stopped');
-      await terminateProcessGroup(child);
+      disposal=(async()=>{
+        try { await reapPane();child.kill();await attachmentExit; }
+        catch(error){closed=false;disposal=null;throw error;}
+      })();
+      await disposal;
     },
   };
 }
@@ -637,6 +685,22 @@ export async function createAgentSupervisor({
   const effectiveDefaultArgs = defaultArgs ?? (process.env.WB_AGENT_SUPERVISOR_ARGS_JSON ? JSON.parse(process.env.WB_AGENT_SUPERVISOR_ARGS_JSON) : null);
 
   const liveSessions = new Map();
+  const explicitWorkspacePolicy=allowedRoots!==null||envAllowedRoots!==null;
+  async function resolveWorkspace(input){
+    if(explicitWorkspacePolicy)return {cwd:validateAllowedCwd(input.cwd??effectiveDefaultCwd,effectiveAllowedRoots)};
+    const catalog=await registeredAgentWorkspaces(home);
+    if(!catalog.projectCount){
+      invariant(input.projectId===undefined,'AGENT_PROJECT_NOT_FOUND','沒有已登錄的產品專案',404);
+      return {cwd:validateAllowedCwd(input.cwd??effectiveDefaultCwd,effectiveAllowedRoots)};
+    }
+    if(input.repositoryId!==undefined)id(input.repositoryId);
+    if(input.projectId!==undefined)id(input.projectId);
+    const candidates=catalog.workspaces.filter(item=>(input.repositoryId===undefined||item.repositoryId===input.repositoryId)&&(input.projectId===undefined||item.projectId===input.projectId));
+    invariant(candidates.length,'AGENT_PROJECT_NOT_FOUND','找不到已初始化的已登錄產品專案',404);
+    invariant(input.cwd!==undefined||candidates.length===1,'AGENT_PROJECT_REQUIRED','請以 agent_workspaces 查詢並指定產品專案或工作目錄',400);
+    const cwd=validateAllowedCwd(input.cwd??candidates[0].cwd,candidates.map(item=>item.cwd));
+    return {...candidates.find(item=>cwd===item.cwd||cwd.startsWith(item.cwd+path.sep)),cwd};
+  }
   const controlToken = randomUUID();
 
   const failQueuedMessages = (entry, error) => {
@@ -746,12 +810,12 @@ export async function createAgentSupervisor({
               entry.status = 'IDLE';
               updateSessionState(home, entry.sessionId, { status: 'IDLE' });
             }
-            const finalState = outcome.stopReason === 'cancelled' ? 'CANCELLED' : 'PROCESSED';
+            const finalState = outcome.stopReason === 'cancelled' ? 'CANCELLED' : entry.protocol === 'pty' ? 'DELIVERED' : 'PROCESSED';
             updateMessageState(home, current.messageId, {
               state: finalState,
               reply: outcome.reply,
               stop_reason: outcome.stopReason,
-              processed_at: new Date().toISOString(),
+              processed_at: finalState === 'DELIVERED' ? null : new Date().toISOString(),
             });
             recordSessionEvent(home, entry.sessionId, {
               actor: 'system',
@@ -814,7 +878,7 @@ export async function createAgentSupervisor({
   };
 
   const executeLocalCancel = async (entry, { actor = 'codex' } = {}) => {
-    await entry.driver.cancelTurn();
+    if (entry.protocol==='pty'||entry.busy) await entry.driver.cancelTurn();
     if (entry.status !== 'STOPPED' && entry.status !== 'FAILED') {
       entry.status = 'IDLE';
       updateSessionState(home, entry.sessionId, { status: 'IDLE' });
@@ -828,12 +892,20 @@ export async function createAgentSupervisor({
     return { sessionId: entry.sessionId, status: entry.status, cancelled: true, lastSeq: seq };
   };
 
+  const executeTerminalInput = (entry, data) => {
+    invariant(entry.protocol === 'pty', 'AGENT_TERMINAL_UNAVAILABLE', '只有 PTY 工作階段支援終端輸入', 409);
+    invariant(entry.status !== 'STOPPED' && entry.status !== 'FAILED', 'AGENT_SESSION_CLOSED', 'CLI Agent 工作階段已結束', 409);
+    invariant(typeof data === 'string' && data.length > 0 && Buffer.byteLength(data) <= 65536, 'INVALID_TERMINAL_INPUT', '終端輸入無效', 400);
+    entry.driver.writeInput(data);
+    return {sessionId: entry.sessionId, accepted: true};
+  };
+
   const executeLocalStop = async (entry, { actor = 'codex' } = {}) => {
-    entry.status = 'STOPPED';
     const stopErr = new Error(`CLI Agent 工作階段 ${entry.sessionId} 已停止`);
     stopErr.code = 'AGENT_SESSION_STOPPED';
-    failQueuedMessages(entry, stopErr);
     await entry.driver.stop();
+    entry.status = 'STOPPED';
+    failQueuedMessages(entry, stopErr);
     liveSessions.delete(entry.sessionId);
     const seq = recordSessionEvent(home, entry.sessionId, {
       actor: actor === 'human' ? 'human' : 'system',
@@ -873,7 +945,9 @@ export async function createAgentSupervisor({
       invariant(command === undefined && args === undefined && (!env || Object.keys(env).length === 0), 'AGENT_COMMAND_FORBIDDEN', 'MCP 工具不得直接指定任意執行檔、參數或環境變數', 403);
     }
     const profileConfig = resolveProfileConfig(agentProfile, protocol, { effectiveDefaultCommand, effectiveDefaultArgs });
-    const resolvedCwd = validateAllowedCwd(cwd ?? effectiveDefaultCwd, effectiveAllowedRoots);
+    // Public starts validate project scope first. Authenticated proxies may
+    // also forward a worktree already validated by their task capability.
+    const resolvedCwd = validateAllowedCwd(cwd ?? effectiveDefaultCwd, explicitWorkspacePolicy?effectiveAllowedRoots:null);
     const sanitizedEnv = buildSanitizedAgentEnv(home, env);
     const resolvedAgentName = agentName || title || `${profileConfig.agentProfile}-agent`;
     const initialMessage = typeof task === 'string' && task.trim() ? task : typeof prompt === 'string' && prompt.trim() ? prompt : undefined;
@@ -903,11 +977,11 @@ export async function createAgentSupervisor({
     });
 
     const entry = { sessionId, repositoryId, operationId, protocol, agentName: resolvedAgentName, driver: null, status: 'IDLE', busy: false, pumping: false, queue: [] };
-    const onUnexpectedClose = err => {
+    const onUnexpectedClose = (err,reaped=true) => {
       entry.status = 'FAILED';
       entry.busy = false;
       failQueuedMessages(entry, err);
-      liveSessions.delete(sessionId);
+      if(reaped)liveSessions.delete(sessionId);
     };
 
     let driver;
@@ -974,6 +1048,23 @@ export async function createAgentSupervisor({
         res.end(JSON.stringify({ ok: true, pid: process.pid }));
         return;
       }
+      const url=new URL(req.url,'http://supervisor.invalid');
+      if(req.method==='GET'&&url.pathname==='/events'){
+        const sessionId=id(url.searchParams.get('sessionId')),afterSeq=Number(url.searchParams.get('afterSeq')??0);
+        invariant(Number.isSafeInteger(afterSeq)&&afterSeq>=0,'INVALID_EVENT_SEQ','Invalid event cursor');
+        readAgentSession(home,sessionId);
+        res.writeHead(200,{'content-type':'application/x-ndjson','cache-control':'no-store'});
+        let dispose,ended=false;
+        res.once('close',()=>{ended=true;dispose?.();});
+        dispose=subscribeLocalAgentSession(home,sessionId,afterSeq,cursor=>readAgentSessionEvents(home,sessionId,{afterSeq:cursor,limit:200}),message=>{
+          if(ended)return;
+          invariant(res.writableLength<=agentStreamBufferBytes,'AGENT_STREAM_OVERFLOW','CLI Agent stream client is too slow');
+          res.write(JSON.stringify(message)+'\n');
+          if(message.type==='closed')res.end();
+        },error=>res.destroy(error));
+        if(ended)dispose();
+        res.flushHeaders();return;
+      }
       let raw = '';
       for await (const chunk of req) raw += String(chunk);
       const body = raw ? JSON.parse(raw) : {};
@@ -984,6 +1075,7 @@ export async function createAgentSupervisor({
         const entry = liveSessions.get(body.sessionId);
         invariant(entry, 'AGENT_SESSION_NOT_LIVE', `CLI Agent 工作階段 ${body.sessionId} 不在此程序執行中`, 404);
         if (req.url === '/send') result = await executeLocalSend(entry, body);
+        else if (req.url === '/terminal-input') result = executeTerminalInput(entry, body.data);
         else if (req.url === '/cancel') result = await executeLocalCancel(entry, body);
         else if (req.url === '/stop') result = await executeLocalStop(entry, body);
         else invariant(false, 'NOT_FOUND', 'Unknown supervisor control action', 404);
@@ -991,6 +1083,7 @@ export async function createAgentSupervisor({
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (error) {
+      if(res.headersSent){res.destroy(error);return;}
       res.writeHead(Number(error.statusCode) || 500, { 'content-type': 'application/json' });
       res.end(JSON.stringify(errorResult(error)));
     }
@@ -1003,6 +1096,7 @@ export async function createAgentSupervisor({
   server.unref();
   const address = server.address();
   const controlUrl = `http://127.0.0.1:${address.port}`;
+  localControlUrls.add(controlUrl);
 
   // Register as the primary host supervisor in WB_HOME if none is active
   const existingHost = withDb(home, db => db.prepare('SELECT * FROM agent_supervisor_host WHERE id=1').get());
@@ -1022,7 +1116,7 @@ export async function createAgentSupervisor({
         invariant(options.command === undefined && options.args === undefined && (!options.env || Object.keys(options.env).length === 0), 'AGENT_COMMAND_FORBIDDEN', 'MCP 工具不得直接指定任意執行檔、參數或環境變數', 403);
       }
       const profileConfig = resolveProfileConfig(options.agentProfile, protocol, { effectiveDefaultCommand, effectiveDefaultArgs });
-      const resolvedCwd = validateAllowedCwd(options.cwd ?? effectiveDefaultCwd, effectiveAllowedRoots);
+      const workspace=await resolveWorkspace(options),resolvedCwd=workspace.cwd;
       const resolvedCommand = options.command ?? profileConfig.command;
       invariant(
         resolvedCommand === process.execPath || resolvedCommand === effectiveDefaultCommand || resolvedCommand === profileConfig.command,
@@ -1042,7 +1136,7 @@ export async function createAgentSupervisor({
           command: resolvedCommand,
           args: resolvedArgs,
           cwd: resolvedCwd,
-          repositoryId: options.repositoryId ?? defaultRepositoryId,
+          repositoryId: options.repositoryId ?? workspace.repositoryId ?? defaultRepositoryId,
           operationId: options.operationId ?? defaultOperationId,
         });
       }
@@ -1053,9 +1147,34 @@ export async function createAgentSupervisor({
         command: resolvedCommand,
         args: resolvedArgs,
         cwd: resolvedCwd,
-        repositoryId: options.repositoryId ?? defaultRepositoryId,
+        repositoryId: options.repositoryId ?? workspace.repositoryId ?? defaultRepositoryId,
         operationId: options.operationId ?? defaultOperationId,
       });
+    },
+
+    async workspaces(){
+      const catalog=await registeredAgentWorkspaces(home);
+      return catalog.workspaces.filter(item=>{try{validateAllowedCwd(item.cwd,explicitWorkspacePolicy?effectiveAllowedRoots:null);return true;}catch(error){if(error.code==='AGENT_CWD_FORBIDDEN')return false;throw error;}});
+    },
+
+    async subscribe(sessionId,{afterSeq=0,onMessage,onError,signal}){
+      signal?.throwIfAborted();
+      id(sessionId);invariant(Number.isSafeInteger(afterSeq)&&afterSeq>=0,'INVALID_EVENT_SEQ','Invalid event cursor');
+      const row=withDb(home,db=>db.prepare('SELECT * FROM agent_sessions WHERE session_id=?').get(sessionId));
+      invariant(row,'AGENT_SESSION_NOT_FOUND','CLI Agent session not found',404);
+      if(agentSessionEnded(row.status)||localControlUrls.has(row.control_url))return subscribeLocalAgentSession(home,sessionId,afterSeq,cursor=>readAgentSessionEvents(home,sessionId,{afterSeq:cursor,limit:200}),onMessage,onError);
+      invariant(row.control_url&&row.control_token,'AGENT_STREAM_UNAVAILABLE','CLI Agent control channel is unavailable',409);
+      return subscribeRemoteAgentSession(row,sessionId,afterSeq,onMessage,onError,signal);
+    },
+
+    async terminalInput(sessionId, data) {
+      id(sessionId);
+      const local = liveSessions.get(sessionId);
+      if (local) return executeTerminalInput(local, data);
+      const row = withDb(home, db => db.prepare('SELECT * FROM agent_sessions WHERE session_id=?').get(sessionId));
+      invariant(row, 'AGENT_SESSION_NOT_FOUND', `找不到 CLI Agent 工作階段 ${sessionId}`, 404);
+      invariant(row.control_url && row.control_token && row.status !== 'STOPPED' && row.status !== 'FAILED', 'AGENT_SESSION_CLOSED', `CLI Agent 工作階段 ${sessionId} 已結束`, 409);
+      return forwardControlRequest(row.control_url, row.control_token, 'terminal-input', {sessionId, data});
     },
 
     async send(sessionId, { message, messageId, actor = 'codex', interrupt = false, mode, wait = true, timeoutMs = 60000 } = {}) {
@@ -1141,6 +1260,7 @@ export async function createAgentSupervisor({
       } catch {}
       server.closeAllConnections();
       await new Promise(resolve => server.close(() => resolve()));
+      localControlUrls.delete(controlUrl);
     },
   };
 }
@@ -1157,6 +1277,8 @@ export const agentSupervisorToolDefinitions = Object.freeze([
         agentName: { type: 'string', description: 'CLI Agent 識別名稱' },
         title: { type: 'string', description: 'CLI Agent 標題別名（選填）' },
         cwd: { type: 'string', description: '允許工作區內的工作目錄絕對路徑（選填）' },
+        repositoryId:{type:'string',description:'規格庫 ID，可先用 agent_workspaces 查詢'},
+        projectId:{type:'string',description:'已登錄產品專案 ID，可省略 cwd'},
         task: { type: 'string', description: '初始派工指令（選填）' },
         prompt: { type: 'string', description: '初始派工指令別名（選填）' },
         wait: { type: 'boolean', description: '是否等待初始回合完成（預設 false 立即回傳 sessionId）' },
@@ -1164,6 +1286,12 @@ export const agentSupervisorToolDefinitions = Object.freeze([
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name:'agent_workspaces',
+    description:'列出已綁定規格庫的已初始化產品專案及實際工作目錄，以 repositoryId/projectId 或 cwd 派工。',
+    inputSchema:{type:'object',properties:{},additionalProperties:false},
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
   },
   {
     name: 'agent_send',
@@ -1261,6 +1389,7 @@ export async function supervisorRpc(supervisor, request) {
   try {
     let value;
     if (name === 'agent_start') value = await supervisor.start({ ...args, fromMcp: true });
+    else if(name==='agent_workspaces')value={workspaces:await supervisor.workspaces()};
     else if (name === 'agent_send') value = await supervisor.send(args.sessionId, { message: args.message, messageId: args.messageId, mode: args.mode, actor: 'codex', wait: args.wait ?? true });
     else if (name === 'agent_events') value = supervisor.events(args.sessionId, { afterSeq: args.afterSeq ?? 0 });
     else if (name === 'agent_list') value = { sessions: supervisor.list(args) };

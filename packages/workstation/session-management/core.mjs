@@ -3,6 +3,7 @@ import {readFileSync, mkdirSync, realpathSync} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {SessionError,requireThat as ok,text,identifier as id,integer,object,fields,canonical,digest,checkSchema,validateOutput,cliPolicy} from './contracts.mjs';
+import {migrateExecutionSchema,migrateNormalizationSchema} from './migrations.mjs';
 
 const uid=prefix=>`${prefix}-${randomUUID()}`;
 const now=()=>new Date().toISOString();
@@ -20,15 +21,22 @@ export class SessionManager {
     this.db=new DatabaseSync(file);
     try {
       this.db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
+      // Rebuilding scoped tables requires FK checks to be deferred until their
+      // canonical names have been restored. BEGIN IMMEDIATE excludes writers.
+      this.db.exec('PRAGMA foreign_keys=OFF');
       this.transaction(()=>{
         if(!this.one("SELECT name FROM sqlite_master WHERE type='table' AND name='sm_migrations'")) {
           this.db.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));
           this.exec('INSERT INTO sm_migrations VALUES(1,?)',now());
         }
-        ok(this.one('SELECT MAX(version) version FROM sm_migrations').version===1,'MIGRATION_REQUIRED','Unsupported session schema version');
+        const version=this.one('SELECT MAX(version) version FROM sm_migrations').version;
+        ok([1,2,3].includes(version),'MIGRATION_REQUIRED','Unsupported session schema version');
+        if(version===1){migrateExecutionSchema(this.db);this.exec('INSERT INTO sm_migrations VALUES(2,?)',now());}
+        if(version<3){migrateNormalizationSchema(this.db);this.exec('INSERT INTO sm_migrations VALUES(3,?)',now());}
         integer(maxWorkers,'maxWorkers',1,64);
         this.exec('INSERT OR IGNORE INTO sm_workstations VALUES(?,?)',this.workstationId,maxWorkers);
       });
+      this.db.exec('PRAGMA foreign_keys=ON');
     }catch(error){this.db.close();throw error;}
   }
   close(){this.db.close();}
@@ -56,7 +64,7 @@ export class SessionManager {
     ok(row,'NODE_NOT_FOUND','Node not found',404);return {...row,config:parse(row.config)};
   }
   session(sessionId) {
-    const row=this.one('SELECT * FROM sm_bot_task_sessions WHERE workstation_id=? AND id=?',this.workstationId,id(sessionId));
+    const row=this.one('SELECT * FROM sm_session_scope WHERE workstation_id=? AND id=?',this.workstationId,id(sessionId));
     ok(row,'SESSION_NOT_FOUND','Session not found',404);return row;
   }
   room(taskId){this.task(taskId);return this.one('SELECT * FROM sm_rooms WHERE task_id=?',taskId);}
@@ -138,7 +146,7 @@ export class SessionManager {
         const node=this.node(session.active_node_id);ok(node.state==='RUNNING','NODE_STATE_CONFLICT','No running node');
         ok(input.adapter===node.config.bot.body.runtime,'RUNTIME_MISMATCH','Runtime differs from frozen Bot');text(input.nativeId,'nativeId',256);
         const native=uid('native'),generation=session.generation+1;
-        this.exec('INSERT INTO sm_native_sessions VALUES(?,?,?,?,?,?,?)',native,this.workstationId,session.id,generation,input.adapter,input.nativeId,now());
+        this.exec('INSERT INTO sm_native_sessions VALUES(?,?,?,?,?,?)',native,session.id,generation,input.adapter,input.nativeId,now());
         this.exec('UPDATE sm_bot_task_sessions SET native_session_id=?,generation=? WHERE id=?',native,generation,session.id);
         this.event(session.task_id,'runtime.attached',{sessionId:session.id,generation,adapter:input.adapter},actor);return this.session(session.id);
       }
@@ -238,6 +246,7 @@ export class SessionManager {
     this.exec('INSERT INTO sm_tasks(workstation_id,id,project_id,repository_id,title,state,created_at) VALUES(?,?,?,?,?,?,?)',this.workstationId,taskId,input.projectId,input.repositoryId,text(input.title,'title',500),'PROVISIONING',now());
     const snapshot={name:workflow.body.name,nodes};
     this.exec('INSERT INTO sm_workflows VALUES(?,?,?,?,?)',taskId,workflow.id,workflow.revision,canonical(snapshot),digest(snapshot));
+    for(const config of nodes)this.exec('INSERT OR IGNORE INTO sm_execution_profiles VALUES(?,?,?)',taskId,config.profile.id,config.profile.revision);
     // The path is generated, never supplied by a model. Merely reserving it is not a Git receipt.
     const suffix=digest({workstationId:this.workstationId,taskId}).slice(0,32);
     this.exec('INSERT INTO sm_worktrees(task_id,path,branch,state) VALUES(?,?,?,?)',taskId,path.join(this.worktreeRoot,suffix),`wb/task-${suffix}`,'PENDING');
@@ -247,9 +256,9 @@ export class SessionManager {
     return this.detail(taskId);
   }
   ensureSession(node) {
-    const old=this.one('SELECT * FROM sm_bot_task_sessions WHERE workstation_id=? AND bot_id=? AND task_id=?',this.workstationId,node.bot_id,node.task_id);
+    const old=this.one('SELECT * FROM sm_session_scope WHERE workstation_id=? AND bot_id=? AND task_id=?',this.workstationId,node.bot_id,node.task_id);
     if(old)return old;
-    const sessionId=uid('bot-task');this.exec('INSERT INTO sm_bot_task_sessions(id,workstation_id,bot_id,task_id) VALUES(?,?,?,?)',sessionId,this.workstationId,node.bot_id,node.task_id);return this.session(sessionId);
+    const sessionId=uid('bot-task');this.exec('INSERT INTO sm_bot_task_sessions(id,bot_id,task_id) VALUES(?,?,?)',sessionId,node.bot_id,node.task_id);return this.session(sessionId);
   }
   refreshReady(taskId) {
     const nodes=this.all('SELECT * FROM sm_nodes WHERE task_id=?',taskId),completed=new Set(nodes.filter(n=>n.state==='SUCCEEDED').map(n=>n.node_key));
@@ -294,17 +303,18 @@ export class SessionManager {
     }
     ok(input.shareAcrossProjects===undefined||typeof input.shareAcrossProjects==='boolean','INVALID_INPUT','shareAcrossProjects must be boolean',400);
     const scope=input.shareAcrossProjects===true?null:id(input.projectId);
-    const previous=this.one('SELECT id FROM sm_summaries WHERE workstation_id=? AND memory_session_id=? AND project_id IS ? AND category=? AND summary=?',this.workstationId,memory.id,scope,input.category,input.summary);
+    const previous=this.one('SELECT id FROM sm_summary_scope WHERE workstation_id=? AND memory_session_id=? AND project_id IS ? AND category=? AND summary=?',this.workstationId,memory.id,scope,input.category,input.summary);
     if(previous)return {id:previous.id,memorySessionId:memory.id,scope:scope===null?'WORKSTATION':'PROJECT'};
-    ok(this.one('SELECT COUNT(*) n FROM sm_summaries WHERE workstation_id=? AND memory_session_id=? AND project_id IS ?',this.workstationId,memory.id,scope).n<200,'MEMORY_LIMIT','Memory scope needs explicit compaction before adding more summaries');
+    ok(this.one('SELECT COUNT(*) n FROM sm_summary_scope WHERE workstation_id=? AND memory_session_id=? AND project_id IS ?',this.workstationId,memory.id,scope).n<200,'MEMORY_LIMIT','Memory scope needs explicit compaction before adding more summaries');
     const summaryId=uid('summary');
-    this.exec('INSERT INTO sm_summaries VALUES(?,?,?,?,?,?,?,?)',summaryId,this.workstationId,memory.id,input.shareAcrossProjects===true?null:id(input.projectId),input.category,input.summary,canonical(input.sourceEventIds),now());
+    this.exec('INSERT INTO sm_summaries VALUES(?,?,?,?,?,?)',summaryId,memory.id,input.shareAcrossProjects===true?null:id(input.projectId),input.category,input.summary,now());
+    input.sourceEventIds.forEach((eventId,ordinal)=>this.exec('INSERT INTO sm_summary_sources VALUES(?,?,?)',summaryId,ordinal,eventId));
     return {id:summaryId,memorySessionId:memory.id,scope:input.shareAcrossProjects===true?'WORKSTATION':'PROJECT'};
   }
   memory(soulId,projectId) {
     ok(this.one('SELECT 1 FROM sm_projects WHERE workstation_id=? AND id=?',this.workstationId,id(projectId)),'PROJECT_NOT_FOUND','Project not found',404);
     const memory=this.one('SELECT * FROM sm_soul_memory WHERE workstation_id=? AND soul_id=?',this.workstationId,id(soulId));ok(memory,'SOUL_NOT_FOUND','Soul not found',404);
-    return {id:memory.id,entries:this.all('SELECT id,category,summary,project_id,source_events,created_at FROM sm_summaries WHERE workstation_id=? AND memory_session_id=? AND (project_id=? OR project_id IS NULL) ORDER BY created_at,id',this.workstationId,memory.id,projectId).map(row=>({...row,source_events:parse(row.source_events)}))};
+    return {id:memory.id,entries:this.all('SELECT id,category,summary,project_id,source_events,created_at FROM sm_summary_scope WHERE workstation_id=? AND memory_session_id=? AND (project_id=? OR project_id IS NULL) ORDER BY created_at,id',this.workstationId,memory.id,projectId).map(row=>({...row,source_events:parse(row.source_events)}))};
   }
   submit(input,actor) {
     fields(input,['nodeId','expectedVersion','inputRevision','generation','data'],['nodeId','expectedVersion','inputRevision','generation','data']);
@@ -325,14 +335,14 @@ export class SessionManager {
     ok(candidate.task_revision===task.input_revision&&candidate.generation===session.generation,'STALE_OUTPUT','Candidate is no longer current');
     ok(!this.one(`SELECT 1 FROM sm_workers WHERE node_id=? AND state IN ${busy}`,node.id),'WORKER_STILL_ACTIVE','Workers must be stopped');
     const resultId=uid('result'),contract={id:node.config.output.id,revision:node.config.output.revision,schemaHash:digest(node.config.output.body.schema)};
-    this.exec('INSERT INTO sm_results VALUES(?,?,?,?,?,?,?,?,?,?)',resultId,node.id,task.id,task.input_revision,canonical(contract),candidate.data,candidate.digest,candidate.producer,actor.kind==='human'?actor.id:null,now());
+    this.exec('INSERT INTO sm_results VALUES(?,?,?,?,?,?,?,?,?)',resultId,node.id,task.input_revision,canonical(contract),candidate.data,candidate.digest,candidate.producer,actor.kind==='human'?actor.id:null,now());
     this.exec("UPDATE sm_nodes SET state='SUCCEEDED',version=version+1 WHERE id=?",node.id);
     this.exec('UPDATE sm_bot_task_sessions SET active_node_id=NULL WHERE id=?',session.id);
     this.event(task.id,'result.published',{nodeId:node.id,resultId,contract},actor);
     this.refreshReady(task.id);return {state:'SUCCEEDED',resultId};
   }
   worker(workerId) {
-    const row=this.one('SELECT w.* FROM sm_workers w JOIN sm_tasks t ON t.id=w.task_id WHERE t.workstation_id=? AND w.id=?',this.workstationId,id(workerId));ok(row,'WORKER_NOT_FOUND','Worker not found',404);return row;
+    const row=this.one('SELECT w.* FROM sm_worker_scope w JOIN sm_tasks t ON t.id=w.task_id WHERE t.workstation_id=? AND w.id=?',this.workstationId,id(workerId));ok(row,'WORKER_NOT_FOUND','Worker not found',404);return row;
   }
   reserveWorker(input,actor) {
     fields(input,['nodeId','profile','writeAccess'],['nodeId','profile','writeAccess']);const node=this.node(input.nodeId);this.activeTask(node.task_id);this.nodeActor(node,actor);
@@ -340,10 +350,10 @@ export class SessionManager {
     const policy=node.config.cliPolicy;ok(policy.allowedProfiles.includes(input.profile),'WORKER_PROFILE_DENIED','Worker profile not allowed',403);
     const all=this.all('SELECT * FROM sm_workers WHERE node_id=?',node.id),active=all.filter(w=>['RESERVED','RUNNING','UNKNOWN'].includes(w.state));
     ok(all.length<policy.maxTotal,'CLI_TOTAL_LIMIT','Node total Worker budget exhausted');ok(active.length<policy.maxConcurrent,'CLI_CONCURRENCY_LIMIT','Node concurrency exhausted');
-    const count=this.one(`SELECT COUNT(*) n FROM sm_workers w JOIN sm_tasks t ON t.id=w.task_id WHERE t.workstation_id=? AND w.state IN ${busy}`,this.workstationId).n;
+    const count=this.one(`SELECT COUNT(*) n FROM sm_worker_scope w JOIN sm_tasks t ON t.id=w.task_id WHERE t.workstation_id=? AND w.state IN ${busy}`,this.workstationId).n;
     ok(count<this.one('SELECT max_workers FROM sm_workstations WHERE id=?',this.workstationId).max_workers,'WORKSTATION_CLI_LIMIT','Workstation concurrency exhausted');
-    if(input.writeAccess)ok(!this.one(`SELECT 1 FROM sm_workers WHERE task_id=? AND write_access=1 AND state IN ${busy}`,node.task_id),'WORKSPACE_BUSY','Another Worker owns the task workspace');
-    const workerId=uid('worker');this.exec('INSERT INTO sm_workers(id,node_id,task_id,profile,state,write_access,created_at) VALUES(?,?,?,?,?,?,?)',workerId,node.id,node.task_id,input.profile,'RESERVED',Number(input.writeAccess),now());
+    if(input.writeAccess)ok(!this.one(`SELECT 1 FROM sm_worker_scope WHERE task_id=? AND write_access=1 AND state IN ${busy}`,node.task_id),'WORKSPACE_BUSY','Another Worker owns the task workspace');
+    const workerId=uid('worker');this.exec('INSERT INTO sm_workers(id,node_id,profile,state,write_access,created_at) VALUES(?,?,?,?,?,?)',workerId,node.id,input.profile,'RESERVED',Number(input.writeAccess),now());
     this.event(node.task_id,'worker.reserved',{workerId,nodeId:node.id},actor);return this.worker(workerId);
   }
   workerReceipt(input,actor) {
@@ -359,8 +369,8 @@ export class SessionManager {
     const task=this.task(taskId),nodes=this.all('SELECT * FROM sm_nodes WHERE task_id=? ORDER BY rowid',taskId).map(row=>({...row,config:parse(row.config)}));
     return {task,workflow:parse(this.one('SELECT snapshot FROM sm_workflows WHERE task_id=?',taskId).snapshot),worktree:this.one('SELECT * FROM sm_worktrees WHERE task_id=?',taskId),room:this.room(taskId),nodes,
       participants:[...new Set(nodes.filter(n=>['READY','RUNNING','WAITING_HUMAN'].includes(n.state)).map(n=>n.bot_id))],
-      sessions:this.all('SELECT * FROM sm_bot_task_sessions WHERE task_id=?',taskId),workers:this.all('SELECT * FROM sm_workers WHERE task_id=?',taskId),
-      results:this.all('SELECT * FROM sm_results WHERE task_id=?',taskId).map(row=>({...row,data:parse(row.data),contract:parse(row.contract),producer:parse(row.producer)}))};
+      sessions:this.all('SELECT * FROM sm_session_scope WHERE task_id=?',taskId),workers:this.all('SELECT * FROM sm_worker_scope WHERE task_id=?',taskId),
+      results:this.all('SELECT * FROM sm_result_scope WHERE task_id=?',taskId).map(row=>({...row,data:parse(row.data),contract:parse(row.contract),producer:parse(row.producer)}))};
   }
   events(taskId,{afterSeq=0,limit=200}={}) {
     const room=this.room(taskId);integer(afterSeq,'afterSeq');integer(limit,'limit',1,500);

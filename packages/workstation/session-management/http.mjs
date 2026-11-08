@@ -1,4 +1,5 @@
 import {readFile} from 'node:fs/promises';
+import {realpathSync} from 'node:fs';
 import path from 'node:path';
 import {SessionManager} from './core.mjs';
 import {provisionTaskWorktree} from './worktree.mjs';
@@ -50,7 +51,8 @@ export async function dispatchSessionManagement(service,request) {
     }
     if(request.method!=='GET')ok(request.headers?.['x-workbench-request']==='1','REQUEST_HEADER_REQUIRED','Workbench request header is required',403);
     ok(['GET','POST'].includes(request.method),'METHOD_NOT_ALLOWED','Only GET/POST are supported',405);
-    manager=new SessionManager(path.join(service.options.home,'metadata.sqlite'),{worktreeRoot:path.join(service.options.home,'task-worktrees')});
+    const home=realpathSync(service.options.home);
+    manager=new SessionManager(path.join(home,'metadata.sqlite'),{worktreeRoot:path.join(home,'task-worktrees')});
     const parts=route.slice(prefix.length).split('/').filter(Boolean).map(decodeURIComponent);
     if(request.method==='GET') {
       if(parts.length===0)return response(200,manager.snapshot());

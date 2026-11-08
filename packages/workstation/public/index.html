@@ -2,10 +2,9 @@
 <html lang="zh-Hant">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>BDD 工作台</title><meta name="description" content="規格與驗收工作台：工作台 → Spec Repo → Project"><link rel="stylesheet" href="/repositories/style.css"></head>
 <body><a class="skip" href="#content">跳至主要內容</a><div class="shell">
-<aside id="sidebar" aria-label="工作台導覽"><a class="brand" href="/" data-home><span class="brand-mark">b.</span><span><strong>BDD 工作台</strong><small>SPECIFICATION WORKBENCH</small></span></a><button class="nav-home" data-home>◈ 工作台總覽</button><div class="section-label"><span>SPEC REPOSITORIES</span><button id="bind-sidebar" aria-label="綁定新的 Spec Repo">＋</button></div><nav id="repository-nav" aria-label="Spec Repositories"></nav><button id="open-agent-manager" class="nav-home" type="button">Agent、Prompt 與 Skill 管理</button></aside><button id="menu-toggle" class="icon-button" aria-label="展開導覽" aria-controls="sidebar" aria-expanded="false">☰</button>
 <div class="main-shell"><header class="topbar"><div id="breadcrumbs">工作台</div></header>
 <div id="notice" role="status" aria-live="polite"></div><section id="job-progress" class="job-banner" hidden><div><strong id="job-title"></strong><p id="job-step">處理中</p></div><button id="cancel-job">停止</button></section>
-<main id="content" aria-busy="false">
+<main id="content" aria-busy="false" tabindex="-1">
 <section id="agent-manager-view" hidden aria-label="Agent、Prompt 與 Skill 管理"></section><section id="home-view"><div class="page-heading"><div><p class="eyebrow">YOUR WORKBENCH</p><h1>工作台</h1></div><button id="bind-home" class="primary">＋ 綁定 Spec Repo</button></div><div id="repository-cards" class="card-grid"></div><section id="empty-state" class="empty-state"><h2>尚未綁定規格庫</h2><button id="bind-empty" class="primary">設定第一個 Spec Repo</button></section></section>
 <section id="repository-view" hidden aria-busy="false"><div class="page-heading"><div><p class="eyebrow">SPEC REPOSITORY</p><h1 id="repository-title"></h1></div><div><button id="sync" class="primary">遠端同步</button></div></div><div id="repository-error" class="error-box" role="alert" hidden></div>
 
@@ -44,29 +43,46 @@
 <form id="operation-sdk-input" hidden><label for="operation-sdk-message">補充訊息</label><textarea id="operation-sdk-message" aria-label="給 Agent 的補充訊息" rows="3" maxlength="65536" placeholder="補充要求或修正方向，可輸入多行文字。"></textarea><div class="inline-actions"><button id="operation-sdk-send" type="submit" disabled>排入後續回合</button><span id="operation-sdk-input-status" class="muted" role="status"></span></div></form></div>
 </section></main></div>
 <aside id="assistant-drawer" class="assistant-drawer" data-testid="assistant-drawer" aria-label="AI 助手與工作階段面板">
+  <nav class="assistant-rail" aria-label="主要導覽" hidden>
+    <span class="assistant-rail-brand" aria-hidden="true">b.</span>
+    <button id="assistant-nav-workspace" data-testid="assistant-nav-workspace" data-assistant-nav="workspace" type="button" aria-label="工作台" title="工作台" aria-controls="assistant-rooms-panel" aria-expanded="true" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/></svg></button>
+    <button id="assistant-rooms-toggle" data-testid="assistant-rooms-toggle" data-assistant-nav="chat" type="button" aria-label="聊天" title="聊天" aria-controls="assistant-rooms-panel" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3h2a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M7 9h10M7 14h6"/></svg></button>
+    <button id="assistant-nav-settings" data-testid="assistant-nav-settings" data-assistant-nav="settings" type="button" aria-label="設定" title="設定" aria-controls="assistant-rooms-panel" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 2-.5 3-2 .9-2.5-1.4-2 3.5 2.1 2v2L3 14l2 3.5L7.5 16l2 .9.5 3.1h4l.5-3.1 2-.9 2.5 1.5 2-3.5-2.1-2v-2L21 8l-2-3.5L16.5 6l-2-.9L14 2Z"/><circle cx="12" cy="11" r="3"/></svg></button>
+  </nav>
   <header class="assistant-topbar">
-    <button id="assistant-rooms-toggle" data-testid="assistant-rooms-toggle" class="icon-button" type="button" aria-label="切換對話與工作階段清單" aria-controls="assistant-rooms-panel" aria-expanded="true" title="展開側邊選單">◫</button>
+    <button id="assistant-menu-toggle" data-testid="assistant-menu-toggle" class="icon-button" type="button" aria-label="展開導覽" title="展開導覽" aria-controls="assistant-rooms-panel" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
     <strong class="assistant-title">AI 助手</strong>
     <div class="assistant-topbar-actions">
       <button id="assistant-drawer-toggle" data-testid="assistant-drawer-toggle" class="icon-button" type="button" aria-label="收合右側面板" aria-controls="assistant-drawer" aria-expanded="true" title="收合右側面板">×</button>
     </div>
   </header>
   <div class="assistant-body">
-    <div id="assistant-rooms-backdrop" class="assistant-modal-backdrop"></div>
-    <section id="assistant-rooms-panel" data-testid="assistant-rooms-panel" class="sidebar-chats assistant-side-modal" role="complementary" aria-label="聊天室與工作階段清單">
+    <div id="assistant-rooms-backdrop" class="assistant-modal-backdrop" hidden></div>
+    <section id="assistant-rooms-panel" data-testid="assistant-rooms-panel" class="sidebar-chats assistant-side-modal" role="complementary" aria-label="工作台與對話導覽" hidden>
       <header class="assistant-modal-header">
-        <strong class="assistant-modal-title">AI 助手</strong>
+        <strong id="assistant-menu-title" class="assistant-modal-title">工作台</strong>
         <button id="assistant-rooms-close" data-testid="assistant-rooms-close" class="icon-button" type="button" aria-label="關閉側邊選單" title="關閉側邊選單">×</button>
       </header>
       <div class="assistant-modal-scroll">
-        <button id="new-chat-room" data-testid="new-chat" type="button" aria-label="新對話" class="assistant-new-chat">✎ 新對話</button>
-        <div class="assistant-section-title">對話紀錄</div>
-        <div id="chat-room-list"></div>
-        <div id="assistant-supervisor-menu"></div>
+        <div data-menu-section="workspace">
+          <button class="nav-home" data-home>◈ 工作台總覽</button>
+          <section id="sidebar" aria-label="規格庫與產品導覽"><div class="section-label"><span>規格庫與產品</span><button id="bind-sidebar" aria-label="綁定新的 Spec Repo">＋</button></div><nav id="repository-nav" aria-label="Spec Repositories"></nav></section>
+        </div>
+        <div data-menu-section="chat" hidden>
+          <button id="new-chat-room" data-testid="new-chat" type="button" aria-label="新對話" class="assistant-new-chat">✎ 新對話</button>
+          <div class="assistant-section-title">對話紀錄</div>
+          <div id="chat-room-list"></div>
+          <div id="assistant-supervisor-menu"></div>
+        </div>
+        <div data-menu-section="settings" hidden>
+          <div id="chat-settings-menu"></div>
+          <button id="open-agent-manager" class="nav-home" type="button">Agent、Prompt 與 Skill 管理</button>
+          <div class="assistant-section-title">規格庫設定</div>
+          <nav id="repository-settings-nav" class="repository-menu" aria-label="規格庫設定"></nav>
+        </div>
       </div>
     </section>
     <div class="assistant-content">
-      <nav id="chat-tabs" aria-label="工作頁籤" hidden></nav>
       <section id="chat-view" aria-label="對話視窗" hidden></section>
       <section id="assistant-sessions-view" aria-label="CLI Agent 工作階段" hidden></section>
     </div>

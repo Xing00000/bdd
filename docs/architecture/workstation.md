@@ -78,6 +78,12 @@ SQLite view 與執行快照以 `.runtime/source-view.json` 記錄已接受檔案
 
 ## Repo 輸出與同步
 
+CLI 終端採事件推送：PTY／ACP 輸出先取得持久化事件序號，再由程序內 session stream 發送給 WebSocket；不同 MCP owner 程序透過既有 token 控制通道的 GET `/events?sessionId&afterSeq` 傳送 NDJSON。SQLite 只在訂閱／重連時補播，活躍連線不再每 350ms 查詢資料庫。先訂閱後補播，以 seq 去重，終態送 closed；慢消費者維持原 1 MiB 緩衝預算並中斷連線，由游標重連。瀏覽器斷線也取消尚在建立中的 owner 串流，避免留下讀取工作。
+
+2026-11-08 在實際 `http://127.0.0.1:4173/`，用可見 Playwright 瀏覽器對真實 Kiro PTY 以每鍵 90ms 輸入 15 個字元。輸出事件 createdAt 到瀏覽器 WebSocket 到達：改前中位數 171ms／最大 313ms，改後跨程序中位數 3ms／最大 11ms。這是同機、少量樣本的終端傳輸量測，不包含模型推論或完整畫面繪製時間。重連後輸入回顯只出現一次，停止後收到 closed/STOPPED。原始數據保存在本次 test-results/terminal-performance-* 的 before.json、after.json 與 HTML 報告；不作為 golden 或宣稱全負載 SLA。
+
+一般 CLI 派工從 registry 的規格庫位置及 `workbench.yaml.projects` 推導正式產品工作目錄；匯入後以目前 SQLite authoring 修訂為設定 owner，匯入前才讀 checkout。`agent-workspaces.mjs` 重用 configuration validator 和 safePath，不另存白名單。MCP `agent_workspaces` 與 GET `/repository-api/v1/agent-sessions/workspaces` 提供相同目錄資料；`agent_start` 接受 repositoryId/projectId 或 cwd，單一候選可自動選取，多個候選必須明確選擇。聊天室啟動表單提供產品工作目錄選單。明確任務 allowedRoots／管理者環境設定保留原限制；沒有已登錄產品的通用 Supervisor 沿用既有行為。已驗證的任務代理可透過帶 token 的控制通道轉送其 worktree，不能把聊天 scratch 目錄誤當成產品的唯一允許範圍。
+
 Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<REQ>/<feature>/<run>`，產品仍是 `projects/<id>` submodule。一般 `prepareProjection` 只將固定 SQLite snapshot 輸出為工作檔案，保留衝突檢查。Git checkpoint 只在建立功能與人工驗收完成時產生。`repository_projection.revision` 記錄檔案輸出修訂，`checkpointRevision` 記錄已固定的 Git 修訂，兩者不可混用。只有 `checkpointKind: ACCEPTED` 且沒有較新草稿才可同步，不隱含提交。
 
 已存在的檔案必須符合上次輸出／匯入摘要或本次預期內容。外部修改不同則暫停，回報「SQLite 已儲存、Repo 尚未更新」。原稿、資料庫內容與同步歷史都保留，不執行 reset、clean 或 Force Push。跨 Repo 不是單一交易，部分同步以回執分辨。

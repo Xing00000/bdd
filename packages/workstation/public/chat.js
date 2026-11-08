@@ -1,14 +1,24 @@
-export function chatRoomsView({api,el,button,navigate,workspace,note}) {
+export function chatRoomsView({api,el,button,navigate,note,workspace=()=>({})}) {
   const $=selector=>document.querySelector(selector);
-  const shell=$('.shell'),roomsPanel=$('#assistant-rooms-panel'),roomsBackdrop=$('#assistant-rooms-backdrop'),roomsClose=$('#assistant-rooms-close'),roomsNode=$('#chat-room-list'),supervisorMenu=$('#assistant-supervisor-menu'),tabs=$('#chat-tabs'),view=$('#chat-view'),sessionsView=$('#assistant-sessions-view');
-  const roomsToggle=$('#assistant-rooms-toggle'),drawerClose=$('#assistant-drawer-toggle'),drawerOpen=$('#assistant-drawer-open');
-  const drafts=new Map(),opened=new Set();let rooms=[],current=null,version=0,source,activePane='chat',roomsCollapsed=false;
+  const shell=$('.shell'),drawer=$('#assistant-drawer'),menuToggle=$('#assistant-menu-toggle'),rail=$('.assistant-rail'),roomsPanel=$('#assistant-rooms-panel'),roomsBackdrop=$('#assistant-rooms-backdrop'),roomsClose=$('#assistant-rooms-close'),roomsNode=$('#chat-room-list'),supervisorMenu=$('#assistant-supervisor-menu'),view=$('#chat-view'),sessionsView=$('#assistant-sessions-view');
+  const drawerClose=$('#assistant-drawer-toggle'),drawerOpen=$('#assistant-drawer-open'),menuButtons=[...document.querySelectorAll('[data-assistant-nav]')];
+  const drafts=new Map();let rooms=[],current=null,version=0,source,activePane='chat',roomsCollapsed=true,selectedMenu='workspace',settingsRequest=0;
   const report=error=>note(error.message,true);
+  const selectedMenuButton=()=>menuButtons.find(button=>button.dataset.assistantNav===selectedMenu);
   function setRoomsModalOpen(openState){
     roomsCollapsed=!openState;
-    if(roomsToggle)roomsToggle.setAttribute('aria-expanded',String(openState));
+    drawer.classList.toggle('menu-open',openState);rail.hidden=!openState;
+    menuToggle.setAttribute('aria-expanded',String(openState));menuToggle.setAttribute('aria-label',openState?'收合導覽':'展開導覽');menuToggle.title=openState?'收合導覽':'展開導覽';
+    for(const button of menuButtons){const selected=button.dataset.assistantNav===selectedMenu;button.setAttribute('aria-current',selected?'page':'false');button.setAttribute('aria-expanded',String(selected&&openState));}
+    for(const section of document.querySelectorAll('[data-menu-section]'))section.hidden=section.dataset.menuSection!==selectedMenu;
+    const title=selectedMenuButton()?.getAttribute('aria-label');$('#assistant-menu-title').textContent=title;
+    roomsPanel?.setAttribute('aria-label',title+'選單');
     if(roomsPanel)roomsPanel.hidden=!openState;
     if(roomsBackdrop)roomsBackdrop.hidden=!openState;
+    const content=$('#assistant-drawer .assistant-content');if(content)content.inert=openState;
+    if(openState)roomsPanel?.querySelector(`[data-menu-section="${selectedMenu}"] button`)?.focus();
+    else if(roomsPanel?.contains(document.activeElement)||rail.contains(document.activeElement))menuToggle.focus();
+    if(openState&&selectedMenu==='settings')void ensureSettingsMenu().catch(report);
   }
   function setDrawerCollapsed(collapsed){
     shell?.classList.toggle('assistant-collapsed',collapsed);
@@ -18,29 +28,31 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
   function showPane(pane){
     activePane=pane;
     setDrawerCollapsed(false);
-    if(tabs)tabs.hidden=pane!=='chat'||!opened.size;
     if(view)view.hidden=pane!=='chat'||!current;
     if(sessionsView)sessionsView.hidden=pane!=='session';
-    if(pane==='session'||current)setRoomsModalOpen(false);
+    if(pane==='session'||current){selectedMenu='chat';setRoomsModalOpen(false);}
   }
-  setRoomsModalOpen(true);
-  if(roomsToggle)roomsToggle.onclick=()=>setRoomsModalOpen(roomsCollapsed);
+  setRoomsModalOpen(false);
+  if(getComputedStyle(drawer).getPropertyValue('--assistant-overlay').trim()==='1')setDrawerCollapsed(true);
+  menuToggle.onclick=()=>setRoomsModalOpen(roomsCollapsed);
+  for(const button of menuButtons)button.onclick=()=>{const section=button.dataset.assistantNav,open=selectedMenu!==section||roomsCollapsed;selectedMenu=section;setRoomsModalOpen(open);};
   if(roomsClose)roomsClose.onclick=()=>setRoomsModalOpen(false);
   if(roomsBackdrop)roomsBackdrop.onclick=()=>setRoomsModalOpen(false);
-  if(drawerClose)drawerClose.onclick=()=>setDrawerCollapsed(true);
-  if(drawerOpen)drawerOpen.onclick=()=>setDrawerCollapsed(false);
-  function renderTabs(){
-    tabs.hidden=activePane!=='chat'||!opened.size;tabs.replaceChildren(button('工作台',workspace));
-    for(const id of opened){const room=rooms.find(item=>item.id===id),label='對話 · '+(room?.title??'聊天室'),group=el('div',undefined,'chat-tab');
-      const select=button(label,()=>{showPane('chat');void navigate(id);});select.setAttribute('aria-current',current===id?'page':'false');
-      const close=button('×',async()=>{opened.delete(id);if(current===id){const next=[...opened].at(-1);if(next)await navigate(next);else await workspace();}renderTabs();});close.setAttribute('aria-label','關閉 '+label);group.append(select,close);tabs.append(group);
-    }
+  if(roomsPanel)roomsPanel.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();setRoomsModalOpen(false);menuToggle.focus();}});
+  if(drawerClose)drawerClose.onclick=()=>{setDrawerCollapsed(true);drawerOpen?.focus();};
+  if(drawerOpen)drawerOpen.onclick=()=>{setDrawerCollapsed(false);menuToggle.focus();};
+  function clearSettingsMenu(){settingsRequest++;$('#chat-settings-menu').replaceChildren();}
+  async function ensureSettingsMenu(){
+    const container=$('#chat-settings-menu');if(container.childElementCount)return;
+    const request=++settingsRequest,settings=await api('/chat-settings');
+    if(request!==settingsRequest||container.childElementCount)return;
+    container.replaceChildren(settingsPanel(settings,null,async patch=>{const saved=await api('/chat-settings','PATCH',patch);Object.assign(settings,saved);return saved;}));
   }
   async function refreshList(){
     rooms=await api('/chat-rooms');roomsNode.replaceChildren();
     for(const room of rooms){const item=button(room.title,()=>{showPane('chat');void navigate(room.id);},'chat-room-link');item.dataset.testid='chat-room-'+room.id;item.setAttribute('aria-current',activePane==='chat'&&room.id===current?'page':'false');if(room.pending)item.append(el('span',' ●'));roomsNode.append(item);}
     if(!rooms.length)roomsNode.append(el('p','建立聊天室，開始對話。','muted'));
-    renderTabs();if(!source)connect();
+    if(!source)connect();
     void supervisorRoot.refresh();
   }
   function connect(roomId,renderMessages,renderStreaming,connection){
@@ -56,7 +68,7 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
           rooms=value.rooms;roomsNode.replaceChildren();
           for(const room of rooms){const item=button(room.title,()=>{showPane('chat');void navigate(room.id);},'chat-room-link');item.dataset.testid='chat-room-'+room.id;item.setAttribute('aria-current',activePane==='chat'&&room.id===current?'page':'false');if(room.pending)item.append(el('span',' ●'));roomsNode.append(item);}
           if(!rooms.length)roomsNode.append(el('p','建立聊天室，開始對話。','muted'));
-          renderTabs();if(value.room)renderMessages?.(value.room);
+          if(value.room)renderMessages?.(value.room);
         }else if(value.type==='delta'&&value.roomId===roomId)renderStreaming?.(value);
         else throw Error('未知的聊天串流事件');
       }catch(error){stream.close();if(source===stream)source=null;report(error);}
@@ -115,59 +127,111 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
     protoSelect.setAttribute('aria-label','CLI Agent 協定');
     protoSelect.append(new Option('ACP 工作階段 (acp)','acp'),new Option('PTY 終端機 (pty)','pty'));
     protoWrap.append(protoSelect);
+    const workspaceWrap=el('label','產品工作目錄'),workspaceSelect=el('select');
+    workspaceSelect.setAttribute('aria-label','CLI Agent 工作目錄');workspaceSelect.append(new Option('預設工作目錄',''));workspaceWrap.append(workspaceSelect);
     const titleWrap=el('label','工作階段標題'),titleInput=el('input');
     titleInput.setAttribute('aria-label','CLI Agent 標題');titleInput.placeholder='選填標題…';titleWrap.append(titleInput);
     const promptWrap=el('label','初始派工指令'),promptInput=el('input');
     promptInput.setAttribute('aria-label','CLI Agent 初始指令');promptInput.placeholder='選填初始指令…';promptWrap.append(promptInput);
     const startBtn=el('button','啟動 CLI Agent','primary');startBtn.type='submit';
     const refreshBtn=button('重新整理工作階段',()=>void refreshSessions());
-    startForm.append(profileWrap,protoWrap,titleWrap,promptWrap,startBtn,refreshBtn);
+    startForm.append(profileWrap,protoWrap,workspaceWrap,titleWrap,promptWrap,startBtn,refreshBtn);
     startDetails.append(startForm);
     const listNode=el('div',undefined,'chat-agent-session-list');listNode.dataset.testid='agent-session-list';
     const detailNode=el('div',undefined,'chat-agent-session-detail');detailNode.dataset.testid='agent-session-detail';
     menuContainer.append(sectionHeader,startDetails,listNode);
-    let sessions=[],selectedId=null,busy=false;
+    let sessions=[],selectedId=null,busy=false,terminal=null,terminalTimer,terminalSocket,detailVersion=0,terminalLibrary;
+    async function loadTerminal(){
+      if(window.Terminal)return;
+      if(!terminalLibrary)terminalLibrary=new Promise((resolve,reject)=>{
+        const link=document.createElement('link');link.rel='stylesheet';link.href='/repositories/xterm.css';document.head.append(link);
+        const script=document.createElement('script');script.src='/repositories/xterm.js';script.onload=resolve;script.onerror=()=>{terminalLibrary=null;reject(new Error('終端元件載入失敗。'));};document.head.append(script);
+      });
+      await terminalLibrary;
+    }
     async function renderDetail(){
+      const epoch=++detailVersion,sessionId=selectedId;
+      clearTimeout(terminalTimer);terminalSocket?.close();terminalSocket=null;terminal?.dispose();terminal=null;
       detailNode.replaceChildren();
-      if(!selectedId)return;
+      if(!sessionId)return;
       try{
-        const snap=await api(`/agent-sessions/${encodeURIComponent(selectedId)}/events?afterSeq=0&limit=200`);
-        if(!active())return;
+        const snap=await api(`/agent-sessions/${encodeURIComponent(sessionId)}/events?afterSeq=0&limit=200`);
+        await loadTerminal();
+        if(!active()||epoch!==detailVersion)return;
         const header=el('div',undefined,'agent-session-toolbar');
         header.append(el('strong',`${snap.sessionId} · ${snap.agentName} (${snap.protocol.toUpperCase()}) · ${snap.status}${snap.pid?` · PID ${snap.pid}`:''}`));
-        const actionRow=el('div',undefined,'agent-session-actions');
-        const reloadBtn=button('重新讀取',()=>void renderDetail());reloadBtn.dataset.testid='agent-session-refresh-events';
-        const cancelBtn=button('取消回合',async()=>{try{await api(`/agent-sessions/${encodeURIComponent(selectedId)}/cancel`,'POST',{});note('已取消目前回合');await refreshSessions();}catch(e){report(e);}});
-        cancelBtn.dataset.testid='agent-session-cancel';cancelBtn.disabled=snap.status==='STOPPED'||snap.status==='FAILED';
-        const stopBtn=button('結束回收',async()=>{try{await api(`/agent-sessions/${encodeURIComponent(selectedId)}/stop`,'POST',{});note('已結束並回收 CLI Agent');await refreshSessions();}catch(e){report(e);}});
-        stopBtn.dataset.testid='agent-session-stop';stopBtn.disabled=snap.status==='STOPPED';
-        actionRow.append(reloadBtn,cancelBtn,stopBtn);
-        header.append(actionRow);
-        const eventsBox=el('div',undefined,'chat-messages agent-session-events');eventsBox.dataset.testid='agent-session-events';
-        if(!snap.events?.length)eventsBox.append(el('p','尚無事件紀錄。','muted'));
-        for(const ev of snap.events??[]){
-          const row=el('p',`#${ev.seq} [${ev.actor}/${ev.kind}] ${ev.content}`,'chat-message-content');
-          eventsBox.append(row);
+        const live=!['STOPPED','FAILED'].includes(snap.status),actions=el('div',undefined,'agent-session-actions');
+        const cancel=button('中斷目前工作',()=>void control('cancel')),stop=button('停止工作階段',()=>void control('stop'));
+        cancel.disabled=stop.disabled=!live;actions.append(cancel,stop);header.append(actions);
+        async function control(action){
+          cancel.disabled=stop.disabled=true;
+          try{await api(`/agent-sessions/${encodeURIComponent(sessionId)}/${action}`,'POST',{actor:'human'});if(epoch===detailVersion)await refreshSessions();}
+          catch(error){if(epoch===detailVersion){cancel.disabled=stop.disabled=!live;report(error);}}
         }
-        const interveneBox=el('div',undefined,'agent-session-intervene'),msgInput=el('input');
-        msgInput.setAttribute('aria-label','CLI Agent 介入指令');msgInput.dataset.testid='agent-session-input';msgInput.placeholder='輸入給此 CLI Agent 的指令…';
-        const sendIntervene=async mode=>{
-          const message=msgInput.value.trim();if(!message||busy)return;busy=true;
-          try{await api(`/agent-sessions/${encodeURIComponent(selectedId)}/messages`,'POST',{message,mode,wait:true});msgInput.value='';note(`已送出介入指令（${mode}）`);await refreshSessions();}
-          catch(e){report(e);}finally{busy=false;}
+        const screen=el('div',undefined,'agent-session-terminal');screen.dataset.testid='agent-session-terminal';
+        screen.setAttribute('aria-label','CLI Agent 終端機');
+        detailNode.append(header,screen);
+        const interactive=live;
+        const term=terminal=new window.Terminal({cols:100,rows:30,scrollback:5000,fontSize:13,screenReaderMode:true,disableStdin:true});
+        term.open(screen);
+        let painting=true,line='',inputQueue=Promise.resolve();
+        const inputReady=()=>{
+          const ready=interactive&&!painting&&terminalSocket?.readyState===WebSocket.OPEN;
+          term.options.disableStdin=!ready;
+          if(ready&&activePane==='session'&&roomsCollapsed)term.focus();
         };
-        const btnGroup=el('div',undefined,'agent-session-actions');
-        const queueBtn=button('佇列送出 (queue)',()=>void sendIntervene('queue'));queueBtn.dataset.testid='agent-session-send-queue';queueBtn.disabled=snap.status==='STOPPED'||snap.status==='FAILED';
-        const interruptBtn=button('中斷插話 (interrupt)',()=>void sendIntervene('interrupt'));interruptBtn.dataset.testid='agent-session-send-interrupt';interruptBtn.disabled=snap.status==='STOPPED'||snap.status==='FAILED';
-        btnGroup.append(queueBtn,interruptBtn);
-        interveneBox.append(msgInput,btnGroup);
-        detailNode.append(header,eventsBox,interveneBox);
-        eventsBox.scrollTop=eventsBox.scrollHeight;
+        let cursor=0;
+        const append=events=>{for(const event of events??[]){cursor=event.seq;if(event.kind==='output')term.write(event.content);}};
+        append(snap.events);
+        // Historical terminal queries must not send fresh replies to the CLI.
+        term.write('',()=>{if(epoch===detailVersion){painting=false;inputReady();}});
+        let finished=false;
+        term.onData(data=>{
+          if(painting)return;
+          if(snap.protocol==='pty'){
+            if(terminalSocket?.readyState===WebSocket.OPEN)terminalSocket.send(JSON.stringify({type:'input',data}));
+            return;
+          }
+          // ACP accepts complete prompts; keep its input in the same xterm
+          // surface while sending through the supervisor's message contract.
+          for(const key of data.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/\r\n/g,'\r')){
+            if(key==='\r'||key==='\n'){
+              const message=line;line='';term.write('\r\n');
+              if(message.trim())inputQueue=inputQueue.then(()=>api(`/agent-sessions/${encodeURIComponent(sessionId)}/messages`,'POST',{actor:'human',message,wait:false})).catch(report);
+            }else if(key==='\x03'){line='';term.write('^C\r\n');void control('cancel');}
+            else if(key==='\x7f'||key==='\b'){if(line){line=Array.from(line).slice(0,-1).join('');term.write('\b \b');}}
+            else if(key>=' '){line+=key;term.write(key);}
+          }
+        });
+        function connectTerminal(){
+          if(epoch!==detailVersion)return;
+          const url=new URL(`/repository-api/v1/agent-sessions/${encodeURIComponent(sessionId)}/terminal`,location.href);
+          url.protocol=location.protocol==='https:'?'wss:':'ws:';url.searchParams.set('afterSeq',String(cursor));
+          const socket=terminalSocket=new WebSocket(url);
+          socket.onopen=()=>{if(epoch===detailVersion)inputReady();};
+          socket.onmessage=event=>{
+            if(epoch!==detailVersion)return;
+            const message=JSON.parse(event.data);
+            if(message.type==='event')append([message.event]);
+            else if(message.type==='closed'){finished=true;term.options.disableStdin=true;}
+            else if(message.type==='error')note(message.message,true);
+          };
+          socket.onclose=()=>{if(epoch===detailVersion){term.options.disableStdin=true;if(!finished)terminalTimer=setTimeout(connectTerminal,1000);}};
+        }
+        connectTerminal();
       }catch(e){report(e);}
     }
     async function refreshSessions(){
       try{
-        const res=await api('/agent-sessions');if(!active())return;
+        const [res,catalog]=await Promise.all([api('/agent-sessions'),api('/agent-sessions/workspaces')]);if(!active())return;
+        const prior=workspaceSelect.value,context=workspace(),workspaces=catalog.workspaces;
+        workspaceSelect.replaceChildren(new Option(workspaces.length?'選擇產品專案':'預設工作目錄',''));
+        for(const item of workspaces)workspaceSelect.append(new Option(`${item.repositoryTitle} / ${item.projectId} · ${item.cwd}`,JSON.stringify({repositoryId:item.repositoryId,projectId:item.projectId})));
+        const selected=workspaces.find(item=>item.repositoryId===context.repositoryId&&item.projectId===context.projectId);
+        const preferred=selected?JSON.stringify({repositoryId:selected.repositoryId,projectId:selected.projectId}):prior;
+        if([...workspaceSelect.options].some(option=>option.value===preferred))workspaceSelect.value=preferred;
+        if(!workspaceSelect.value&&workspaces.length===1)workspaceSelect.selectedIndex=1;
+        workspaceSelect.required=workspaces.length>0;
         sessions=res.sessions??[];listNode.replaceChildren();
         if(!sessions.length){listNode.append(el('p','尚無 CLI Agent Session','muted'));detailNode.replaceChildren();return;}
         if(!selectedId||!sessions.some(s=>s.sessionId===selectedId))selectedId=sessions[0].sessionId;
@@ -184,6 +248,7 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
       event.preventDefault();if(busy)return;busy=true;startBtn.disabled=true;
       try{
         const body={agentProfile:profileSelect.value,protocol:protoSelect.value};
+        if(workspaceSelect.value)Object.assign(body,JSON.parse(workspaceSelect.value));
         if(titleInput.value.trim())body.title=titleInput.value.trim();
         if(promptInput.value.trim()){body.prompt=promptInput.value.trim();body.wait=true;}
         const created=await api('/agent-sessions','POST',body);
@@ -198,7 +263,7 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
   if(supervisorMenu)supervisorMenu.replaceChildren(supervisorRoot.menuNode);
   if(sessionsView)sessionsView.replaceChildren(supervisorRoot.detailNode);
   async function open(id){
-    const epoch=++version;source?.close();source=null;current=id;opened.add(id);showPane('chat');renderTabs();view.replaceChildren(el('p','載入對話…'));
+    const epoch=++version;source?.close();source=null;current=id;clearSettingsMenu();showPane('chat');view.replaceChildren(el('p','載入對話…'));
     const [room,settings]=await Promise.all([api(`/chat-rooms/${encodeURIComponent(id)}`),api('/chat-settings')]);if(epoch!==version)return;
     const log=el('div',undefined,'chat-messages');log.setAttribute('role','log');log.setAttribute('aria-label','對話訊息');log.setAttribute('aria-live','polite');
     const form=el('form',undefined,'chat-composer'),input=el('textarea'),actions=el('div',undefined,'chat-composer-actions'),send=el('button','送出'),hint=el('span','Ctrl / ⌘ + Enter 送出');
@@ -234,8 +299,8 @@ export function chatRoomsView({api,el,button,navigate,workspace,note}) {
       try{await api(`/chat-rooms/${encodeURIComponent(id)}/messages`,'POST',{content});if(input.value===content){input.value='';drafts.set(id,'');}}
       catch(error){report(error);}finally{sending=false;updateButton();}
     };
-    actions.insertBefore(picker.node,send);view.replaceChildren(settingsPanel(settings,()=>void picker.refresh(),saveSettings),connection,log,form);renderMessages(room);input.focus();connect(id,renderMessages,renderStreaming,connection);
+    actions.insertBefore(picker.node,send);$('#chat-settings-menu').replaceChildren(settingsPanel(settings,()=>void picker.refresh(),saveSettings));view.replaceChildren(connection,log,form);renderMessages(room);input.focus();connect(id,renderMessages,renderStreaming,connection);
   }
   $('#new-chat-room').onclick=async()=>{const submit=$('#new-chat-room');submit.disabled=true;try{showPane('chat');const room=await api('/chat-rooms','POST',{});await refreshList();await navigate(room.id);}catch(error){report(error);}finally{submit.disabled=false;}};
-  return {open,refreshList,leave(){version++;current=null;source?.close();source=null;view.replaceChildren();renderTabs();setRoomsModalOpen(true);connect();}};
+  return {open,refreshList,closeMenu({revealWorkspace=false}={}){setRoomsModalOpen(false);if(revealWorkspace&&getComputedStyle(drawer).getPropertyValue('--assistant-overlay').trim()==='1')setDrawerCollapsed(true);},leave(){version++;current=null;source?.close();source=null;view.replaceChildren();clearSettingsMenu();setRoomsModalOpen(false);connect();}};
 }

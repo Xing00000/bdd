@@ -21,7 +21,7 @@ export async function createChatProvider(cwd:string,toolPolicy:ProviderToolPolic
 }
 
 async function openChatProvider(cwd:string,toolPolicy:ProviderToolPolicy,options:{prewarm?:boolean}={}){
- type Activation={controller:AbortController;signal:AbortSignal};
+ type Activation={controller:AbortController;signal:AbortSignal;failure?:Error};
  const sessions=new Map<string,{settings:ChatSettings;active?:Activation}>(),jobs=new Set<Promise<CopilotCompletion>>(),requests=new Set<AbortController>();
  const runtime=createCopilotRuntime(cwd,{toolPolicy:toolPolicy==='codex'?'codex':'workstation',prewarm:options.prewarm});let closing=false,closePromise:Promise<void>|undefined;
  const server=http.createServer(async(req,res)=>{
@@ -94,7 +94,7 @@ async function openChatProvider(cwd:string,toolPolicy:ProviderToolPolicy,options
     send('response.output_item.done',{output_index,item});
    }
    send('response.completed',{response:{id,status:'completed',output}});res.end();
-  }catch(error){signal.removeEventListener('abort',cancelled);controller.abort();if(res.headersSent){res.destroy(error instanceof Error?error:Error(String(error)));return;}res.writeHead(502,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:error instanceof Error?error.message:String(error)}}));}
+  }catch(error){activation.failure=error instanceof Error?error:Error(String(error));signal.removeEventListener('abort',cancelled);controller.abort();if(res.headersSent){res.destroy(activation.failure);return;}res.writeHead(502,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:activation.failure.message}}));}
   finally{requests.delete(controller);signal.removeEventListener('abort',cancelled);req.off('aborted',disconnected);res.off('close',disconnected);}
  });
  let address;
@@ -118,7 +118,7 @@ async function openChatProvider(cwd:string,toolPolicy:ProviderToolPolicy,options
     const controller=new AbortController();session.active={controller,signal:AbortSignal.any([signal,controller.signal])};
    };
    if(initialSignal)activate(initialSignal);
-   return {token,activate,deactivate,close(){closed=true;deactivate();sessions.delete(token);}};
+   return {token,activate,deactivate,get failure(){return session.active?.failure;},close(){closed=true;deactivate();sessions.delete(token);}};
   },
   close(){return closePromise??=(async()=>{
    closing=true;for(const session of sessions.values())session.active?.controller.abort();sessions.clear();for(const request of requests)request.abort();

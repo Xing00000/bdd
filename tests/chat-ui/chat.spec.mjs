@@ -9,6 +9,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 import {access} from 'node:fs/promises';
 import {ChatToolsDriver} from './chat-tools-driver.ts';
+import {openMenu} from './navigation-helpers.mjs';
 
 const prefix='/repository-api/v1';
 base('single UI: the compatibility API never serves the retired Vue application',{tag:'@protocol'},async()=>{
@@ -31,10 +32,10 @@ const test=base.extend({workstation:async({page},use,info)=>{
  w.get=async route=>{const response=await page.request.get(w.url+prefix+route);expect(response.ok(),await response.text()).toBe(true);return response.json();};
  w.post=async(route,data)=>page.request.post(w.url+prefix+route,{headers:{'x-workbench-request':'1'},data});
  w.room=()=>w.get('/chat-rooms/'+w.roomId);
- w.create=async()=>{await page.getByTestId('new-chat').click();await expect(page.getByRole('textbox',{name:'對話訊息輸入',exact:true})).toBeVisible();w.roomId=new URL(page.url()).searchParams.get('chat');w.title='新對話';await expect(page.getByRole('textbox',{name:'聊天室名稱',exact:true})).toHaveCount(0);};
+ w.create=async()=>{await openMenu(page,'chat');await page.getByTestId('new-chat').click();await expect(page.getByRole('textbox',{name:'對話訊息輸入',exact:true})).toBeVisible();w.roomId=new URL(page.url()).searchParams.get('chat');w.title='新對話';await expect(page.getByRole('textbox',{name:'聊天室名稱',exact:true})).toHaveCount(0);};
  w.send=async content=>{await page.getByRole('textbox',{name:'對話訊息輸入',exact:true}).fill(content);await page.getByRole('button',{name:'送出',exact:true}).click();};
  page.on('pageerror',error=>w.errors.push(error.message));
- await page.goto(w.url);await expect(page.getByTestId('new-chat')).toBeVisible();
+ await page.goto(w.url);await expect(page.getByTestId('assistant-menu-toggle')).toBeVisible();await openMenu(page,'chat');await expect(page.getByTestId('new-chat')).toBeVisible();
  try{await use(w);}
  finally{
   await info.attach('正式入口操作畫面',{body:await page.screenshot({fullPage:true}),contentType:'image/png'});
@@ -45,21 +46,92 @@ const test=base.extend({workstation:async({page},use,info)=>{
  }
 }});
 
-test('AC-WB-036 正式入口：左側聊天室與中間頁籤',async({page,workstation:w})=>{
- await test.step('建立聊天室後，對話頁籤顯示且可展開側邊選單檢視聊天室',async()=>{await w.create();await expect(page.getByRole('navigation',{name:'工作頁籤'}).getByRole('button',{name:'對話 · '+w.title,exact:true})).toHaveCount(1);await page.getByTestId('assistant-rooms-toggle').click();await expect(page.getByTestId('chat-room-'+w.roomId)).toBeVisible();await page.getByTestId('assistant-rooms-close').click();});
- await test.step('切換、重複開啟及關閉頁籤不刪除聊天室或草稿',async()=>{await page.getByRole('textbox',{name:'對話訊息輸入'}).fill('尚未送出的草稿');await page.getByRole('navigation',{name:'工作頁籤'}).getByRole('button',{name:'工作台',exact:true}).click();await page.getByTestId('chat-room-'+w.roomId).click();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toHaveValue('尚未送出的草稿');await page.getByRole('button',{name:'關閉 對話 · '+w.title,exact:true}).click();await page.getByTestId('chat-room-'+w.roomId).click();await expect(page.getByRole('navigation',{name:'工作頁籤'}).getByRole('button',{name:'對話 · '+w.title,exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toBeVisible();expect((await w.get('/chat-rooms')).length).toBe(1);});
+test('CLI Agent 輸出顯示於 xterm',async({page,workstation:w})=>{
+ const session={sessionId:'AGT-test',agentName:'terminal-test',protocol:'pty',status:'IDLE',pid:123};
+ const input=[];
+ await page.routeWebSocket('**/agent-sessions/AGT-test/terminal**',socket=>{
+  socket.onMessage(message=>input.push(JSON.parse(String(message)).data));
+ });
+ await page.route('**/repository-api/v1/agent-sessions**',async route=>{
+  const url=new URL(route.request().url());
+  if(url.pathname.endsWith('/events'))return route.fulfill({json:{...session,events:[{seq:1,kind:'output',content:'TERMINAL_OUTPUT\r\n'}]}});
+  if(url.pathname.endsWith('/agent-sessions'))return route.fulfill({json:{sessions:[session]}});
+  return route.continue();
+ });
+ await page.getByText('＋ 啟動 CLI Agent').click();
+ await page.getByRole('button',{name:'重新整理工作階段'}).click();
+ await page.getByTestId('agent-session-AGT-test').click();
+ await expect(page.getByTestId('agent-session-terminal').locator('.xterm')).toBeVisible();
+ await expect(page.getByTestId('agent-session-terminal')).toContainText('TERMINAL_OUTPUT');
+ await expect(page.getByTestId('agent-session-input')).toHaveCount(0);
+ await page.getByTestId('agent-session-terminal').locator('.xterm-screen').click();
+ await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+ await expect.poll(()=>input.join('')).toBe('\x1b[B\r');
+});
+
+test('終端自動取得焦點並將鍵盤輸入送達實際 PTY',async({page,workstation:w})=>{
+ const supervisor=await w.app.service.supervisor();
+ const session=await supervisor.start({protocol:'pty',command:process.execPath,cwd:w.home,args:['-e',"process.stdin.setEncoding('utf8');process.stdin.on('data',s=>process.stdout.write('KEYS:'+JSON.stringify(s)+'\\n'))"]});
+ let eventRequests=0;
+ page.on('request',request=>{if(request.url().includes(`/agent-sessions/${session.sessionId}/events`))eventRequests++;});
+ await page.getByText('＋ 啟動 CLI Agent').click();
+ await page.getByRole('button',{name:'重新整理工作階段'}).click();
+ await page.getByTestId('agent-session-'+session.sessionId).click();
+ const terminal=page.getByTestId('agent-session-terminal');
+ await expect(terminal.locator('.xterm-helper-textarea')).toBeFocused();
+ await page.keyboard.type('hello');await page.keyboard.press('Enter');
+ await expect.poll(()=>supervisor.events(session.sessionId).events.map(event=>event.content).join('')).toContain('KEYS:');
+ expect(eventRequests).toBe(1);
+ await supervisor.stop(session.sessionId);
+});
+
+test('ACP 終端可送出指令、中斷與停止工作階段',async({page,workstation:w})=>{
+ const session={sessionId:'AGT-acp-test',agentName:'acp-terminal',protocol:'acp',status:'IDLE'},commands=[];
+ await page.routeWebSocket('**/agent-sessions/AGT-acp-test/terminal**',()=>{});
+ await page.route('**/repository-api/v1/agent-sessions**',async route=>{
+  const url=new URL(route.request().url());
+  if(url.pathname.endsWith('/events'))return route.fulfill({json:{...session,events:[]}});
+  if(url.pathname.endsWith('/agent-sessions'))return route.fulfill({json:{sessions:[session]}});
+  const action=url.pathname.split('/').at(-1);
+  if(['messages','cancel','stop'].includes(action)){
+   commands.push({action,body:route.request().postDataJSON()});
+   if(action==='stop')session.status='STOPPED';
+   return route.fulfill({json:{accepted:true}});
+  }
+  return route.continue();
+ });
+ await page.getByText('＋ 啟動 CLI Agent').click();await page.getByRole('button',{name:'重新整理工作階段'}).click();
+ await page.getByTestId('agent-session-'+session.sessionId).click();
+ const terminal=page.getByTestId('agent-session-terminal');
+ await expect(terminal.locator('.xterm-helper-textarea')).toBeFocused();
+ await page.keyboard.type('follow ux');await page.keyboard.press('Backspace');await page.keyboard.type('p');await page.keyboard.press('Enter');
+ await expect.poll(()=>commands).toEqual([{action:'messages',body:{actor:'human',message:'follow up',wait:false}}]);
+ await page.getByRole('button',{name:'中斷目前工作',exact:true}).click();
+ await expect.poll(()=>commands.some(command=>command.action==='cancel'&&command.body.actor==='human')).toBe(true);
+ await expect(terminal.locator('.xterm-helper-textarea')).toBeFocused();
+ await page.getByRole('button',{name:'停止工作階段',exact:true}).click();
+ await expect(page.getByTestId('agent-session-detail')).toContainText('STOPPED');
+ await expect(page.getByRole('button',{name:'停止工作階段',exact:true})).toBeDisabled();
+ expect(commands.at(-1)).toEqual({action:'stop',body:{actor:'human'}});
+ await expect(page.getByTestId('agent-session-input')).toHaveCount(0);
+});
+
+test('AC-WB-036 正式入口：收合全寬對話與雙層導覽',async({page,workstation:w})=>{
+ await test.step('對話沒有重複頁籤，收合後使用完整面板寬度',async()=>{await w.create();await expect(page.getByRole('navigation',{name:'工作頁籤'})).toHaveCount(0);await expect(page.locator('.assistant-rail')).toBeHidden();await expect(page.locator('#chat-view .chat-settings')).toHaveCount(0);const drawer=await page.getByTestId('assistant-drawer').boundingBox(),body=await page.locator('.assistant-body').boundingBox();expect(body.width).toBe(await page.getByTestId('assistant-drawer').evaluate(node=>node.clientWidth));await openMenu(page,'chat');await expect(page.getByTestId('chat-room-'+w.roomId)).toBeVisible();await page.getByTestId('assistant-rooms-close').click();});
+ await test.step('透過選單切換與重複開啟，不刪除聊天室或草稿',async()=>{await page.getByRole('textbox',{name:'對話訊息輸入'}).fill('尚未送出的草稿');await openMenu(page,'workspace');await page.locator('[data-home]').click();await openMenu(page,'chat');await page.getByTestId('chat-room-'+w.roomId).click();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toHaveValue('尚未送出的草稿');await openMenu(page,'chat');await page.getByTestId('chat-room-'+w.roomId).click();await expect(page.getByRole('textbox',{name:'對話訊息輸入'})).toHaveValue('尚未送出的草稿');expect((await w.get('/chat-rooms')).length).toBe(1);});
  await test.step('右側可縮合面板以側邊 Modal 展開直式導覽清單（不設「對話 / 工作」分頁、非向下展開），整合對話紀錄與 CLI Agent Session',async()=>{
   await page.setViewportSize({width:1440,height:1000});
   await expect(page.locator('#home-view')).toBeVisible();
   await expect(page.getByTestId('assistant-tab-chat')).toHaveCount(0);
   await expect(page.getByTestId('assistant-tab-sessions')).toHaveCount(0);
-  const mainBox=await page.locator('.main-shell').boundingBox(),drawerBox=await page.getByTestId('assistant-drawer').boundingBox(),bodyBox=await page.locator('.assistant-body').boundingBox();
+  const mainBox=await page.locator('.main-shell').boundingBox(),drawerBox=await page.getByTestId('assistant-drawer').boundingBox();
   expect(drawerBox.x).toBeGreaterThanOrEqual(mainBox.x+mainBox.width-2);
   await expect(page.getByTestId('assistant-rooms-panel')).toBeHidden();
-  await page.getByTestId('assistant-rooms-toggle').click();
+  await openMenu(page,'chat');
   await expect(page.getByTestId('assistant-rooms-panel')).toBeVisible();
   await expect(page.getByTestId('chat-agent-supervisor')).toBeVisible();
   const modalBox=await page.getByTestId('assistant-rooms-panel').boundingBox();
+  const bodyBox=await page.locator('.assistant-body').boundingBox();
   expect(Math.abs(modalBox.x-bodyBox.x)).toBeLessThanOrEqual(2);
   expect(modalBox.height).toBeGreaterThanOrEqual(bodyBox.height-2);
   expect(modalBox.width).toBeLessThan(drawerBox.width);
@@ -87,9 +159,10 @@ test('AC-WB-037 正式入口：真實 Copilot 回覆、SQLite、重啟續聊與�
  const messages=(await w.room()).messages,response=await w.post('/chat-rooms/'+w.roomId+'/compact',{});expect(response.ok(),await response.text()).toBe(true);expect((await w.room()).messages).toEqual(messages);
 });
 test('AC-WB-038 正式入口：失敗不假回覆、重複送出與新草稿保留',async({page,workstation:w})=>{
- await w.create();const configured=await w.get('/chat-settings');await page.getByText('對話設定',{exact:true}).click();await page.getByRole('textbox',{name:'對話 Codex 執行檔',exact:true}).fill(path.join(w.home,'missing-codex'));await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'對話設定已儲存'})).toBeVisible();
- await w.send('<script>window.chatInjectionExecuted=true</script>');await expect(page.getByRole('alert').filter({hasText:'回覆失敗'})).toBeVisible();await expect(page.getByTestId('chat-message-assistant')).toHaveCount(0);expect((await w.room()).messages[0].status).toBe('failed');expect(await page.evaluate(()=>Object.hasOwn(window,'chatInjectionExecuted'))).toBe(false);
- await page.getByRole('textbox',{name:'對話 Codex 執行檔',exact:true}).fill(configured.codexExecutable);await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();
+ await w.create();const configured=await w.get('/chat-settings');await openMenu(page,'settings');await page.getByText('對話設定',{exact:true}).click();await page.getByRole('textbox',{name:'對話 Codex 執行檔',exact:true}).fill(path.join(w.home,'missing-codex'));await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'對話設定已儲存'})).toBeVisible();
+ await page.getByTestId('assistant-rooms-close').click();await w.send('<script>window.chatInjectionExecuted=true</script>');await expect(page.getByRole('alert').filter({hasText:'回覆失敗'})).toBeVisible();await expect(page.getByTestId('chat-message-assistant')).toHaveCount(0);expect((await w.room()).messages[0].status).toBe('failed');expect(await page.evaluate(()=>Object.hasOwn(window,'chatInjectionExecuted'))).toBe(false);
+ await openMenu(page,'settings');await page.getByRole('textbox',{name:'對話 Codex 執行檔',exact:true}).fill(configured.codexExecutable);await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();
+ await page.getByTestId('assistant-rooms-close').click();
  // Delay only transport delivery; the request still reaches the actual backend.
  let release;const blocked=new Promise(resolve=>release=resolve);
  await page.route('**/chat-rooms/*/messages',async route=>{await blocked;await route.continue();},{times:1});
@@ -154,9 +227,9 @@ test('對話模型清單：真實 Copilot CLI 的可用與空清單狀態',async
 base('AC-WB-047 UIUX：重疊保存模型與進階設定不互相覆蓋',{tag:'@protocol'},async({page},info)=>{
  const driver=await ChatModelsDriver.open(page),gate=Promise.withResolvers(),held=Promise.withResolvers(),patches=[];
  try{
-  await page.getByText('對話設定',{exact:true}).click();const timeoutMs=driver.before.timeoutMs+1;await page.getByRole('textbox',{name:'對話 逾時',exact:true}).fill(String(timeoutMs));
+  await openMenu(page,'settings');await page.getByText('對話設定',{exact:true}).click();const timeoutMs=driver.before.timeoutMs+1;await page.getByRole('textbox',{name:'對話 逾時',exact:true}).fill(String(timeoutMs));
   await page.route('**/chat-settings',async route=>{if(route.request().method()==='PATCH'){const patch=route.request().postDataJSON();patches.push(patch);if(Object.hasOwn(patch,'model')){held.resolve();await gate.promise;}}await route.continue();});
-  await page.getByRole('combobox',{name:'對話模型',exact:true}).selectOption('fixture-b');await held.promise;await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();expect(patches).toEqual([{model:'fixture-b'}]);await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toBeDisabled();gate.resolve();
+  await page.getByTestId('assistant-rooms-close').click();await page.getByRole('combobox',{name:'對話模型',exact:true}).selectOption('fixture-b');await held.promise;await openMenu(page,'settings');await page.getByRole('button',{name:'儲存對話設定',exact:true}).click();expect(patches).toEqual([{model:'fixture-b'}]);await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toBeDisabled();gate.resolve();await page.getByTestId('assistant-rooms-close').click();
   const chat=await driver.app.service.chat();await expect.poll(async()=>{const settings=await chat.settings();return {model:settings.model,timeoutMs:settings.timeoutMs};}).toEqual({model:'fixture-b',timeoutMs});await expect(page.getByRole('combobox',{name:'對話模型',exact:true})).toHaveValue('fixture-b');expect(patches).toHaveLength(2);expect(patches[1]).not.toHaveProperty('model');expect(driver.errors).toEqual([]);await driver.attach(info);
  }finally{gate.resolve();await driver.close();}
 });

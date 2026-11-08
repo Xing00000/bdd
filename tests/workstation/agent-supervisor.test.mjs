@@ -348,6 +348,73 @@ test('PTY CLI Agent session supports interactive follow-up, cancel interrupt, an
   assert.equal(stopped.status, 'STOPPED');
 });
 
+test('tmux supplies a terminal and preserves the requested working directory', async t => {
+  const f = await fixture(t);
+  const peer = path.join(f.base, 'terminal-probe.mjs');
+  await writeFile(peer, `import {createInterface} from 'node:readline';
+console.log('TTY=' + process.stdin.isTTY + ' CWD=' + process.cwd());
+createInterface({input:process.stdin}).on('line', line => console.log('RECEIVED=' + line));
+`);
+  const supervisor = await createAgentSupervisor({home: f.home, allowedRoots: [f.base]});
+  t.after(() => supervisor.close());
+  const started = await supervisor.start({protocol: 'pty', command: process.execPath, args: [peer], cwd: f.base});
+  const reply = await supervisor.send(started.sessionId, {message: 'terminal-probe', wait: true});
+  const events = supervisor.events(started.sessionId).events.map(event => event.content).join('');
+  assert.match(events, /TTY=true/);
+  assert.ok(events.includes('CWD=' + f.base));
+  assert.ok(events.includes('RECEIVED=terminal-probe'));
+  assert.equal(reply.processed, false);
+  await supervisor.terminalInput(started.sessionId, 'raw-input\r');
+  await new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('terminal input was not received')), 3000);
+    const poll = setInterval(() => {
+      if (supervisor.events(started.sessionId).events.some(event => event.content.includes('RECEIVED=raw-input'))) {
+        clearInterval(poll);clearTimeout(deadline);resolve();
+      }
+    }, 20);
+    t.after(() => {clearInterval(poll);clearTimeout(deadline);});
+  });
+  assert.equal((await supervisor.stop(started.sessionId)).stopped, true);
+});
+
+async function waitForLifecycle(t,condition){
+  await new Promise((resolve,reject)=>{
+    const deadline=setTimeout(()=>{clearInterval(poll);reject(new Error('Agent did not reach the expected lifecycle state'));},3000);
+    const poll=setInterval(()=>{if(condition()){clearTimeout(deadline);clearInterval(poll);resolve();}},20);
+    t.after(()=>{clearTimeout(deadline);clearInterval(poll);});
+  });
+}
+
+test('raw PTY input can be interrupted without a queued supervisor turn',async t=>{
+  const f=await fixture(t),supervisor=await createAgentSupervisor({home:f.home,allowedRoots:[f.base]});
+  t.after(()=>supervisor.close());
+  const started=await supervisor.start({protocol:'pty',command:process.execPath,cwd:f.base,args:['-e',"process.on('SIGINT',()=>console.log('INTERRUPTED'));process.stdin.on('data',()=>{});console.log('READY')"]});
+  const output=()=>supervisor.events(started.sessionId).events.map(event=>event.content).join('');
+  await waitForLifecycle(t,()=>output().includes('READY'));
+  await supervisor.terminalInput(started.sessionId,'raw input\r');
+  assert.equal((await supervisor.cancel(started.sessionId,{actor:'human'})).cancelled,true);
+  await waitForLifecycle(t,()=>output().includes('INTERRUPTED'));
+  await supervisor.stop(started.sessionId);
+});
+
+for(const action of ['stop','detach','concurrent-stop'])test(`tmux ${action} reaps a pane that ignores HUP and TERM before releasing ownership`,async t=>{
+  const f=await fixture(t),supervisor=await createAgentSupervisor({home:f.home,allowedRoots:[f.base]});
+  t.after(()=>supervisor.close());
+  const started=await supervisor.start({protocol:'pty',command:process.execPath,cwd:f.base,args:['-e',"process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});console.log('READY');setInterval(()=>{},1000)"]});
+  await waitForLifecycle(t,()=>supervisor.events(started.sessionId).events.some(event=>event.content.includes('READY')));
+  if(action==='detach'){
+    await supervisor.terminalInput(started.sessionId,'\x02d');
+    await waitForLifecycle(t,()=>supervisor.session(started.sessionId).status==='FAILED');
+  }else{
+    const first=supervisor.stop(started.sessionId);
+    const result=action==='concurrent-stop'?await supervisor.stop(started.sessionId):await first;
+    assert.equal(result.stopped,true);
+    assert.throws(()=>process.kill(started.pid,0),{code:'ESRCH'});
+    await first;
+  }
+  assert.throws(()=>process.kill(started.pid,0),{code:'ESRCH'});
+});
+
 test('Full E2E: Codex dispatch -> CLI Agent active -> Human UI intervention -> same Session continues -> Codex reads human + Agent events -> Codex dispatches again -> normal stop & process reap', async t => {
   const f = await fixture(t);
   const acpPeer = await writeInteractiveAcpAgent(f.base);
