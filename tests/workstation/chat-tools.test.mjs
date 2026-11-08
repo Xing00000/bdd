@@ -6,6 +6,7 @@ import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {createWorkstation} from '../../packages/workstation/service.mjs';
 import {openChatTools} from '../../packages/workstation/chat-tools.mjs';
+import {fixture,git,toolkitRoot} from './helpers.mjs';
 
 test('chat MCP authenticates, reuses workstation proposals, rejects invalid tools and persists across restart',async()=>{
  const home=await mkdtemp(path.join(tmpdir(),'bdd-chat-tools-'));
@@ -32,5 +33,45 @@ test('chat MCP authenticates, reuses workstation proposals, rejects invalid tool
   await mcp.close();await service.close();service=await createWorkstation(options);mcp=await openChatTools(service);
   rows=(await rpc('tools/call',{name:'workbench_get_requirement_proposals',arguments:{repositoryId:repository.id,editorKey:input.editorKey}})).result.structuredContent.value;
   assert.equal(rows[0].id,generated.proposalId);assert.equal(rows[0].description,description);
+ }finally{await mcp.close();await service.close();}
+});
+
+test('workbench_save_feature saves proposal as formal feature after repository setup',async t=>{
+ const f=await fixture(t),home=f.home;
+ await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
+ const options={home,toolkitRoot,allowLocal:true};let service=await createWorkstation(options),mcp=await openChatTools(service),next=0;
+ const rpc=async(method,params)=>{const r=await fetch(mcp.url,{method:'POST',headers:{authorization:`Bearer ${mcp.token}`,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++next,method,params})});assert.equal(r.status,200);return r.json();};
+ try{
+  // Register repository with remote URL (no local Git needed for proposal generation)
+  const repository=service.register({id:'SPEC-save',title:'Save feature test',remoteUrl:f.remote});
+  await rpc('initialize',{protocolVersion:'2025-06-18'});
+  // Setup the repository first (this only saves settings to SQLite, no Git)
+  let opN=0;const job=async(operation,input)=>{const request={schemaVersion:1,operationId:`OP-${++opN}`,repositoryId:repository.id,operation,input};service.enqueue(request);const out=await service.wait(request.operationId);assert.equal(out.status,'SUCCEEDED',JSON.stringify(out.error));return out;};
+  await job('repository.setup',{reviewer:'Test',projects:[]});
+  // Generate a proposal
+  const description='需求：登入後顯示首頁',input={repositoryId:repository.id,editorKey:'new-save-test',description};
+  const generated=(await rpc('tools/call',{name:'workbench_generate_requirement',arguments:input})).result.structuredContent.value;
+  assert(generated.proposalId);
+  // Verify tool is listed
+  const tools=(await rpc('tools/list')).result.tools.map(t=>t.name);
+  assert(tools.includes('workbench_save_feature'),'workbench_save_feature should be listed');
+  // Reject missing proposal
+  const missing=await rpc('tools/call',{name:'workbench_save_feature',arguments:{repositoryId:repository.id,proposalId:'not-exist'}});
+  assert(missing.error,'Should reject missing proposal');
+  // Verify proposal exists in store
+  const {openStore}=await import('../../packages/workstation/store.mjs'),store=openStore(home);
+  let proposal;try{proposal=store.requirementProposal(repository.id,generated.proposalId);}finally{store.close();}
+  assert(proposal,'Proposal should exist');assert.equal(proposal.description,description);
+  const response=await rpc('tools/call',{name:'workbench_save_feature',arguments:{repositoryId:repository.id,proposalId:generated.proposalId}});
+  assert.equal(response.error,undefined,JSON.stringify(response.error));
+  const saved=response.result.structuredContent.value;
+  assert.equal(saved.key,`${saved.requirementId}/${saved.featureId}`);
+  assert.equal(service.operation(saved.operationId).status,'SUCCEEDED');
+  const feature=await service.requirement(repository.id,saved.requirementId,saved.featureId);
+  assert.equal(feature.description,description);assert.equal(feature.gherkin,proposal.generatedGherkin);
+  assert.ok(await git.resolve(service.list().find(r=>r.id===repository.id).localPath));
+  await mcp.close();await service.close();service=await createWorkstation(options);mcp=await openChatTools(service);
+  const persisted=await service.requirement(repository.id,saved.requirementId,saved.featureId);
+  assert.equal(persisted.description,description);assert.equal(persisted.gherkin,proposal.generatedGherkin);
  }finally{await mcp.close();await service.close();}
 });

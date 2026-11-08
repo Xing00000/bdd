@@ -46,7 +46,7 @@ export async function dispatch(service, request) {
     }
     return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:{status:'ok',...source}};
   }
-  if(request.method==='GET'&&['/repositories/xterm.js','/repositories/xterm.css'].includes(pathname))return {status:200,headers:{...securityHeaders,'content-type':pathname.endsWith('.js')?'text/javascript':'text/css'},body:await readFile(terminalVendor(service.options.home,pathname.split('/').at(-1)))};
+  if(request.method==='GET'&&['/repositories/xterm.js','/repositories/xterm.css','/repositories/xterm-addon-fit.js'].includes(pathname))return {status:200,headers:{...securityHeaders,'content-type':pathname.endsWith('.js')?'text/javascript':'text/css'},body:await readFile(terminalVendor(service.options.home,pathname.split('/').at(-1)))};
   if(request.method==='GET'&&pathname==='/repositories/markdown-it.js')return {status:200,headers:{...securityHeaders,'content-type':'text/javascript; charset=utf-8'},body:await readFile(createRequire(import.meta.url).resolve('markdown-it/browser'))};
   if (request.method === 'GET' && assets.has(pathname)) {
     const [name, type] = assets.get(pathname);
@@ -82,7 +82,11 @@ export async function dispatch(service, request) {
     invariant(body!==undefined,'NOT_FOUND','Unknown defaults route',404);return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body};
   }
   if(parts[0]==='agent-sessions'){
-    if(parts.length===1&&method==='GET')result={sessions:service.agentSessions({repositoryId:url.searchParams.get('repositoryId')||undefined,operationId:url.searchParams.get('operationId')||undefined})};
+    if(parts.length===1&&method==='GET'){
+      const activeOnly=url.searchParams.get('activeOnly');
+      invariant(activeOnly===null||activeOnly==='true'||activeOnly==='false','INVALID_AGENT_QUERY','activeOnly must be true or false');
+      result={sessions:service.agentSessions({repositoryId:url.searchParams.get('repositoryId')||undefined,operationId:url.searchParams.get('operationId')||undefined,activeOnly:activeOnly==='true'})};
+    }
     else if(parts.length===1&&method==='POST'){result=await service.startAgentSession(input);status=201;}
     else if(parts.length===2&&parts[1]==='workspaces'&&method==='GET')result=await service.agentWorkspaces();
     else if(parts.length===2&&method==='GET')result=service.agentSession(id(parts[1]));
@@ -167,7 +171,7 @@ async function chatEvents(service,request,response){
   const url=new URL(request.url,'http://workstation.invalid');
   if(request.method!=='GET'||url.pathname!==prefix+'/chat-events')return false;
   if(request.headers.origin){const origin=new URL(request.headers.origin);invariant(origin.host===request.headers.host&&['http:','https:'].includes(origin.protocol),'CROSS_ORIGIN_DENIED','Cross-origin streams are forbidden',403);}
-  const {openChatStream}=await import('../../dist/src/http/chat-stream.js');
+  const {openChatStream}=await import('../../src/http/chat-stream.ts');
   await openChatStream(await service.chat(),response,url.searchParams.get('roomId')??undefined);return true;
 }
 function installAgentTerminalSockets(server,service){
@@ -217,7 +221,7 @@ export async function registerRepositoryRoutes(app, options) {
     reply.code(response.status); for (const [key, value] of Object.entries(response.headers ?? {})) reply.header(key, value);
     return response.body;
   };
-  for (const route of [...sessionManagementPages,...assets.keys(),'/repositories/markdown-it.js','/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
+  for (const route of [...sessionManagementPages,...assets.keys(),'/repositories/markdown-it.js','/repositories/xterm.js','/repositories/xterm.css','/repositories/xterm-addon-fit.js']) app.get(route, handler);
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: `${prefix}/mcp/progress`, handler });
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH'], url: `${prefix}/*`, handler });
   app.addHook('onClose', async () => {closeTerminalSockets();await service.close();});

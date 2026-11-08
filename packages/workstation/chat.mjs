@@ -1,18 +1,16 @@
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {access} from 'node:fs/promises';
-import {invariant} from '../contracts/index.mjs';
 import {openChatTools} from './chat-tools.mjs';
 
 const supervisorScript=fileURLToPath(new URL('../../scripts/mcp-agent-supervisor.mjs',import.meta.url));
 
 // Chat and workstation operations share the existing WB_HOME/metadata.sqlite.
 export async function openChat(store,home,workstation){
- try{await access(new URL('../../dist/src/application/chat.js',import.meta.url));}
- catch(error){if(error.code!=='ENOENT')throw error;invariant(false,'CHAT_BUILD_REQUIRED','聊天功能需要先執行 npm install 與 npm run build。',503);}
+ // Node 24 loads the canonical TypeScript sources directly; chat startup must
+ // not depend on compiler outputs owned by the separate application build.
  const [{createChatService},{createCodexChatRuntime},{chatMigration},{defaultChatSettings}]=await Promise.all([
-  import('../../dist/src/application/chat.js'),import('../../dist/src/adapters/runtime/codex-chat.js'),
-  import('../../dist/src/adapters/sqlite/chat.js'),import('../../dist/src/adapters/runtime/chat-settings.js'),
+  import('../../src/application/chat.ts'),import('../../src/adapters/runtime/codex-chat.ts'),
+  import('../../src/adapters/sqlite/chat.ts'),import('../../src/adapters/runtime/chat-settings.ts'),
  ]);
  const storage=store.chatStorage(chatMigration.steps.map(step=>step.sql).join('\n'));
  await workstation.supervisor?.();

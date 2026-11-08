@@ -22,16 +22,16 @@ import { validateAgentSettings } from './agent-settings.mjs';
 import { approvedAgentPrompt, writeAgentTask } from './agent-task.mjs';
 import { runAgentTask } from './agent-cli.mjs';
 function runtimeCandidates(home) {return [createRequire(import.meta.url),createRequire(path.join(home,'runtime','terminal','package.json'))];}
+const terminalAssets={'xterm.js':'@xterm/xterm/lib/xterm.js','xterm.css':'@xterm/xterm/css/xterm.css','xterm-addon-fit.js':'@xterm/addon-fit/lib/addon-fit.js'};
 export function terminalVendor(home,asset) {
-  const names={'xterm.js':'@xterm/xterm/lib/xterm.js','xterm.css':'@xterm/xterm/css/xterm.css'};
-  invariant(Object.hasOwn(names,asset),'NOT_FOUND','Unknown terminal asset',404);
-  for(const req of runtimeCandidates(home))try{return req.resolve(names[asset]);}catch{/* not installed */}
+  invariant(Object.hasOwn(terminalAssets,asset),'NOT_FOUND','Unknown terminal asset',404);
+  for(const req of runtimeCandidates(home))try{return req.resolve(terminalAssets[asset]);}catch{/* not installed */}
   throw new WorkstationError('TERMINAL_RUNTIME_MISSING','終端元件尚未安裝。',409);
 }
 export async function terminalRuntime(context) {
   const {options,request}=context;
-  for(const req of runtimeCandidates(options.home))try{const pty=req('node-pty');terminalVendor(options.home,'xterm.js');return pty;}catch{/* use approved private runtime */}
-  const packages={'node-pty':'1.1.0','@xterm/xterm':'6.0.0'},plan=identity({packages,node:process.versions.node.split('.')[0],platform:process.platform,arch:process.arch});
+  for(const req of runtimeCandidates(options.home))try{const pty=req('node-pty');for(const asset of Object.keys(terminalAssets))terminalVendor(options.home,asset);return pty;}catch{/* use approved private runtime */}
+  const packages={'node-pty':'1.1.0','@xterm/xterm':'6.0.0','@xterm/addon-fit':'0.11.0'},plan=identity({packages,node:process.versions.node.split('.')[0],platform:process.platform,arch:process.arch});
   if(request.input.installConsent!==plan)throw new WorkstationError('INSTALL_REQUIRED','需要終端元件。',409,{install:{digest:plan,packages,browsers:[],purpose:'terminal',nativeBuild:true}});
   const cwd=path.join(options.home,'runtime','terminal');await mkdir(cwd,{recursive:true});
   await writeJson(path.join(cwd,'package.json'),{private:true,dependencies:packages});

@@ -5,10 +5,11 @@ import {progressTools} from './mcp-progress.mjs';
 import {negotiateProtocolVersion} from './mcp-protocol.mjs';
 
 const tool=(name,description,properties,required,readOnly)=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:readOnly,destructiveHint:false}});
-const repositoryId={type:'string'},editorKey={type:'string'};
+const repositoryId={type:'string'},editorKey={type:'string'},proposalId={type:'string'};
 export const chatTools=[...progressTools,
  tool('workbench_generate_requirement','Generate and save a requirement proposal using the workstation service. This does not save a feature or approve any workflow stage. Preserve the user description exactly; use a new-<unique-id> editorKey for a new proposal.',{repositoryId,editorKey,description:{type:'string'},previousGherkin:{type:'string'}},['repositoryId','editorKey','description'],false),
  tool('workbench_get_requirement_proposals','Read saved requirement proposals for a repository and editorKey, including their IDs and original descriptions.',{repositoryId,editorKey},['repositoryId','editorKey'],true),
+ tool('workbench_save_feature','Create a new feature draft from an existing requirement proposal using the canonical save workflow. This does not update an existing feature or approve any workflow stage. Returns the feature key (requirementId/featureId) on success.',{repositoryId,proposalId,editorKey},['repositoryId','proposalId'],false),
 ];
 
 export async function openChatTools(service){
@@ -39,6 +40,8 @@ export async function openChatTools(service){
    let value;
    if(def.name==='workbench_generate_requirement'){
     const {repositoryId,...input}=args;value=service.generateRequirement(rid,input);
+   }else if(def.name==='workbench_save_feature'){
+    const {repositoryId,...input}=args;value=await service.saveFeature(rid,input);
    }else value=service.requirementProposals(rid,args.editorKey);
    reply({structuredContent:{value},content:[{type:'text',text:JSON.stringify(value)}]});
   }catch(error){send(200,{jsonrpc:'2.0',id:typeof q?.id==='string'||typeof q?.id==='number'?q.id:null,error:{code:-32602,message:error.code?error.message:'Invalid MCP request'}});}

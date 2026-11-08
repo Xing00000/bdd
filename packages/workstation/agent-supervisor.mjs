@@ -11,7 +11,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import {registeredAgentWorkspaces} from './agent-workspaces.mjs';
-import {publishAgentSession,subscribeLocalAgentSession,subscribeRemoteAgentSession,agentSessionEnded,agentStreamBufferBytes} from './agent-session-stream.mjs';
+import {publishAgentSession,subscribeLocalAgentSession,subscribeRemoteAgentSession,agentSessionEnded,endedAgentSessionStatuses,agentStreamBufferBytes} from './agent-session-stream.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { invariant, id, errorResult } from '../contracts/index.mjs';
@@ -294,11 +294,16 @@ export function readAgentSession(home, sessionId) {
   });
 }
 
-export function listAgentSessions(home, { repositoryId, operationId } = {}) {
+export function listAgentSessions(home, { repositoryId, operationId, activeOnly=false } = {}) {
+  invariant(typeof activeOnly==='boolean','INVALID_AGENT_QUERY','activeOnly must be a boolean');
   return withDb(home, db => {
     const clauses = [], params = [];
     if (repositoryId) { clauses.push('repository_id=?'); params.push(repositoryId); }
     if (operationId) { clauses.push('operation_id=?'); params.push(operationId); }
+    if (activeOnly) {
+      clauses.push(`status NOT IN (${endedAgentSessionStatuses.map(()=>'?').join(',')})`);
+      params.push(...endedAgentSessionStatuses);
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     return db.prepare(`SELECT * FROM agent_sessions ${where} ORDER BY created_at DESC, rowid DESC LIMIT 100`).all(...params).map(decodeSession);
   });

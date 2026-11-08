@@ -37,7 +37,7 @@
 | `packages/workstation/public/` | 唯一工作台入口、儲存／同步狀態、設定與階段流程 |
 | `src/http/server.ts` | 共用後端的相容性 API／runtime 測試 host，只回傳 API 與正式產物，不供應網站／SPA；`ui/` 已移除。 |
 | `packages/workstation/chat.mjs`、`public/chat.js` | 正式入口的聊天室接線；重用 `src/application/chat.ts` 與 `src/adapters/sqlite/chat.ts`，聊天資料存同一個 `WB_HOME/metadata.sqlite`。Codex 擁有模型上下文，SQLite 擁有原始訊息。 |
-| `packages/workstation/chat-tools.mjs` | 聊天專用的私有 loopback MCP；僅重用既有 service 的專案／進度讀取與需求提案產生／讀回，不暴露 `agent-supervisor` 或任意 shell／階段確認，避免繞過 Codex SDK 另起派工通道。 |
+| `packages/workstation/chat-tools.mjs` | 聊天專用的私有 loopback MCP；重用既有 service 的專案／進度讀取、需求提案產生／讀回，以及 `workbench_save_feature` 將既有提案建立為新的功能草稿。儲存重用 `workflow.requirement.save` 的驗證、SQLite authoring 與首次 Git checkpoint，不更新既有功能、不確認任何階段。不暴露 `agent-supervisor` 或任意 shell／階段確認，避免繞過 Codex SDK 另起派工通道。 |
 | `packages/workstation/agent-supervisor.mjs`、`scripts/mcp-agent-supervisor.mjs` | 單一共用的長駐互動式 CLI Agent Supervisor（支援 ACP 與 PTY 互動模式）；提供 Codex SDK 原生 MCP 工具 `agent_start`、`agent_send`、`agent_events`、`agent_list`、`agent_cancel`、`agent_stop` 與工作站 `/repository-api/v1/agent-sessions` 人類雙向介入入口（明確支援 `mode: 'queue' | 'interrupt'` 策略與 `QUEUED`/`DELIVERED`/`PROCESSED` 持久化狀態）。 |
 
 ## SQLite schema 10
@@ -214,6 +214,8 @@ The acceptance view renders original reporter scenario/step data and attachment 
 模型清單與推理重用背景 ACP server；每個 provider request 建立獨立 session（`mcpServers: []`），僅輸入 Codex 當次提供的上下文與純文字／JSON 工具宣告契約。模型選項讀取 ACP session 的 config options 或 `models.availableModels`。Copilot ACP 與 Kiro CLI ACP 皆不註冊、不連接、不呼叫任何 MCP Server；所有 MCP 工具（包含 `workbench_task`、`workbench` 與 `agent_supervisor`）皆由 Codex 原生 MCP 連接並執行，內建工具、shell、檔案寫入與額外權限在 ACP 推論層一律禁用並拒絕。取消使用 ACP notification 並等待 prompt 結束；遲到事件不得送入其他請求，不確定是否清理成功的連線須失效重建。傳輸、模型及權限設定以 [GitHub ACP 文件](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server) 為準。
 
 `packages/workstation/agent-supervisor.mjs` 與 `scripts/mcp-agent-supervisor.mjs` 管理長駐互動式 CLI Agent 工作階段（`agent_supervisor_host`、`agent_sessions`、`agent_session_messages` 與 `agent_session_events` 持久化於 `WB_HOME/metadata.sqlite`），並透過受控白名單 `AGENT_PROFILES`（`'copilot'`、`'kiro'`、`'codex'`、`'claude'`，AC-WB-051）解析允許啟動的 CLI Agent 與 `acp`／`pty` 協定，禁止傳入任意 `command`／`args`／`env`。工作台派工（`codex-sdk-agent.mjs`）與聊天室（`chat.mjs` → `codex-chat.ts`）皆掛載原生 MCP 工具 `agent_start`、`agent_send`、`agent_events`、`agent_list`、`agent_cancel`、`agent_stop`，與外部 CLI Agent 保持多輪對話；人類亦可透過 `/repository-api/v1/agent-sessions`、右側可縮合助手抽屜（`#assistant-drawer` 內的直式整合清單 `#assistant-rooms-panel` 與 `agentSupervisorPanel`）或開發終端輸入框直接啟動與介入同一個 `sessionId`。人類介入訊息預設以 `mode: 'queue'` 優先排入待執行佇列最前端而不強制中斷目前回合，僅在明確指定 `mode: 'interrupt'` 時才對 `BUSY` 回合發出 `session/cancel`／`\x03` 中斷；所有雙向訊息（含 `QUEUED`、`DELIVERED`、`PROCESSED`、`CANCELLED`、`FAILED` 狀態與 `messageId` 冪等性）及輸出按序號 `seq` 記錄供人類、聊天室與派工 Codex 同步讀取。
+
+CLI Agent 選單使用 `GET /repository-api/v1/agent-sessions?activeOnly=true`，在 SQL 分頁前排除已結束的工作階段；終止狀態由 `agent-session-stream.mjs` 的 `endedAgentSessionStatuses` 統一定義。未帶此參數的查詢仍可讀取 SQLite 歷史。收到選中終端的 `closed` 事件後自動重新取得清單，移除已結束項目並釋放舊終端的 WebSocket、ResizeObserver 及計時器；重新開啟選單也重新查詢。停止成功的前提仍是既有 driver 完成程序群組與對應 tmux session 清理，不刪除歷史訊息與事件。`tests/chat-ui/chat.spec.mjs` 使用實際 PTY／tmux 驗證停止後的程序、選單及終端清理。
 
 程序重用測試以受控子程序協定 peer 檢查實際 spawn 次數、串流、並行聊天室、逾時、遲到事件、設定更新、故障恢復與關閉。真實 CLI 的無推理 smoke 驗證固定版本的初始化與 session 協定；這些證據不代表已量測外部模型的首字時間或吞吐量。真實聊天速度須在具有 Copilot 登入與模型權限的環境另行量測。
 

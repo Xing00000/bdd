@@ -3,7 +3,8 @@ import {invariant} from '../contracts/index.mjs';
 
 // Retain the existing terminal slow-consumer budget for both transports.
 export const agentStreamBufferBytes=1024*1024;
-export const agentSessionEnded=status=>status==='STOPPED'||status==='FAILED';
+export const endedAgentSessionStatuses=Object.freeze(['STOPPED','FAILED']);
+export const agentSessionEnded=status=>endedAgentSessionStatuses.includes(status);
 const listeners=new Map();
 const key=(home,sessionId)=>`${realpathSync(home)}\0${sessionId}`;
 

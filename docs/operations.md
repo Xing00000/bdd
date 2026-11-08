@@ -4,7 +4,7 @@
 
 ## 啟動
 
-Node.js 24。SDK 派工與聊天需要先執行 `npm install` 與 `npm run build`；管理入口不使用舊 Vue 網站。
+Node.js 24。SDK 派工需要先執行 `npm install` 與 `npm run build`；聊天安裝依賴後由 Node.js 24 原生載入 `src/application/chat.ts`、runtime、migration 與 SSE 模組，使用同一份 canonical 來源，不檢查或回退到 `dist`。此啟動契約讓編譯產物清除或建置失敗不再阻止聊天啟動。`npm run check` 與完整建置仍各自檢查原有範圍；缺少歷史規格造成的建置失敗仍須另外修復。管理入口不使用舊 Vue 網站。
 
 ```sh
 npm start

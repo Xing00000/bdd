@@ -148,6 +148,22 @@ export async function createWorkstation(configuration) {
       });
     },
     requirementProposals(repositoryId,key) {store.repository(id(repositoryId));return store.requirementProposals(repositoryId,key);},
+    async saveFeature(repositoryId,input) {
+      store.repository(id(repositoryId));
+      const proposalId=id(input.proposalId,'proposalId');
+      const proposal=store.requirementProposal(repositoryId,proposalId);
+      invariant(proposal,'PROPOSAL_NOT_FOUND','指定的草案不存在。',404);
+      const editorKey=typeof input.editorKey==='string'&&input.editorKey.trim()?input.editorKey.trim():proposal.editorKey;
+      const operationId=`OP-${randomUUID()}`;
+      const request={schemaVersion:1,operationId,repositoryId,operation:'workflow.requirement.save',input:{
+        editorKey,description:proposal.description,gherkin:proposal.generatedGherkin,expectedToken:null
+      }};
+      this.enqueue(request);
+      const operation=await this.wait(operationId);
+      invariant(operation.status==='SUCCEEDED','SAVE_FAILED',operation.error?.message??'儲存需求時發生錯誤。');
+      const {key,requirementId,featureId}=operation.result;
+      return {key,requirementId,featureId,proposalId,operationId};
+    },
     importRequirementDocument(repositoryId,input) {store.repository(id(repositoryId));return recordInteraction(repositoryId,'interaction.document.import',input,()=>importRequirementDocument(input));},
     list() { return store.repositories().map(r=>({...r,localPath:r.localPath??managedLocation(options.home,r.id),connection:store.connection(r.id)})); },
     register(input) {
