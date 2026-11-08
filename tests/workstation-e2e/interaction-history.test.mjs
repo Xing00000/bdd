@@ -6,7 +6,7 @@ import {chromium,expect} from '@playwright/test';
 import {fixture,toolkitRoot,git} from '../workstation/helpers.mjs';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 
-test('LLM requests retain stage-scoped collapsible logs while saves stay absent after restart', {timeout:90000},async t=>{
+test('LLM transcripts persist in SQLite without interaction-history UI before and after restart', {timeout:90000},async t=>{
   const f=await fixture(t),options={home:f.home,toolkitRoot,allowLocal:true,autoAcquire:false,enableExecution:false};
   await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
   let app=await createStandaloneServer(options);t.after(()=>app.close());await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
@@ -20,14 +20,13 @@ test('LLM requests retain stage-scoped collapsible logs while saves stay absent 
   await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   const ids=[];
   for(const message of ['First independent message','Second independent message']) {
-    await page.getByRole('textbox',{name:'需求描述',exact:true}).fill(message);
-    await page.getByRole('textbox',{name:'Gherkin',exact:true}).fill('Feature: History\n  @case:CASE-001\n  Scenario: Review history\n    Given a submission is saved\n    Then its log remains available\n');
+    await page.getByRole('textbox',{name:'Gherkin',exact:true}).fill(`Feature: ${message}\n  @case:CASE-001\n  Scenario: Review history\n    Given a submission is saved\n    Then its log remains available\n`);
     const previous=await page.locator('#notice').getAttribute('data-job-id');await page.locator('#save-requirement').click();
     await page.waitForFunction(before=>{const node=document.querySelector('#notice');return node.dataset.jobId&&node.dataset.jobId!==before&&node.dataset.operation==='workflow.requirement.save';},previous);
     await expect(page.locator('#notice')).toHaveAttribute('data-outcome','SUCCEEDED');await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
     ids.push(await page.locator('#notice').getAttribute('data-job-id'));
   }
-  await expect(page.locator('#interaction-list > article')).toHaveCount(0);
+  await expect(page.locator('#interaction-history, #interaction-list')).toHaveCount(0);
   for(const id of ids)assert.equal(app.service.operation(id).isLlmInteraction,false);
   // Real service requests retain failed LLM attempts too, even when preflight
   // blocks execution. No agent output or successful dispatch is fabricated.
@@ -38,27 +37,24 @@ test('LLM requests retain stage-scoped collapsible logs while saves stay absent 
     const result=await app.service.wait(operationId);assert.equal(result.status,'FAILED');taskIds.push(operationId);
   }
   await page.goto(`${origin}/?repo=SPEC-history-ui&view=features&feature=REQ-001%2Fhistory&stage=TESTS`);
-  const first=page.locator(`[data-interaction-id="${taskIds[0]}"]`),second=page.locator(`[data-interaction-id="${taskIds[1]}"]`);
-  await expect(page.locator('#interaction-list > article')).toHaveCount(2);
-  await expect(page.locator('#interaction-list > article').first()).toHaveAttribute('data-interaction-id',taskIds[1]);
-  await expect(first.locator('.interaction-message')).toHaveText('First LLM request');await expect(second.locator('.interaction-message')).toHaveText('Second LLM request');
-  await first.locator('summary').click();await expect(first.locator('details')).toHaveJSProperty('open',true);
-  await expect(first.locator('.interaction-log')).toContainText('[FAILED]');await first.locator('summary').click();
+  assert.deepEqual(app.service.interactions('SPEC-history-ui',{type:'TESTS'}).entries.map(({id,message,status})=>({id,message,status})),[{id:taskIds[1],message:'Second LLM request',status:'FAILED'},{id:taskIds[0],message:'First LLM request',status:'FAILED'}]);
+  await expect(page.locator('#interaction-history, #interaction-list')).toHaveCount(0);
+  await expect(page.locator('#active-operation')).toBeHidden();
   await page.getByRole('button',{name:'1 需求確認',exact:true}).click();await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   await page.getByRole('button',{name:'確認需求並繼續',exact:true}).click();await expect(page.locator('#phase-title')).toHaveText('設計');await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
-  await expect(page.locator('#interaction-list > article')).toHaveCount(0);
+  await expect(page.locator('#interaction-history, #interaction-list')).toHaveCount(0);
   await page.locator('#design-edit-button').click();
   await page.locator('#source-editor').fill('# A design save is not an LLM interaction');
   const beforeDesign=await page.locator('#notice').getAttribute('data-job-id');await page.locator('#design-controls #save-source').click();
   await page.waitForFunction(previous=>document.querySelector('#notice').dataset.jobId!==previous,beforeDesign);
   await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
-  await expect(page.locator('#interaction-list > article')).toHaveCount(0);
-  await page.getByRole('button',{name:'3 測試計劃',exact:true}).click();await expect(second.locator('.interaction-message')).toHaveText('Second LLM request');
+  await expect(page.locator('#interaction-history, #interaction-list')).toHaveCount(0);
+  await page.getByRole('button',{name:'3 測試計劃',exact:true}).click();await expect(page.locator('#interaction-history, #interaction-list')).toHaveCount(0);
   await app.close();await rm(path.join(f.home,'development'),{recursive:true,force:true});
   app=await createStandaloneServer(options);await new Promise(resolve=>app.server.listen(port,'127.0.0.1',resolve));await page.reload();
-  await expect(page.locator('#interaction-list > article').first()).toHaveAttribute('data-interaction-id',taskIds[1]);
-  await expect(first.locator('.interaction-message')).toHaveText('First LLM request');await expect(second.locator('.interaction-message')).toHaveText('Second LLM request');
-  await first.locator('summary').click();await second.locator('summary').click();
-  await expect(first.locator('.interaction-log')).toContainText('[FAILED]');await expect(second.locator('.interaction-log')).toContainText('[FAILED]');
+  await expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
+  await expect(page.locator('#interaction-history, #interaction-list')).toHaveCount(0);
+  await expect(page.locator('#active-operation')).toBeHidden();
+  assert.deepEqual(app.service.interactions('SPEC-history-ui',{type:'TESTS'}).entries.map(({id,message,status})=>({id,message,status})),[{id:taskIds[1],message:'Second LLM request',status:'FAILED'},{id:taskIds[0],message:'First LLM request',status:'FAILED'}]);
   const artifacts=path.resolve('.runtime/interaction-history-ui');await mkdir(artifacts,{recursive:true});await page.screenshot({path:path.join(artifacts,'interaction-history.png'),fullPage:true});assert.deepEqual(errors,[]);
 });

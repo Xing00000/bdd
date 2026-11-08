@@ -2,7 +2,6 @@ import {systemDesignView} from './design-view.js';
 import {agentCatalogView} from './agent-catalog.js';
 import { developmentView } from './development.js';
 import {chatRoomsView} from './chat.js';
-import { interactionHistory } from './interaction-history.js';
 import {operationTerminal} from './operation-terminal.js';
 const $ = selector => document.querySelector(selector);
 const all = selector => [...document.querySelectorAll(selector)];
@@ -37,14 +36,14 @@ async function api(route,method='GET',body) {
   const value=await r.json();if(!r.ok)throw Object.assign(new Error(value.message??'操作失敗'),value);return value;
 }
 const feature=()=>state.detail?.spec?.features.find(f=>f.key===state.featureKey);
-const composerInput=()=>({description:$('#requirement-description').value,gherkin:$('#requirement-gherkin').value});
+const composerInput=()=>({description:state.composer?.description??'',gherkin:$('#requirement-gherkin').value});
 const composerDirty=()=>Boolean(state.composer && (composerInput().description!==state.composer.description||composerInput().gherkin!==state.composer.gherkin));
 const dirty=()=>state.formDirty||composerDirty()||Boolean(state.editor&&$('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content||state.product&&$('#project-editor').value!==state.product.content);
 function block() {
   const value=state.busy||state.loading||state.transient;
   $('#home-view').inert=value;$('#repository-view').inert=value;$('#content').setAttribute('aria-busy',String(value));$('#repository-view').setAttribute('aria-busy',String(value));
   const editable=feature()?.review.editable??{gherkin:true,sd:false,tests:false};
-  $('#sidebar').inert=value;$('#source-editor').readOnly=value||!editable[state.stage==='SD'?'sd':'tests'];$('#hook-editor').readOnly=value||!editable.tests;$('#project-editor').readOnly=value;$('#requirement-description').readOnly=value||!editable.gherkin;$('#requirement-gherkin').readOnly=value||!editable.gherkin;$('#generate-gherkin').disabled=value||!editable.gherkin||!$('#requirement-description').value.trim();$('#upload-requirement').disabled=value||!editable.gherkin;
+  $('#sidebar').inert=value;$('#source-editor').readOnly=value||!editable[state.stage==='SD'?'sd':'tests'];$('#hook-editor').readOnly=value||!editable.tests;$('#project-editor').readOnly=value;$('#requirement-gherkin').readOnly=value||!editable.gherkin;
   const accepted=feature()?.workflow?.status==='COMPLETE';
   $('#export-documents').disabled=value||dirty()||!state.detail?.preferences?.configured;
   $('#sync').disabled=value||dirty()||!state.detail?.remoteUrl||!state.detail?.preferences?.configured||!accepted;
@@ -94,7 +93,7 @@ async function navigate(patch,{protect=true,replace=false}={}) {
   }
   if(!chatOnly){
     development.leave();designView.reset();
-    if(['repositoryId','featureKey','view','stage'].some(field=>Object.hasOwn(patch,field)&&patch[field]!==state[field])){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);}
+    if(['repositoryId','featureKey','view','stage'].some(field=>Object.hasOwn(patch,field)&&patch[field]!==state[field]))clearOperation();
     state.editor=null;state.composer=null;state.composerRequest++;state.product=null;state.scope=null;state.formDirty=false;state.sourceRequest++;state.productRequest++;state.reportRequest++;
     for(const panel of [$('#report-view'),$('#feature-report-view')]){panel.hidden=true;panel.replaceChildren();}
     $('#feature-report-list').replaceChildren();$('#feature-report-scope').textContent='';
@@ -124,9 +123,9 @@ async function refresh() {
     await chat.refreshList().catch(error=>note(error.message,true));
     if(state.chatId){$('#chat-view').hidden=false;await chat.open(state.chatId);}
     else{chat.leave();$('#chat-view').hidden=true;}
-    if(state.view==='agents'){$('#home-view').hidden=true;$('#repository-view').hidden=true;$('#interaction-history').hidden=true;await catalogView.render(repositories);return;}
+    if(state.view==='agents'){$('#home-view').hidden=true;$('#repository-view').hidden=true;clearOperation();await catalogView.render(repositories);return;}
     $('#home-view').hidden=Boolean(detail);$('#repository-view').hidden=!detail;
-    if(!detail){clearTimeout(terminalTimer);terminalSession=null;interactionLog.reset(null);renderHome();return;}
+    if(!detail){clearOperation();renderHome();return;}
     if(!['features','projects','reports','settings','versions'].includes(state.view))state.view='features';if(!detail.preferences?.configured && state.view!=='versions')state.view='settings';
     $('#repository-title').textContent=detail.title;$('#breadcrumbs').textContent=`工作台 / ${detail.title}`;
     $('#repository-error').hidden=!detail.specError&&!detail.moduleError;$('#repository-error').textContent=[detail.specError,detail.moduleError].filter(Boolean).map(x=>x.message).join('\n');
@@ -138,7 +137,7 @@ async function refresh() {
     if(state.view==='projects')await renderProjects(epoch);
     if(state.view==='reports')renderReports();
     if(state.view==='settings')renderSettings();
-    await interactionLog.load(state.repositoryId);if(epoch!==state.epoch)return;
+    if(epoch!==state.epoch)return;
     renderBinding();
     await selectOperation(detail,epoch);
     restoreRegression(detail);
@@ -152,9 +151,14 @@ const cliOperations = new Set(['workflow.design.generate','workflow.gherkin.gene
 function currentHistoryType(){return state.view==='features'?state.stage:({projects:'PROJECTS',reports:'REPORTS',versions:'VERSIONS',settings:'SETTINGS'}[state.view]??'SYSTEM');}
 function currentHistoryKey(){return state.view==='features'?(feature()?.key??state.composer?.key??null):null;}
 let terminalSession = null, terminalTimer;
+function clearOperation(){
+  clearTimeout(terminalTimer);terminalSession=null;terminalView.leave();
+  $('#operation-terminal-details').hidden=true;$('#active-operation').hidden=true;
+}
 function showOperation(op) {
   if (!op || op.request?.repositoryId !== state.repositoryId) return;
-  if(!$('#operation-terminal-details').closest?.('#form-dialog')&&!interactionLog.attach(op))return;
+  if(!activeOperation(op.status)){clearOperation();return;}
+  $('#active-operation').hidden=false;
   const details=$('#operation-terminal-details');details.hidden=false;details.dataset.operationId=op.id;
   if(op.isLlmInteraction){clearTimeout(terminalTimer);terminalSession=null;$('#operation-terminal-text').hidden=true;void terminalView.open(op).catch(error=>note(error.message,true));return;}
   terminalView.leave();
@@ -176,12 +180,13 @@ function showOperation(op) {
       const outcome=result.result?.testOutcome ?? result.result?.outcome;
       $('#operation-terminal-status').textContent=[result.status,outcome,result.latestExit && `${activeOperation(result.status)?'上一次程序 ':''}exit ${result.latestExit.exitCode} · signal ${result.latestExit.signal ?? 'none'}`,result.error?.message].filter(Boolean).join(' · ');
       if(activeOperation(result.status)||result.hasMore)terminalTimer=setTimeout(poll,result.hasMore?0:350);
+      else clearOperation();
     } catch(error) { if(terminalSession===session){$('#operation-terminal-status').textContent=error.message;terminalTimer=setTimeout(poll,1000);} }
   }
   void poll();
 }
 async function selectOperation(detail,epoch) {
-  const operations=(detail.operations??[]).filter(op=>op.isLlmInteraction&&cliOperations.has(op.request?.operation)&&op.interactionType===currentHistoryType()&&(op.interactionKey??null)===currentHistoryKey());
+  const operations=(detail.operations??[]).filter(op=>activeOperation(op.status)&&op.isLlmInteraction&&cliOperations.has(op.request?.operation)&&op.interactionType===currentHistoryType()&&(op.interactionKey??null)===currentHistoryKey());
   const f=feature();
   const preferred=state.view==='features'&&state.stage==='IMPLEMENTATION'&&f && operations.find(op=>op.request.operation==='workflow.develop'&&`${op.request.input.requirementId}/${op.request.input.featureId}`===f.key);
   const ordered=[preferred,...operations.filter(op=>activeOperation(op.status)),...operations].filter(Boolean);
@@ -191,7 +196,7 @@ async function selectOperation(detail,epoch) {
     if(result.hasProgress){showOperation(op);return;}
   }
   if(terminalSession?.repositoryId===state.repositoryId&&terminalSession.type===currentHistoryType()){$('#operation-terminal-details').hidden=false;return;}
-  clearTimeout(terminalTimer);terminalSession=null;$('#operation-terminal-details').hidden=true;
+  clearOperation();
 }
 async function executeJob(name,input, {refreshAfter=true}={}) {
   if(state.busy)throw new Error('目前流程正在執行，請勿重複送出。');
@@ -203,7 +208,6 @@ async function executeJob(name,input, {refreshAfter=true}={}) {
   let result;
   try {
     result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected,interactionType:currentHistoryType()});state.jobId=result.id;
-    await interactionLog.accepted(result);
     let selected=false;
     while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){
       if(!selected&&cliOperations.has(name)){const terminal=await api(`/operations/${result.id}/terminal?offset=0`);if(terminal.hasProgress){showOperation({...result,request:{repositoryId,operation:name}});selected=true;}}
@@ -324,7 +328,7 @@ async function deleteRequirement() {
 }
 async function createFeature() {
   await navigate({view:'features',featureKey:'__new__',stage:'GHERKIN'});
-  $('#requirement-description').focus();
+  $('#requirement-gherkin').focus();
 }
 async function renderWorkflow(epoch) {
   const d=state.detail,features=d.spec?.features??[];$('#new-feature').disabled=!d.preferences?.configured;
@@ -394,10 +398,9 @@ async function openComposer(f,epoch) {
   }
   if(request!==state.composerRequest||epoch!==state.epoch||repositoryId!==state.repositoryId)return;
   state.composer={...value,repositoryId,featureKey:f?.key??null,nodeTicket:ticket};
-  $('#requirement-description').value=value.description;$('#requirement-gherkin').value=value.gherkin;
+  $('#requirement-gherkin').value=value.gherkin;
   resizeWorkflowEditor($('#requirement-gherkin'));
   $('#requirement-state').textContent=f?'已儲存':'尚未儲存';
-  $('#document-info').textContent='TXT、Markdown、Gherkin、DOCX · 最大 1 MiB';
   renderRequirementHistory(value.proposals??[]);
   renderRequirementFeedback(value);
 }
@@ -413,47 +416,17 @@ function renderRequirementHistory(proposals) {
   for(const proposal of proposals) {
     const row=el('div',undefined,'requirement-history-row');row.append(el('span',new Date(proposal.createdAt).toLocaleString()));
     if(proposal.originalGherkin)row.append(button('還原產生前內容',()=>restoreRequirement(proposal.originalGherkin)));
-    row.append(button('取回這份草稿',()=>restoreRequirement(proposal.generatedGherkin,proposal.description)));area.append(row);
+    row.append(button('取回這份草稿',()=>restoreRequirement(proposal.generatedGherkin)));area.append(row);
   }
 }
-async function restoreRequirement(gherkin,description) {
+async function restoreRequirement(gherkin) {
   if($('#requirement-gherkin').value.trim()&&!await ask('還原先前草稿？','目前未儲存的編輯會被替換；已儲存版本與生成歷史不受影響。','還原草稿'))return;
-  $('#requirement-gherkin').value=gherkin;if(description!==undefined)$('#requirement-description').value=description;composerChanged();
+  $('#requirement-gherkin').value=gherkin;composerChanged();
 }
 function composerChanged() {
   resizeWorkflowEditor($('#requirement-gherkin'));
   $('#requirement-state').textContent=composerDirty()?'尚未儲存':'已儲存';
   $('#requirement-feedback').textContent='';$('#requirement-feedback').hidden=true;renderNext();block();
-}
-async function generateGherkin() {
-  const description=$('#requirement-description').value,previousGherkin=$('#requirement-gherkin').value;
-  if(!description.trim())throw new Error('請先描述需求或上傳文件。');
-  if(previousGherkin.trim()&&!await ask('重新產生 Gherkin 草稿？','原稿會保留在生成歷史。','保留原稿並產生'))return;
-  const source={description,previousGherkin,editorKey:state.composer.key};
-  const approved=await previewAgent('gherkin',source);if(!approved)return;
-  $('#generate-gherkin').textContent='正在生成…';
-  const repositoryId=state.repositoryId,epoch=state.epoch;
-  try {
-    const result=await flow('workflow.gherkin.generate',{...source,...approved},{refreshAfter:false});if(!result)return;
-    if(epoch!==state.epoch||repositoryId!==state.repositoryId)return;
-    $('#requirement-gherkin').value=result.gherkin;
-    renderRequirementHistory(await api(`/spec-repositories/${repositoryId}/requirement/proposals?editorKey=${encodeURIComponent(state.composer.key)}`));
-    composerChanged();renderRequirementFeedback(result);
-    note('LLM 已生成 Gherkin，請審閱後儲存。');$('#requirement-panel').dataset.generation=result.proposalId;
-  }finally{$('#generate-gherkin').textContent='LLM 生成 Gherkin';block();if(repositoryId===state.repositoryId)await interactionLog.load(repositoryId);}
-  $('#requirement-gherkin').focus();
-}
-async function importDocument() {
-  const file=$('#requirement-file').files[0];$('#requirement-file').value='';if(!file)return;
-  if(file.size>1024*1024)throw new Error('文件最多 1 MiB；原有內容未被修改。');
-  const repositoryId=state.repositoryId;state.transient=true;block();
-  try {
-    const bytes=new Uint8Array(await file.arrayBuffer());let binary='';
-    for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
-    const document=await api(`/spec-repositories/${state.repositoryId}/requirement/import`,'POST',{name:file.name,base64:btoa(binary)});
-    const source=$('#requirement-description');source.value=source.value.trim()?source.value+'\n\n'+document.text:document.text;
-    $('#document-info').textContent=`已匯入 ${document.name}；已加入需求描述，Gherkin 尚未變更。`;composerChanged();note('文件已加入需求描述，點「LLM 生成 Gherkin」以產生草稿。');
-  }finally{state.transient=false;block();if(repositoryId===state.repositoryId)await interactionLog.load(repositoryId);}
 }
 async function saveRequirement() {
   const c=state.composer;if(!c)return;
@@ -469,7 +442,6 @@ async function submitNode(ticket,response,name){
   beginAction();state.busy=true;block();
   try{
     const receipt=await api('/node-responses','POST',{key:ticket.key,response});
-    await interactionLog.load(state.repositoryId);
     $('#notice').dataset.operation=name;$('#notice').dataset.outcome=receipt.status;$('#notice').dataset.jobId=receipt.operationId;
     return receipt;
   }finally{state.busy=false;block();}
@@ -513,7 +485,7 @@ async function generateDesign() {
   if(result.path!==editor.path)throw new Error('系統文件生成路徑不符，請查看執行紀錄。');
   $('#source-editor').value=result.content;$('#editor-state').textContent='尚未儲存';resizeWorkflowEditor($('#source-editor'));
   designView.generated();renderNext();
-  note('LLM 已生成系統文件，請回答未決項目並儲存。');block();await interactionLog.load(repositoryId);
+  note('LLM 已生成系統文件，請回答未決項目並儲存。');block();
 }
 async function completeTestPlan() {
   if(state.editor&&($('#source-editor').value!==state.editor.content||state.hookEditor&&$('#hook-editor').value!==state.hookEditor.content))await saveSource();
@@ -696,10 +668,8 @@ on('#cancel-job','click',()=>state.jobId&&api(`/operations/${state.jobId}/cancel
 on('#sync','click',()=>{if(dirty())throw new Error('請先儲存草稿並完成驗收，遠端同步只處理已固定版本。');const f=feature();return executeJob('repository.sync',{requirementId:f.requirementId,featureId:f.id});});
 on('#export-documents','click',()=>executeJob('repository.prepare',{}));
 on('#new-feature','click',createFeature);on('#delete-feature','click',deleteRequirement);
-on('#upload-requirement','click',()=>$('#requirement-file').click());
-on('#requirement-file','change',importDocument);
-on('#requirement-description','input',composerChanged);on('#requirement-gherkin','input',composerChanged);
-on('#generate-gherkin','click',generateGherkin);on('#save-requirement','click',saveRequirement);
+on('#requirement-gherkin','input',composerChanged);
+on('#save-requirement','click',saveRequirement);
 on('#feature-select','change',async()=>{try{await navigate({featureKey:$('#feature-select').value,stage:'GHERKIN'});}finally{$('#feature-select').value=state.featureKey??'';}});on('#save-source','click',saveSource);on('#advance','click',advance);
 on('#acceptance-opinion','input',()=>{acceptanceDrafts.set(acceptanceKey(),$('#acceptance-opinion').value);renderAcceptanceActions();});on('#request-implementation-changes','click',requestImplementationChanges);on('#accept-requirement','click',acceptRequirement);
 on('#source-select','change',async()=>{const value=$('#source-select').value;if(await guard())await openSource(value);});
@@ -825,9 +795,8 @@ $('#refresh-versions').addEventListener('click',()=>safe(()=>executeJob('reposit
 $('#start-regression').addEventListener('click',()=>safe(()=>startRegression()));
 $('#cancel-regression').addEventListener('click',()=>safe(async()=>{const job=regressionJobs.get(state.repositoryId);if(job)await api(`/operations/${job}/cancel`,'POST',{});}));
 
-const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));},beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
-const terminalView=operationTerminal({api,note,onInteractions:entries=>{for(const entry of entries)void interactionLog.accepted(entry).catch(error=>note(error.message,true));}});
-const interactionLog=interactionHistory({api,labels,getType:currentHistoryType,getKey:currentHistoryKey,getRepositoryId:()=>state.repositoryId,onReset:()=>terminalView.leave()});
+const development=developmentView({api,view:()=>state,feature,refresh,navigate,ask,previewAgent,note,safe,showOperation,beginAction,actionVersion:()=>actionVersion,canRecover:()=>!state.busy&&!state.jobId});
+const terminalView=operationTerminal({api,note,onComplete:clearOperation});
 on('#develop','click',()=>development.start());on('#stop-development','click',()=>development.stop());
 
 const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:()=>{resizeWorkflowEditor($('#source-editor'));renderNext();}});

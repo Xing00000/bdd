@@ -106,6 +106,41 @@ export class WorkflowNodeDriver {
   await this.page.locator('#design-edit-button').click();
   await this.expect(this.page.locator('#source-editor')).toHaveValue('# Node driven design\n\nThe account name comes from the signed-in account.\n');
  }
+ async editSimplifiedUi(){
+  const {expect}=this,service=this.chat.app.service;
+  const before=await service.requirement(this.chat.repository.id,this.feature.requirementId,this.feature.id);
+  const historyRequests=[];
+  this.page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/interactions'))historyRequests.push(request.url());});
+  for(const [index,node] of service.nodeDefinitions.entries()){
+    await this.page.getByRole('button',{name:`${index+1} ${node.label}`,exact:true}).click();
+    await expect(this.page.locator('#phase-title')).toHaveText(node.shortLabel);
+    await expect(this.page.locator('#content')).toHaveAttribute('aria-busy','false');
+    await expect(this.page.locator('#interaction-history, #interaction-list, #interaction-more')).toHaveCount(0);
+  }
+  await this.page.getByRole('button',{name:`1 ${service.nodeDefinitions[0].label}`,exact:true}).click();
+  await expect(this.page.locator('#requirement-description, #requirement-file, #upload-requirement, #generate-gherkin')).toHaveCount(0);
+  await expect(this.page.locator('#requirement-gherkin')).toBeVisible();
+  const changed=before.gherkin+'\n# Manual Gherkin edit with preserved original source\n';
+  await this.page.locator('#requirement-gherkin').fill(changed);
+  const saved=this.page.waitForResponse(response=>response.request().method()==='POST'&&response.url().endsWith('/node-responses'));
+  await this.page.locator('#save-requirement').click();const receipt=await saved;expect(receipt.ok(),await receipt.text()).toBe(true);
+  this.simplifiedUi={before,changed,historyRequests};
+ }
+ async verifySimplifiedUi(){
+  const {expect}=this,{before,changed,historyRequests}=this.simplifiedUi;
+  const after=await this.chat.app.service.requirement(this.chat.repository.id,this.feature.requirementId,this.feature.id);
+  await expect(this.page.locator('#requirement-description, #requirement-file, #upload-requirement, #generate-gherkin, #interaction-history, #interaction-list')).toHaveCount(0);
+  expect(after.description).toBe(before.description);expect(after.gherkin).toBe(changed);expect(historyRequests).toEqual([]);
+  this.evidence.push({kind:'simplified-requirement-ui',before,after,historyRequests});
+ }
+ async reloadSimplifiedUi(){
+  const {expect}=this,{before,changed,historyRequests}=this.simplifiedUi;
+  await this.page.reload();await expect(this.page.locator('#requirement-gherkin')).toHaveValue(changed);
+  await expect(this.page.locator('#interaction-history')).toHaveCount(0);
+  const after=await this.chat.app.service.requirement(this.chat.repository.id,this.feature.requirementId,this.feature.id);
+  expect(after.description).toBe(before.description);expect(after.gherkin).toBe(changed);expect(historyRequests).toEqual([]);
+  this.evidence.push({kind:'simplified-requirement-reload',after});
+ }
  async exportConflict(){await this.prepareConflict();await this.submitConflict();await this.explicitExport();await this.verifyConflict();await this.reloadConflict();}
  async attach(info){await info.attach('Node 契約、保存與同步衝突證據',{body:JSON.stringify(this.evidence,null,2),contentType:'application/json'});await info.attach('Node 工作台畫面',{body:await this.page.screenshot({fullPage:true}),contentType:'image/png'});}
  close(){return this.chat.close();}

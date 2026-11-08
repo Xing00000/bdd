@@ -67,6 +67,7 @@ export class ChatCreateDriver {
   expect(detail.remoteUrl).toBe(null);
   await expect(this.page.locator('#feature-select')).toHaveValue(this.feature.key);
   await expect(this.page.locator('#requirement-gherkin')).toHaveValue(this.saved.gherkin);
+  await expect(this.page.locator('#requirement-description, #requirement-file, #upload-requirement, #interaction-history')).toHaveCount(0);
   expect(await this.page.evaluate(()=>window.liveChatDocumentId)).toBe(this.documentIdBefore);
   this.calls=await this.toolCalls();
   const reads=this.calls.filter(row=>row.payload.name?.includes('workbench_get_node')).map(row=>JSON.parse(row.payload.arguments));
