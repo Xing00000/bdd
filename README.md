@@ -21,7 +21,7 @@ npm start
 
 ## 需求頁：只用上下兩個編輯區
 
-聊天室位於左側「對話」，按「新對話」直接在中間開啟獨立頁籤，不需輸入名稱；第一則訊息會自動成為對話標題。訊息原文、狀態與 Codex thread 對應保存於同一份 `WB_HOME/metadata.sqlite`；關閉頁籤不刪除紀錄。首次使用聊天前執行 `npm install`、`npm run build`。Codex（`@openai/codex`）與 Copilot（`@github/copilot`）都由專案依賴安裝，預設不依賴全域 CLI；GitHub Copilot 須先登入並具有模型權限。執行檔、模型及逾時可在「對話設定」調整。
+聊天室位於左側「對話」，按「新對話」直接在中間開啟獨立頁籤，不需輸入名稱；第一則訊息會自動成為對話標題。訊息原文、狀態與 Codex thread 對應保存於同一份 `WB_HOME/metadata.sqlite`；關閉頁籤不刪除紀錄。聊天由 Node.js 24 直接載入 canonical TypeScript 來源，安裝依賴後執行 `npm start` 即可，不依賴 `dist`。Codex（`@openai/codex`）與 Copilot（`@github/copilot`）都由專案依賴安裝，預設不依賴全域 CLI；GitHub Copilot 須先登入並具有模型權限。執行檔、模型及逾時可在「對話設定」調整。
 
 聊天由 Codex 管理上下文，透過 **Copilot ACP** 提供模型回答，文字會逐段串流顯示。工作台啟動 `copilot --acp --stdio` 並使用標準 ACP JSON-RPC；不再使用私有 headless RPC，也不解析 CLI 終端文字。工作台入口可查詢專案與進度、產生及讀回需求提案；提案仍須人工審閱，不會直接確認階段或執行 shell。目前不支援聊天附件。Codex 壓縮不刪除原始聊天訊息；失敗或重啟中斷會保留明確狀態。[GitHub ACP 文件](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server)
 

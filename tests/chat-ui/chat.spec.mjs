@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
+import {execFileSync} from 'node:child_process';
 import {createStandaloneServer} from '../../packages/workstation/http.mjs';
 import {access} from 'node:fs/promises';
 import {ChatToolsDriver} from './chat-tools-driver.ts';
@@ -85,13 +86,45 @@ test('終端自動取得焦點並將鍵盤輸入送達實際 PTY',async({page,wo
  await supervisor.stop(session.sessionId);
 });
 
+test('停止 CLI Agent 自動移除選單與終端，並清理實際 tmux 工作階段',async({page,workstation:w},info)=>{
+ const supervisor=await w.app.service.supervisor();
+ const start=()=>supervisor.start({protocol:'pty',command:process.execPath,cwd:w.home,args:['-e',
+  "const path=require('node:path');console.log('SOCKET='+path.basename(process.env.TMUX.split(',')[0]));setInterval(()=>{},1000)"]});
+ const first=await start(),second=await start();
+ const output=()=>supervisor.events(first.sessionId).events.map(event=>event.content).join('');
+ await expect.poll(output).toContain('SOCKET=');
+ const socket=output().match(/SOCKET=([^\s]+)/)[1];
+ expect(execFileSync('tmux',['-L',socket,'has-session','-t',first.sessionId]).toString()).toBe('');
+ await page.getByText('＋ 啟動 CLI Agent').click();
+ await page.getByRole('button',{name:'重新整理工作階段'}).click();
+ await page.getByTestId('agent-session-'+first.sessionId).click();
+ await expect(page.getByTestId('agent-session-terminal').locator('.xterm')).toBeVisible();
+ await supervisor.stop(first.sessionId,{actor:'human'});
+ await expect(page.getByTestId('agent-session-'+first.sessionId)).toHaveCount(0);
+ await expect(page.getByTestId('agent-session-detail')).toContainText(second.sessionId);
+ let tmuxExit;
+ try{execFileSync('tmux',['-L',socket,'has-session','-t',first.sessionId],{stdio:'pipe'});}
+ catch(error){tmuxExit=error.status;}
+ expect(tmuxExit).toBe(1);
+ expect(()=>process.kill(first.pid,0)).toThrow();
+ await supervisor.stop(second.sessionId,{actor:'human'});
+ await expect(page.getByTestId('agent-session-terminal')).toHaveCount(0);
+ await expect(page.getByTestId('agent-session-detail')).toBeEmpty();
+ await openMenu(page,'chat');
+ await expect(page.getByTestId('agent-session-list')).toHaveText('尚無 CLI Agent Session');
+ await expect(page.locator('[data-testid^="agent-session-AGT-"]')).toHaveCount(0);
+ expect((await w.get('/agent-sessions?activeOnly=true')).sessions).toEqual([]);
+ expect((await w.get('/agent-sessions')).sessions.filter(s=>s.status==='STOPPED').length).toBe(2);
+ await info.attach('tmux 清理結果',{body:JSON.stringify({sessionId:first.sessionId,socket,hasSessionExit:tmuxExit}),contentType:'application/json'});
+});
+
 test('ACP 終端可送出指令、中斷與停止工作階段',async({page,workstation:w})=>{
  const session={sessionId:'AGT-acp-test',agentName:'acp-terminal',protocol:'acp',status:'IDLE'},commands=[];
  await page.routeWebSocket('**/agent-sessions/AGT-acp-test/terminal**',()=>{});
  await page.route('**/repository-api/v1/agent-sessions**',async route=>{
   const url=new URL(route.request().url());
   if(url.pathname.endsWith('/events'))return route.fulfill({json:{...session,events:[]}});
-  if(url.pathname.endsWith('/agent-sessions'))return route.fulfill({json:{sessions:[session]}});
+  if(url.pathname.endsWith('/agent-sessions'))return route.fulfill({json:{sessions:url.searchParams.get('activeOnly')==='true'&&session.status==='STOPPED'?[]:[session]}});
   const action=url.pathname.split('/').at(-1);
   if(['messages','cancel','stop'].includes(action)){
    commands.push({action,body:route.request().postDataJSON()});
@@ -106,12 +139,15 @@ test('ACP 終端可送出指令、中斷與停止工作階段',async({page,works
  await expect(terminal.locator('.xterm-helper-textarea')).toBeFocused();
  await page.keyboard.type('follow ux');await page.keyboard.press('Backspace');await page.keyboard.type('p');await page.keyboard.press('Enter');
  await expect.poll(()=>commands).toEqual([{action:'messages',body:{actor:'human',message:'follow up',wait:false}}]);
+ await page.keyboard.press('Control+c');
+ await expect.poll(()=>commands.filter(command=>command.action==='cancel').length).toBe(1);
+ await expect(terminal.locator('.xterm-helper-textarea')).toBeFocused();
  await page.getByRole('button',{name:'中斷目前工作',exact:true}).click();
- await expect.poll(()=>commands.some(command=>command.action==='cancel'&&command.body.actor==='human')).toBe(true);
+ await expect.poll(()=>commands.filter(command=>command.action==='cancel'&&command.body.actor==='human').length).toBe(2);
  await expect(terminal.locator('.xterm-helper-textarea')).toBeFocused();
  await page.getByRole('button',{name:'停止工作階段',exact:true}).click();
- await expect(page.getByTestId('agent-session-detail')).toContainText('STOPPED');
- await expect(page.getByRole('button',{name:'停止工作階段',exact:true})).toBeDisabled();
+ await expect(page.getByTestId('agent-session-detail')).toBeEmpty();
+ await expect(page.getByTestId('agent-session-AGT-acp-test')).toHaveCount(0);
  expect(commands.at(-1)).toEqual({action:'stop',body:{actor:'human'}});
  await expect(page.getByTestId('agent-session-input')).toHaveCount(0);
 });

@@ -170,6 +170,10 @@ export function openStore(home) {
     requirementProposals(repositoryId,editorKey) {
       return db.prepare('SELECT id,description,original_gherkin originalGherkin,generated_gherkin generatedGherkin,created_at createdAt FROM requirement_proposals WHERE repository_id=? AND editor_key=? ORDER BY created_at DESC,rowid DESC LIMIT 20').all(repositoryId,editorKey);
     },
+    requirementProposal(repositoryId,proposalId) {
+      const row=db.prepare('SELECT id,editor_key editorKey,description,original_gherkin originalGherkin,generated_gherkin generatedGherkin,created_at createdAt FROM requirement_proposals WHERE repository_id=? AND id=?').get(repositoryId,proposalId);
+      return row??null;
+    },
     close() { db.close(); },
     repositories() { return db.prepare('SELECT id,title,remote_url remoteUrl,branch,local_path localPath,created_at createdAt FROM spec_repositories ORDER BY created_at').all(); },
     repository(repositoryId) {
