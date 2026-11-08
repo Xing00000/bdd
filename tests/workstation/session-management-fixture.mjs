@@ -1,4 +1,4 @@
-import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {SessionManager} from '../../packages/workstation/session-management/core.mjs';
@@ -6,7 +6,7 @@ import {SessionManager} from '../../packages/workstation/session-management/core
 export const system={kind:'system',id:'test-controller'};
 export const resultSchema={type:'object',properties:{summary:{type:'string',minLength:1,maxLength:1000},accepted:{type:'boolean'}},required:['summary','accepted'],additionalProperties:false};
 export function fixture({approval=false,maxWorkers=8,workstationId='local'}={}) {
-  const home=mkdtempSync(path.join(tmpdir(),'bdd-sessions-'));mkdirSync(path.join(home,'repo'));mkdirSync(path.join(home,'repo2'));
+  const home=realpathSync(mkdtempSync(path.join(tmpdir(),'bdd-sessions-')));mkdirSync(path.join(home,'repo'));mkdirSync(path.join(home,'repo2'));
   const file=path.join(home,'metadata.sqlite'),options={workstationId,worktreeRoot:path.join(home,'worktrees'),maxWorkers};
   const m=new SessionManager(file,options);
   const save=(kind,id,body,revision=0)=>m.command('catalog.save',{kind,id,body,expectedRevision:revision});

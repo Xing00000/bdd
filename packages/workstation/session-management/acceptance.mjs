@@ -44,23 +44,6 @@ export async function fingerprintWorktree(root){
   const digest=sha256(canonical(files));
   return {digest,files};
 }
-function install(db){
-  db.exec(`CREATE TABLE IF NOT EXISTS sm_verification_evidence(
-     id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES sm_tasks(id),
-     task_version INTEGER NOT NULL,task_revision INTEGER NOT NULL,
-     source_digest TEXT NOT NULL,results_digest TEXT NOT NULL,
-     profile_id TEXT NOT NULL,profile_digest TEXT NOT NULL,
-     total INTEGER NOT NULL CHECK(total>0),passed INTEGER NOT NULL,
-     failed INTEGER NOT NULL,skipped INTEGER NOT NULL,
-     receipt TEXT NOT NULL CHECK(json_valid(receipt)),created_at TEXT NOT NULL
-   );
-   CREATE TABLE IF NOT EXISTS sm_acceptance_checkpoints(
-     task_id TEXT PRIMARY KEY REFERENCES sm_tasks(id),
-     verification_id TEXT NOT NULL REFERENCES sm_verification_evidence(id),
-     expected_version INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('COMMITTING','COMPLETED','UNKNOWN')),
-     commit_sha TEXT,error TEXT,created_at TEXT NOT NULL
-   );`);
-}
 async function runGit(worktree,args,options={}){
   const env={};for(const [k,v] of Object.entries(process.env))if(!k.startsWith('GIT_'))env[k]=v;
   env.GIT_CONFIG_NOSYSTEM='1';env.GIT_CONFIG_GLOBAL='/dev/null';env.GIT_TERMINAL_PROMPT='0';
@@ -70,7 +53,7 @@ async function runGit(worktree,args,options={}){
   return stdout;
 }
 function resultDigest(manager,taskId){
-  const rows=manager.all('SELECT node_id,digest,task_revision FROM sm_results WHERE task_id=? ORDER BY node_id',taskId);
+  const rows=manager.all('SELECT node_id,digest,task_revision FROM sm_result_scope WHERE task_id=? ORDER BY node_id',taskId);
   const count=manager.one('SELECT COUNT(*) n FROM sm_nodes WHERE task_id=?',taskId).n;
   ok(rows.length===count&&count>0,'UNFINISHED_NODES','Every node must publish an immutable result before verification',409);
   return sha256(canonical(rows));
@@ -78,10 +61,10 @@ function resultDigest(manager,taskId){
 
 export class SessionAcceptance{
   constructor(manager,{runTests,profileId='registered-bdd-suite',profileDigest}={}){
-    this.manager=manager;this.db=manager.db;install(this.db);this.runTests=runTests;
+    this.manager=manager;this.db=manager.db;this.runTests=runTests;
     this.profileId=profileId;this.profileDigest=profileDigest??sha256(profileId);
   }
-  list(taskId){this.manager.task(taskId);return this.manager.all('SELECT * FROM sm_verification_evidence WHERE task_id=? ORDER BY created_at,id',taskId);}
+  list(taskId){this.manager.task(taskId);return this.manager.all('SELECT * FROM sm_execution_verifications WHERE task_id=? ORDER BY created_at,id',taskId);}
   async verify(taskId){
     const before=this.manager.detail(taskId);
     ok(before.task.state==='WAITING_ACCEPTANCE'&&before.worktree.state==='READY','NOT_READY_FOR_VERIFICATION','Task nodes or worktree not ready',409);
@@ -117,7 +100,7 @@ export class SessionAcceptance{
     this.manager.transaction(()=>{
       const task=this.manager.task(taskId);
       ok(task.version===before.task.version&&task.state==='WAITING_ACCEPTANCE','STALE_VERIFICATION','Task changed during publication',409);
-      this.manager.exec('INSERT INTO sm_verification_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      this.manager.exec('INSERT INTO sm_execution_verifications VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         id,taskId,task.version,task.input_revision,source.digest,results,
         this.profileId,this.profileDigest,outcome.total,outcome.passed,0,0,
         canonical({exitCode:outcome.exitCode,summary:outcome.summary??'',sourceFiles:source.files.length}),created);
@@ -131,18 +114,18 @@ export class SessionAcceptance{
     assertText(verificationId,'verificationId',120);
     assertText(authorName,'authorName',200);assertText(authorEmail,'authorEmail',200);
     ok(!/[\r\n\0]/.test(authorName+authorEmail),'INVALID_AUTHOR','Invalid author name/email',422);
-    const evidence=this.manager.one('SELECT * FROM sm_verification_evidence WHERE id=? AND task_id=?',verificationId,taskId);
+    const evidence=this.manager.one('SELECT * FROM sm_execution_verifications WHERE id=? AND task_id=?',verificationId,taskId);
     ok(evidence&&evidence.task_version===expectedVersion&&evidence.task_revision===before.task.input_revision&&
       evidence.results_digest===resultDigest(this.manager,taskId),'STALE_EVIDENCE','Evidence not bound to current results',409);
     const snapshot=await fingerprintWorktree(before.worktree.path);
     ok(snapshot.digest===evidence.source_digest,'STALE_EVIDENCE','Verified source differs from current source',409);
     ok(!before.workers.some(w=>['RESERVED','RUNNING','UNKNOWN'].includes(w.state)),'WORKER_STILL_ACTIVE','Active worker blocks acceptance',409);
-    const existing=this.manager.one('SELECT * FROM sm_acceptance_checkpoints WHERE task_id=?',taskId);
+    const existing=this.manager.one('SELECT * FROM sm_execution_acceptances WHERE task_id=?',taskId);
     ok(!existing,'CHECKPOINT_RECONCILIATION_REQUIRED','An acceptance checkpoint already exists; reconcile instead of retrying',409);
     this.manager.transaction(()=>{
       const now=this.manager.task(taskId);
       ok(now.version===expectedVersion&&now.state==='WAITING_ACCEPTANCE','TASK_VERSION_CONFLICT','Task changed before acceptance',409);
-      this.manager.exec("INSERT INTO sm_acceptance_checkpoints VALUES(?,?,?,'COMMITTING',NULL,NULL,?)",taskId,verificationId,expectedVersion,new Date().toISOString());
+      this.manager.exec("INSERT INTO sm_execution_acceptances VALUES(?,?,?,'COMMITTING',NULL,NULL,?)",taskId,verificationId,expectedVersion,new Date().toISOString());
     });
     let commitSha;
     try{
@@ -175,14 +158,14 @@ export class SessionAcceptance{
         const now=this.manager.task(taskId);
         ok(now.state==='WAITING_ACCEPTANCE'&&now.version===expectedVersion,'TASK_VERSION_CONFLICT','Task changed before final publication',409);
         this.manager.exec("UPDATE sm_tasks SET state='COMPLETED',version=version+1 WHERE id=?",taskId);
-        this.manager.exec("UPDATE sm_acceptance_checkpoints SET state='COMPLETED',commit_sha=? WHERE task_id=?",commitSha,taskId);
+        this.manager.exec("UPDATE sm_execution_acceptances SET state='COMPLETED',commit_sha=? WHERE task_id=?",commitSha,taskId);
         this.manager.event(taskId,'task.accepted',{verificationId,commitSha,sourceDigest:snapshot.digest},
           {kind:'human',id:'local'});
       });
       return {taskId,state:'COMPLETED',commitSha,verificationId};
     }catch(error){
       // Git may have executed already. NEVER retry automatically.
-      this.manager.transaction(()=>this.manager.exec("UPDATE sm_acceptance_checkpoints SET state='UNKNOWN',commit_sha=?,error=? WHERE task_id=?",
+      this.manager.transaction(()=>this.manager.exec("UPDATE sm_execution_acceptances SET state='UNKNOWN',commit_sha=?,error=? WHERE task_id=?",
         commitSha??null,String(error.message??error).slice(0,2000),taskId));
       throw error;
     }
