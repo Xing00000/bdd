@@ -1,3 +1,4 @@
+import {openMenu} from '../chat-ui/navigation-helpers.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -86,7 +87,7 @@ const server=http.createServer(async(request,response)=>{
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   const click=async name=>{await page.getByRole('button',{name,exact:true}).click();await ready();};
   async function job(locator,name,outcome='SUCCEEDED',preview=true) { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();if(preview&&['workflow.develop','workflow.gherkin.generate'].includes(name)){await expect(page.getByRole('dialog')).toContainText('預覽 Agent Prompt');await page.getByRole('dialog').getByRole('button',{name:'送出',exact:true}).click();}await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
-  async function repositoryMenu(){if(!await page.locator('#sidebar').isVisible())await page.locator('#menu-toggle').click();const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();return group;}
+  async function repositoryMenu(){if(!await page.locator('#sidebar').isVisible())await openMenu(page,'workspace');const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();return group;}
   // The reports view remains a supported evidence deep link; its sidebar entry was removed.
   async function reportHistory(){
     await expect(page.locator('#repository-nav [data-view="reports"]')).toHaveCount(0);
@@ -341,7 +342,7 @@ const server=http.createServer(async(request,response)=>{
   await expect(upper).toHaveValue('尚未儲存的來源草稿');await expect(lower).toHaveValue(betaGenerated+'# 尚未儲存的下方修改\n');
   await page.getByRole('button',{name:'開啟規格庫 Alpha 規格庫',exact:true}).click();await d.getByRole('button',{name:'捨棄草稿並離開',exact:true}).click();await ready();await expect(page.getByRole('heading',{name:'Alpha 規格庫',exact:true})).toBeVisible();
   await page.setViewportSize({width:390,height:844});await reportHistory();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,'04-simple-mobile.png'),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));
-  await page.getByRole('button',{name:'展開導覽',exact:true}).click();await expect(page.getByRole('button',{name:'開啟規格庫 Beta 規格庫',exact:true})).toBeVisible();await click('開啟規格庫 Beta 規格庫');await expect(page.locator('#sidebar')).not.toBeVisible();assert.deepEqual(browserErrors,[]);
+  await openMenu(page,'workspace');await expect(page.getByRole('button',{name:'開啟規格庫 Beta 規格庫',exact:true})).toBeVisible();await click('開啟規格庫 Beta 規格庫');await expect(page.locator('#sidebar')).not.toBeVisible();assert.deepEqual(browserErrors,[]);
   const operations=events.filter(e=>e.url.endsWith('/operations')).map(e=>e.body),installs=operations.filter(x=>x.input.installConsent);
   assert.deepEqual(installs.map(x=>x.repositoryId).sort(),[alpha,beta].sort(),'Each distinct Spec Repo needs exactly one approved installation across the entire workflow');
   assert.ok(installs.every(x=>x.operation==='repository.tools.prepare'),'All installations are approved during settings preparation');

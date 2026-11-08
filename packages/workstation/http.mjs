@@ -3,6 +3,7 @@ import {createRequire} from 'node:module';
 import { terminalVendor } from './development.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { WebSocketServer, WebSocket } from 'ws';
 import { workspaceEntries, entriesDigest, workingCommit } from '../spec-toolkit/workspace.mjs';
 import { createWorkstation } from './service.mjs';
 import { invariant, id, safePath, errorResult } from '../contracts/index.mjs';
@@ -85,6 +86,7 @@ export async function dispatch(service, request) {
     else if(parts.length===2&&method==='GET')result=service.agentSession(id(parts[1]));
     else if(parts.length===3&&parts[2]==='events'&&method==='GET')result=service.agentSessionEvents(id(parts[1]),{afterSeq:url.searchParams.has('afterSeq')?Number(url.searchParams.get('afterSeq')):0,limit:url.searchParams.has('limit')?Number(url.searchParams.get('limit')):200});
     else if(parts.length===3&&parts[2]==='messages'&&method==='POST')result=await service.sendAgentSessionMessage(id(parts[1]),input);
+    else if(parts.length===3&&parts[2]==='terminal-input'&&method==='POST')result=await service.sendAgentTerminalInput(id(parts[1]),input);
     else if(parts.length===3&&parts[2]==='cancel'&&method==='POST')result=await service.cancelAgentSessionTurn(id(parts[1]),input);
     else if(parts.length===3&&parts[2]==='stop'&&method==='POST')result=await service.stopAgentSession(id(parts[1]),input);
     invariant(result!==undefined,'NOT_FOUND','Unknown agent session route',404);
@@ -166,8 +168,52 @@ async function chatEvents(service,request,response){
   const {openChatStream}=await import('../../dist/src/http/chat-stream.js');
   await openChatStream(await service.chat(),response,url.searchParams.get('roomId')??undefined);return true;
 }
+function installAgentTerminalSockets(server,service){
+  const sockets=new WebSocketServer({noServer:true,maxPayload:65536});
+  const upgrade=(request,socket,head)=>{
+    const url=new URL(request.url,'http://workstation.invalid');
+    const match=url.pathname.match(/^\/repository-api\/v1\/agent-sessions\/([^/]+)\/terminal$/);
+    if(!match)return;
+    try{
+      const origin=new URL(request.headers.origin);
+      invariant(origin.host===request.headers.host&&['http:','https:'].includes(origin.protocol),'CROSS_ORIGIN_DENIED','Cross-origin terminal forbidden',403);
+      const sessionId=id(decodeURIComponent(match[1]));
+      const cursor=Number(url.searchParams.get('afterSeq')??0);
+      invariant(Number.isSafeInteger(cursor)&&cursor>=0,'INVALID_EVENT_SEQ','Invalid event cursor');
+      service.agentSessionEvents(sessionId,{afterSeq:cursor,limit:1});
+      sockets.handleUpgrade(request,socket,head,ws=>{
+        let next=cursor,timer,queue=Promise.resolve();
+        ws.on('error',()=>{});
+        ws.on('close',()=>clearTimeout(timer));
+        ws.on('message',(data,isBinary)=>{
+          queue=queue.then(async()=>{
+            invariant(!isBinary,'INVALID_TERMINAL_INPUT','Binary input is not supported',400);
+            const message=JSON.parse(data.toString());
+            invariant(message&&message.type==='input'&&typeof message.data==='string','INVALID_TERMINAL_INPUT','Invalid terminal input',400);
+            await service.sendAgentTerminalInput(sessionId,{data:message.data});
+          }).catch(error=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'error',message:error.message}));});
+        });
+        const pump=()=>{
+          if(ws.readyState!==WebSocket.OPEN)return;
+          try{
+            if(ws.bufferedAmount>1024*1024){ws.close(1013,'Terminal client too slow');return;}
+            const snapshot=service.agentSessionEvents(sessionId,{afterSeq:next,limit:200});
+            for(const event of snapshot.events){next=event.seq;ws.send(JSON.stringify({type:'event',event}));}
+            if(snapshot.events.length===200){timer=setTimeout(pump,0);return;}
+            if(['STOPPED','FAILED'].includes(snapshot.status)){ws.send(JSON.stringify({type:'closed',status:snapshot.status}));ws.close();return;}
+            timer=setTimeout(pump,350);
+          }catch{ws.close(1011,'Terminal stream failed');}
+        };
+        pump();
+      });
+    }catch{socket.destroy();}
+  };
+  server.on('upgrade',upgrade);
+  return ()=>{server.off('upgrade',upgrade);for(const ws of sockets.clients)ws.terminate();sockets.close();};
+}
 export async function registerRepositoryRoutes(app, options) {
   const service = await createWorkstation(options);
+  const closeTerminalSockets=installAgentTerminalSockets(app.server,service);
   const handler = async (request, reply) => {
     if(await chatEvents(service,request.raw,reply.raw)){reply.hijack();return;}
     const response = await safeDispatch(service, { method: request.method, url: request.raw.url, headers: request.headers, body: request.body });
@@ -177,7 +223,7 @@ export async function registerRepositoryRoutes(app, options) {
   for (const route of [...sessionManagementPages,...assets.keys(),'/repositories/markdown-it.js','/repositories/xterm.js','/repositories/xterm.css']) app.get(route, handler);
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: `${prefix}/mcp/progress`, handler });
   app.route({ method: ['GET', 'POST', 'PUT', 'PATCH'], url: `${prefix}/*`, handler });
-  app.addHook('onClose', async () => service.close());
+  app.addHook('onClose', async () => {closeTerminalSockets();await service.close();});
   return service;
 }
 export async function createStandaloneServer(options) {
@@ -194,5 +240,6 @@ export async function createStandaloneServer(options) {
     response.writeHead(result.status, result.headers); response.end(result.body === '' ? '' : Buffer.isBuffer(result.body) ? result.body : JSON.stringify(result.body));
     } catch (error) { response.writeHead(error.statusCode || 500, { 'content-type': 'application/json' }); response.end(JSON.stringify(errorResult(error))); }
   });
-  return { server, service, async close() { await service.close(); if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); } };
+  const closeTerminalSockets=installAgentTerminalSockets(server,service);
+  return { server, service, async close() { closeTerminalSockets();await service.close(); if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); } };
 }

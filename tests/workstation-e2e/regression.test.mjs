@@ -1,3 +1,4 @@
+import {openMenu} from '../chat-ui/navigation-helpers.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -61,7 +62,7 @@ test('all-UI: acquire an existing Spec Repo → browse history → choose spec/p
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().startsWith(origin))writes.push({path:new URL(r.url()).pathname,input:r.postDataJSON()});});
   const ready=()=>expect(page.locator('#content')).toHaveAttribute('aria-busy','false');
   async function job(locator,name,outcome='SUCCEEDED') { const previous=await page.locator('#notice').getAttribute('data-job-id');await locator.click();await page.waitForFunction(({previous,name})=>{const n=document.querySelector('#notice');return n.dataset.jobId&&n.dataset.jobId!==previous&&n.dataset.operation===name;},{previous,name},{timeout:360000});assert.equal(await page.locator('#notice').getAttribute('data-outcome'),outcome,await page.locator('#notice').textContent());await ready(); }
-  async function tab(name){if(!await page.locator('#sidebar').isVisible())await page.locator('#menu-toggle').click();const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();await group.getByRole('button',{name,exact:true}).click();await ready();}
+  async function tab(name){if(!await page.locator('#sidebar').isVisible())await openMenu(page,'workspace');const group=page.locator('.repo-nav.active + .repository-group');if(!await group.evaluate(n=>n.open))await group.locator('summary').click();await group.getByRole('button',{name,exact:true}).click();await ready();}
   // Report history remains a supported read-only deep link, without a sidebar entry.
   async function reportHistory(){
     await expect(page.locator('#repository-nav [data-view="reports"]')).toHaveCount(0);

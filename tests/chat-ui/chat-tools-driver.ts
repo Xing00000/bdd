@@ -1,3 +1,4 @@
+import {openMenu} from './navigation-helpers.mjs';
 import {expect,type Page,type TestInfo} from '@playwright/test';
 import {mkdtemp,readFile,readdir,realpath} from 'node:fs/promises';
 import path from 'node:path';
@@ -20,7 +21,7 @@ export class ChatToolsDriver {
   driver.repository=driver.app.service.register({title:'聊天能力驗證 '+randomUUID(),remoteUrl:'https://github.com/openai/codex'});
   await new Promise<void>(resolve=>driver.app.server.listen(0,'127.0.0.1',resolve));driver.url=`http://127.0.0.1:${driver.app.server.address().port}`;
   page.on('pageerror',error=>driver.errors.push(error.message));driver.baseline=driver.authoring();
-  await page.goto(driver.url);await page.getByTestId('new-chat').click();await expect(page.getByRole('textbox',{name:'對話訊息輸入',exact:true})).toBeVisible();driver.roomId=new URL(page.url()).searchParams.get('chat')!;
+  await page.goto(driver.url);await openMenu(page,'chat');await page.getByTestId('new-chat').click();await expect(page.getByRole('textbox',{name:'對話訊息輸入',exact:true})).toBeVisible();driver.roomId=new URL(page.url()).searchParams.get('chat')!;
   return driver;
  }
  async get(route:string){const r=await this.page.request.get(this.url+'/repository-api/v1'+route);expect(r.ok(),await r.text()).toBe(true);return r.json();}

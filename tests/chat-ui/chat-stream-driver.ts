@@ -1,3 +1,4 @@
+import {openMenu} from './navigation-helpers.mjs';
 import {expect,type Page,type TestInfo} from '@playwright/test';
 import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -18,7 +19,7 @@ export class ChatStreamDriver {
   const driver=new ChatStreamDriver(page,app);
   page.on('pageerror',error=>driver.errors.push(error.message));
   await new Promise<void>(resolve=>app.server.listen(0,'127.0.0.1',resolve));driver.url=`http://127.0.0.1:${app.server.address().port}`;
-  await page.goto(driver.url);await page.getByTestId('new-chat').click();await page.getByRole('textbox',{name:'對話訊息輸入'}).waitFor();driver.roomId=new URL(page.url()).searchParams.get('chat')!;
+  await page.goto(driver.url);await openMenu(page,'chat');await page.getByTestId('new-chat').click();await page.getByRole('textbox',{name:'對話訊息輸入'}).waitFor();driver.roomId=new URL(page.url()).searchParams.get('chat')!;
   page.on('request',request=>{if(request.method()==='GET'&&/\/chat-rooms(?:\/[^/?]+)?$/.test(new URL(request.url()).pathname))driver.requests.push(request.url());});return driver;
  }
  async send(){await this.page.getByRole('textbox',{name:'對話訊息輸入'}).fill('Write a numbered list of 30 distinct short facts about prime numbers.');await this.page.getByRole('button',{name:'送出',exact:true}).click();}

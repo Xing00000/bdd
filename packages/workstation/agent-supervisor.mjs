@@ -7,7 +7,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
@@ -16,6 +17,7 @@ import { appendExecutionLog, installProgressSchema } from '../git-core/progress-
 import { negotiateProtocolVersion } from './mcp-protocol.mjs';
 
 const require = createRequire(import.meta.url);
+const execFileAsync = promisify(execFile);
 const defaultCopilotLoader = () => path.join(path.dirname(require.resolve('@github/copilot/package.json')), 'npm-loader.js');
 export const AGENT_PROFILES = Object.freeze(['copilot', 'kiro', 'codex', 'claude']);
 
@@ -364,7 +366,7 @@ function terminateProcessGroup(child, graceMs = 500) {
       if (!groupExists(pid) || Date.now() >= deadline) { done(); return; }
       poll = setTimeout(() => waitForGroup(deadline), 25);
     };
-    child.once('close', () => {
+    child.once?.('close', () => {
       if (!groupExists(pid)) done();
     });
     if (!groupExists(pid) && (child.exitCode !== null || child.signalCode !== null)) {
@@ -513,35 +515,68 @@ async function createAcpDriver({ home, sessionId, operationId, command, args, cw
 }
 
 async function createPtyDriver({ home, sessionId, operationId, command, args, cwd, env, settleMs = 120, onUnexpectedClose }) {
-  const child = spawn(command, args, {
-    cwd,
-    env: { ...env, TERM: 'xterm-256color' },
-    detached: process.platform !== 'win32',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let closed = false, activeCollector = null;
-  const onData = chunk => {
-    const text = String(chunk);
-    if (!text) return;
+  const socket = `bdd-${randomUUID()}`;
+  const tmux = (...arguments_) => execFileAsync('tmux', ['-L', socket, ...arguments_], { env });
+  // A separate tmux server gives this session its own lifetime and socket.
+  await tmux('new-session', '-d', '-s', sessionId, '-c', cwd, '--', command, ...args);
+  let child;
+  try {
+    const {stdout} = await tmux('display-message', '-p', '-t', sessionId, '#{pane_pid}');
+    const pid = Number(stdout.trim());
+    invariant(Number.isSafeInteger(pid) && pid > 0, 'AGENT_START_FAILED', 'tmux did not provide a valid pane process ID', 500);
+    child = require('node-pty').spawn('tmux', ['-L', socket, 'attach-session', '-t', sessionId], {
+      cwd, env: { ...env, TERM: 'xterm-256color' }, name: 'xterm-256color', cols: 120, rows: 40,
+    });
+    child.agentPid = pid;
+  } catch (error) {
+    await tmux('kill-session', '-t', sessionId).catch(() => {});
+    throw error;
+  }
+  let closed = false, activeCollector = null, disposal = null;
+  const attachmentExit=new Promise(resolve=>child.onExit(resolve));
+  const reapPane = async () => {
+    await terminateProcessGroup({pid: child.agentPid});
+    invariant(!groupExists(child.agentPid), 'AGENT_STOP_FAILED', 'CLI Agent process group is still running', 500);
+    // The pane group is gone before tmux is released. A natural pane exit
+    // already shuts down the per-session server; no kill is needed then.
+    try { await tmux('has-session', '-t', sessionId); }
+    catch (error) { if(error.code===1)return;throw error; }
+    await tmux('kill-session', '-t', sessionId);
+  };
+  const outputSubscription=child.onData(text => {
+    if (closed||!text) return;
     recordSessionEvent(home, sessionId, { actor: 'agent', kind: 'output', content: text, operationId });
     if (activeCollector) activeCollector.onChunk(text);
-  };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
-  child.once('close', (code, signal) => {
+  });
+  child.onExit(({exitCode}) => {
+    outputSubscription.dispose();
     if (!closed) {
       closed = true;
-      const err = new Error(`CLI Agent PTY 程序已結束（exit ${code ?? signal}）`);
+      disposal=(async()=>{
+      const err = new Error(`CLI Agent tmux 工作階段已結束（exit ${exitCode}）`);
       err.code = 'AGENT_PROCESS_EXITED';
-      updateSessionState(home, sessionId, { status: code === 0 ? 'STOPPED' : 'FAILED', ...(code === 0 ? {} : { error_json: JSON.stringify(errorResult(err)) }), finished_at: new Date().toISOString(), control_url: null, control_token: null });
       if (activeCollector) activeCollector.reject(err);
-      onUnexpectedClose?.(err);
+      try {
+        await reapPane();
+        updateSessionState(home, sessionId, { status: 'FAILED', error_json: JSON.stringify(errorResult(err)), finished_at: new Date().toISOString(), control_url: null, control_token: null });
+        onUnexpectedClose?.(err);
+      } catch (error) {
+        // Keep the owner/control channel so a failed cleanup remains retryable.
+        closed=false;
+        updateSessionState(home, sessionId, {status:'FAILED',error_json:JSON.stringify(errorResult(error))});
+        onUnexpectedClose?.(error,false);
+      }
+      })();
     }
   });
 
   return {
-    pid: child.pid,
+    pid: child.agentPid,
     acpSessionId: null,
+    writeInput(data) {
+      invariant(!closed, 'AGENT_SESSION_CLOSED', 'CLI Agent 工作階段已結束', 409);
+      child.write(data);
+    },
     async sendTurn(message, timeoutMs = 10000) {
       if (closed) throw new Error('CLI Agent PTY 工作階段已關閉');
       return new Promise((resolve, reject) => {
@@ -569,19 +604,25 @@ async function createPtyDriver({ home, sessionId, operationId, command, args, cw
           },
         };
         activeCollector = collector;
-        child.stdin.write(message.endsWith('\n') ? message : message + '\n');
+        child.write(message.endsWith('\n') ? message : message + '\n');
       });
     },
     async cancelTurn() {
       if (closed) return;
-      try { child.stdin.write('\x03\n'); } catch {}
+      child.write('\x03');
       if (activeCollector) activeCollector.finish('cancelled');
     },
     async stop() {
+      if(disposal)await disposal;
       if (closed) return;
       closed = true;
+      outputSubscription.dispose();
       if (activeCollector) activeCollector.finish('stopped');
-      await terminateProcessGroup(child);
+      disposal=(async()=>{
+        try { await reapPane();child.kill();await attachmentExit; }
+        catch(error){closed=false;disposal=null;throw error;}
+      })();
+      await disposal;
     },
   };
 }
@@ -746,12 +787,12 @@ export async function createAgentSupervisor({
               entry.status = 'IDLE';
               updateSessionState(home, entry.sessionId, { status: 'IDLE' });
             }
-            const finalState = outcome.stopReason === 'cancelled' ? 'CANCELLED' : 'PROCESSED';
+            const finalState = outcome.stopReason === 'cancelled' ? 'CANCELLED' : entry.protocol === 'pty' ? 'DELIVERED' : 'PROCESSED';
             updateMessageState(home, current.messageId, {
               state: finalState,
               reply: outcome.reply,
               stop_reason: outcome.stopReason,
-              processed_at: new Date().toISOString(),
+              processed_at: finalState === 'DELIVERED' ? null : new Date().toISOString(),
             });
             recordSessionEvent(home, entry.sessionId, {
               actor: 'system',
@@ -814,7 +855,7 @@ export async function createAgentSupervisor({
   };
 
   const executeLocalCancel = async (entry, { actor = 'codex' } = {}) => {
-    await entry.driver.cancelTurn();
+    if (entry.protocol==='pty'||entry.busy) await entry.driver.cancelTurn();
     if (entry.status !== 'STOPPED' && entry.status !== 'FAILED') {
       entry.status = 'IDLE';
       updateSessionState(home, entry.sessionId, { status: 'IDLE' });
@@ -828,12 +869,20 @@ export async function createAgentSupervisor({
     return { sessionId: entry.sessionId, status: entry.status, cancelled: true, lastSeq: seq };
   };
 
+  const executeTerminalInput = (entry, data) => {
+    invariant(entry.protocol === 'pty', 'AGENT_TERMINAL_UNAVAILABLE', '只有 PTY 工作階段支援終端輸入', 409);
+    invariant(entry.status !== 'STOPPED' && entry.status !== 'FAILED', 'AGENT_SESSION_CLOSED', 'CLI Agent 工作階段已結束', 409);
+    invariant(typeof data === 'string' && data.length > 0 && Buffer.byteLength(data) <= 65536, 'INVALID_TERMINAL_INPUT', '終端輸入無效', 400);
+    entry.driver.writeInput(data);
+    return {sessionId: entry.sessionId, accepted: true};
+  };
+
   const executeLocalStop = async (entry, { actor = 'codex' } = {}) => {
-    entry.status = 'STOPPED';
     const stopErr = new Error(`CLI Agent 工作階段 ${entry.sessionId} 已停止`);
     stopErr.code = 'AGENT_SESSION_STOPPED';
-    failQueuedMessages(entry, stopErr);
     await entry.driver.stop();
+    entry.status = 'STOPPED';
+    failQueuedMessages(entry, stopErr);
     liveSessions.delete(entry.sessionId);
     const seq = recordSessionEvent(home, entry.sessionId, {
       actor: actor === 'human' ? 'human' : 'system',
@@ -903,11 +952,11 @@ export async function createAgentSupervisor({
     });
 
     const entry = { sessionId, repositoryId, operationId, protocol, agentName: resolvedAgentName, driver: null, status: 'IDLE', busy: false, pumping: false, queue: [] };
-    const onUnexpectedClose = err => {
+    const onUnexpectedClose = (err,reaped=true) => {
       entry.status = 'FAILED';
       entry.busy = false;
       failQueuedMessages(entry, err);
-      liveSessions.delete(sessionId);
+      if(reaped)liveSessions.delete(sessionId);
     };
 
     let driver;
@@ -984,6 +1033,7 @@ export async function createAgentSupervisor({
         const entry = liveSessions.get(body.sessionId);
         invariant(entry, 'AGENT_SESSION_NOT_LIVE', `CLI Agent 工作階段 ${body.sessionId} 不在此程序執行中`, 404);
         if (req.url === '/send') result = await executeLocalSend(entry, body);
+        else if (req.url === '/terminal-input') result = executeTerminalInput(entry, body.data);
         else if (req.url === '/cancel') result = await executeLocalCancel(entry, body);
         else if (req.url === '/stop') result = await executeLocalStop(entry, body);
         else invariant(false, 'NOT_FOUND', 'Unknown supervisor control action', 404);
@@ -1056,6 +1106,16 @@ export async function createAgentSupervisor({
         repositoryId: options.repositoryId ?? defaultRepositoryId,
         operationId: options.operationId ?? defaultOperationId,
       });
+    },
+
+    async terminalInput(sessionId, data) {
+      id(sessionId);
+      const local = liveSessions.get(sessionId);
+      if (local) return executeTerminalInput(local, data);
+      const row = withDb(home, db => db.prepare('SELECT * FROM agent_sessions WHERE session_id=?').get(sessionId));
+      invariant(row, 'AGENT_SESSION_NOT_FOUND', `找不到 CLI Agent 工作階段 ${sessionId}`, 404);
+      invariant(row.control_url && row.control_token && row.status !== 'STOPPED' && row.status !== 'FAILED', 'AGENT_SESSION_CLOSED', `CLI Agent 工作階段 ${sessionId} 已結束`, 409);
+      return forwardControlRequest(row.control_url, row.control_token, 'terminal-input', {sessionId, data});
     },
 
     async send(sessionId, { message, messageId, actor = 'codex', interrupt = false, mode, wait = true, timeoutMs = 60000 } = {}) {
