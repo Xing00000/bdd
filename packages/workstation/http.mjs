@@ -4,6 +4,7 @@ import { terminalVendor } from './development.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
+import {agentStreamBufferBytes} from './agent-session-stream.mjs';
 import { workspaceEntries, entriesDigest, workingCommit } from '../spec-toolkit/workspace.mjs';
 import { createWorkstation } from './service.mjs';
 import { invariant, id, safePath, errorResult } from '../contracts/index.mjs';
@@ -183,9 +184,10 @@ function installAgentTerminalSockets(server,service){
       invariant(Number.isSafeInteger(cursor)&&cursor>=0,'INVALID_EVENT_SEQ','Invalid event cursor');
       service.agentSessionEvents(sessionId,{afterSeq:cursor,limit:1});
       sockets.handleUpgrade(request,socket,head,ws=>{
-        let next=cursor,timer,queue=Promise.resolve();
+        const streamAbort=new AbortController();
+        let dispose,closed=false,queue=Promise.resolve();
         ws.on('error',()=>{});
-        ws.on('close',()=>clearTimeout(timer));
+        ws.on('close',()=>{closed=true;streamAbort.abort();dispose?.();});
         ws.on('message',(data,isBinary)=>{
           queue=queue.then(async()=>{
             invariant(!isBinary,'INVALID_TERMINAL_INPUT','Binary input is not supported',400);
@@ -194,18 +196,12 @@ function installAgentTerminalSockets(server,service){
             await service.sendAgentTerminalInput(sessionId,{data:message.data});
           }).catch(error=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'error',message:error.message}));});
         });
-        const pump=()=>{
+        void service.subscribeAgentSession(sessionId,{afterSeq:cursor,signal:streamAbort.signal,onMessage:message=>{
           if(ws.readyState!==WebSocket.OPEN)return;
-          try{
-            if(ws.bufferedAmount>1024*1024){ws.close(1013,'Terminal client too slow');return;}
-            const snapshot=service.agentSessionEvents(sessionId,{afterSeq:next,limit:200});
-            for(const event of snapshot.events){next=event.seq;ws.send(JSON.stringify({type:'event',event}));}
-            if(snapshot.events.length===200){timer=setTimeout(pump,0);return;}
-            if(['STOPPED','FAILED'].includes(snapshot.status)){ws.send(JSON.stringify({type:'closed',status:snapshot.status}));ws.close();return;}
-            timer=setTimeout(pump,350);
-          }catch{ws.close(1011,'Terminal stream failed');}
-        };
-        pump();
+          if(ws.bufferedAmount>agentStreamBufferBytes){ws.close(1013,'Terminal client too slow');return;}
+          ws.send(JSON.stringify(message));
+          if(message.type==='closed')ws.close();
+        },onError:()=>ws.close(1011,'Terminal stream failed')}).then(unsubscribe=>{dispose=unsubscribe;if(closed)dispose();}).catch(()=>ws.close(1011,'Terminal stream failed'));
       });
     }catch{socket.destroy();}
   };

@@ -79,6 +79,7 @@ export async function createWorkstation(configuration) {
     async agentWorkspaces(){return {workspaces:await (await this.supervisor()).workspaces()};},
     agentSession(sessionId){return readAgentSession(options.home,sessionId);},
     agentSessionEvents(sessionId,query={}){return readAgentSessionEvents(options.home,sessionId,query);},
+    async subscribeAgentSession(sessionId,options){return (await this.supervisor()).subscribe(sessionId,options);},
     async startAgentSession(input={}){return (await this.supervisor()).start({...input,fromMcp:true});},
     async sendAgentSessionMessage(sessionId,input={}){return (await this.supervisor()).send(sessionId,{...input,actor:input.actor??'human'});},
     async sendAgentTerminalInput(sessionId,input={}){return (await this.supervisor()).terminalInput(sessionId,input.data);},

@@ -11,6 +11,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import {registeredAgentWorkspaces} from './agent-workspaces.mjs';
+import {publishAgentSession,subscribeLocalAgentSession,subscribeRemoteAgentSession,agentSessionEnded,agentStreamBufferBytes} from './agent-session-stream.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { invariant, id, errorResult } from '../contracts/index.mjs';
@@ -19,6 +20,7 @@ import { negotiateProtocolVersion } from './mcp-protocol.mjs';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
+const localControlUrls=new Set();
 const defaultCopilotLoader = () => path.join(path.dirname(require.resolve('@github/copilot/package.json')), 'npm-loader.js');
 export const AGENT_PROFILES = Object.freeze(['copilot', 'kiro', 'codex', 'claude']);
 
@@ -235,7 +237,7 @@ function decodeEvent(row) {
 }
 
 function recordSessionEvent(home, sessionId, { actor, kind, content, meta, operationId }) {
-  return withDb(home, db => {
+  const event=withDb(home, db => {
     const now = new Date().toISOString();
     const result = db.prepare(
       'INSERT INTO agent_session_events(session_id,actor,kind,content,meta_json,created_at) VALUES(?,?,?,?,?,?)'
@@ -247,12 +249,14 @@ function recordSessionEvent(home, sessionId, { actor, kind, content, meta, opera
       const line = prefix ? `${prefix}${content}${String(content).endsWith('\n') ? '' : '\n'}` : String(content);
       try { appendExecutionLog(db, parentOpId, line); } catch {}
     }
-    return Number(result.lastInsertRowid);
+    return decodeEvent(db.prepare('SELECT * FROM agent_session_events WHERE seq=?').get(Number(result.lastInsertRowid)));
   });
+  publishAgentSession(home,sessionId,{type:'event',event});
+  return event.seq;
 }
 
 function updateSessionState(home, sessionId, fields) {
-  return withDb(home, db => {
+  const session=withDb(home, db => {
     const now = new Date().toISOString();
     const sets = ['updated_at=?'], values = [now];
     for (const [column, value] of Object.entries(fields)) {
@@ -263,6 +267,8 @@ function updateSessionState(home, sessionId, fields) {
     db.prepare(`UPDATE agent_sessions SET ${sets.join(',')} WHERE session_id=?`).run(...values);
     return decodeSession(db.prepare('SELECT * FROM agent_sessions WHERE session_id=?').get(sessionId));
   });
+  if(agentSessionEnded(fields.status))publishAgentSession(home,sessionId,{type:'closed',status:fields.status});
+  return session;
 }
 
 function updateMessageState(home, messageId, fields) {
@@ -1042,6 +1048,23 @@ export async function createAgentSupervisor({
         res.end(JSON.stringify({ ok: true, pid: process.pid }));
         return;
       }
+      const url=new URL(req.url,'http://supervisor.invalid');
+      if(req.method==='GET'&&url.pathname==='/events'){
+        const sessionId=id(url.searchParams.get('sessionId')),afterSeq=Number(url.searchParams.get('afterSeq')??0);
+        invariant(Number.isSafeInteger(afterSeq)&&afterSeq>=0,'INVALID_EVENT_SEQ','Invalid event cursor');
+        readAgentSession(home,sessionId);
+        res.writeHead(200,{'content-type':'application/x-ndjson','cache-control':'no-store'});
+        let dispose,ended=false;
+        res.once('close',()=>{ended=true;dispose?.();});
+        dispose=subscribeLocalAgentSession(home,sessionId,afterSeq,cursor=>readAgentSessionEvents(home,sessionId,{afterSeq:cursor,limit:200}),message=>{
+          if(ended)return;
+          invariant(res.writableLength<=agentStreamBufferBytes,'AGENT_STREAM_OVERFLOW','CLI Agent stream client is too slow');
+          res.write(JSON.stringify(message)+'\n');
+          if(message.type==='closed')res.end();
+        },error=>res.destroy(error));
+        if(ended)dispose();
+        res.flushHeaders();return;
+      }
       let raw = '';
       for await (const chunk of req) raw += String(chunk);
       const body = raw ? JSON.parse(raw) : {};
@@ -1060,6 +1083,7 @@ export async function createAgentSupervisor({
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (error) {
+      if(res.headersSent){res.destroy(error);return;}
       res.writeHead(Number(error.statusCode) || 500, { 'content-type': 'application/json' });
       res.end(JSON.stringify(errorResult(error)));
     }
@@ -1072,6 +1096,7 @@ export async function createAgentSupervisor({
   server.unref();
   const address = server.address();
   const controlUrl = `http://127.0.0.1:${address.port}`;
+  localControlUrls.add(controlUrl);
 
   // Register as the primary host supervisor in WB_HOME if none is active
   const existingHost = withDb(home, db => db.prepare('SELECT * FROM agent_supervisor_host WHERE id=1').get());
@@ -1130,6 +1155,16 @@ export async function createAgentSupervisor({
     async workspaces(){
       const catalog=await registeredAgentWorkspaces(home);
       return catalog.workspaces.filter(item=>{try{validateAllowedCwd(item.cwd,explicitWorkspacePolicy?effectiveAllowedRoots:null);return true;}catch(error){if(error.code==='AGENT_CWD_FORBIDDEN')return false;throw error;}});
+    },
+
+    async subscribe(sessionId,{afterSeq=0,onMessage,onError,signal}){
+      signal?.throwIfAborted();
+      id(sessionId);invariant(Number.isSafeInteger(afterSeq)&&afterSeq>=0,'INVALID_EVENT_SEQ','Invalid event cursor');
+      const row=withDb(home,db=>db.prepare('SELECT * FROM agent_sessions WHERE session_id=?').get(sessionId));
+      invariant(row,'AGENT_SESSION_NOT_FOUND','CLI Agent session not found',404);
+      if(agentSessionEnded(row.status)||localControlUrls.has(row.control_url))return subscribeLocalAgentSession(home,sessionId,afterSeq,cursor=>readAgentSessionEvents(home,sessionId,{afterSeq:cursor,limit:200}),onMessage,onError);
+      invariant(row.control_url&&row.control_token,'AGENT_STREAM_UNAVAILABLE','CLI Agent control channel is unavailable',409);
+      return subscribeRemoteAgentSession(row,sessionId,afterSeq,onMessage,onError,signal);
     },
 
     async terminalInput(sessionId, data) {
@@ -1225,6 +1260,7 @@ export async function createAgentSupervisor({
       } catch {}
       server.closeAllConnections();
       await new Promise(resolve => server.close(() => resolve()));
+      localControlUrls.delete(controlUrl);
     },
   };
 }
