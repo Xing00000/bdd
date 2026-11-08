@@ -24,7 +24,7 @@ export function validateChatSettings(value:any):ChatSettings{
   timeoutMs:value.timeoutMs,
  };
 }
-export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,runtime:ChatRuntime,defaults:ChatSettings){
+export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,runtime:ChatRuntime,defaults:ChatSettings,workstation?:{nodeChanges:()=>unknown[]}){
  await store.run('INSERT OR IGNORE INTO chat_settings(id,value_json) VALUES(1,?)',[JSON.stringify(defaults)]);
  await store.run("UPDATE chat_messages SET status='interrupted',error='工作台已重新啟動；上次回覆未完成' WHERE status='pending'");
  let revision=0,stateRevision=0;
@@ -41,7 +41,8 @@ export async function createChatService(store:Pick<Store,'all'|'run'|'batch'>,ru
  const detail=async(id:string)=>({...await room(id),messages:await store.all('SELECT * FROM chat_messages WHERE room_id=? ORDER BY sequence',[id]),streaming:streams.has(id)?{...streams.get(id)!}:null});
  return {
   subscribe(listener:(event:Event)=>void){if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');listeners.add(listener);return ()=>{listeners.delete(listener);};},
-  async snapshot(id?:string){while(true){const before=stateRevision,rooms=await list(),value=id?await detail(id):null;if(before!==stateRevision)continue;if(value&&id)value.streaming=streams.has(id)?{...streams.get(id)!}:null;return {type:'snapshot' as const,revision,rooms,room:value};}},
+  async snapshot(id?:string){while(true){const before=stateRevision,rooms=await list(),value=id?await detail(id):null;if(before!==stateRevision)continue;if(value&&id)value.streaming=streams.has(id)?{...streams.get(id)!}:null;return {type:'snapshot' as const,revision,rooms,room:value,nodeChanges:workstation?.nodeChanges()??[]};}},
+  nodeChanged(){requireOpen();publish('changed');},
   settings,
   async models(){if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');const config=await settings();if(closing)fail(503,'CHAT_CLOSED','聊天服務正在關閉');return {models:await runtime.models(config),automaticModel:automaticChatModel};},
   async patchSettings(input:any){

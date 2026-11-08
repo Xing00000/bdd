@@ -7,7 +7,7 @@ export const codexProposalNamespace='codex_proposals';
 export type ProviderToolPolicy=boolean|'codex';
 export interface CopilotTool {name:string;namespace:string;description:string;parameters:Record<string,unknown>}
 export interface CopilotCall {toolCallId:string;mcpServerName:string;mcpToolName:string;arguments:Record<string,unknown>}
-export interface CopilotCompletion {text:string;calls:CopilotCall[]}
+export interface CopilotCompletion {text:string;calls:CopilotCall[];validation?:{rejectedProposals:number}}
 interface CodexToolIdentity {type:'function'|'custom';name:string;namespace?:string}
 export interface ProviderTool extends CopilotTool {source?:CodexToolIdentity}
 
@@ -249,7 +249,11 @@ export function formatInferencePrompt(prompt:string,tools:ProviderTool[]):string
  const catalog=tools.map(tool=>({name:tool.name,...(tool.source?{source:tool.source}:{}),description:tool.description,parameters:tool.parameters}));
  const responseContract={
   mode:'pure_inference_json_envelope',
-  rule:'You have NO native or MCP tools on this transport. Never emit preamble text before a tool call. To propose one or more tools from the "tools" array, output ONLY a single raw JSON object (no markdown fences): {"type":"tool_calls","calls":[{"name":"<exact tool.name from tools>","arguments":{...}}]}. When all tool steps are complete and you are ready to answer, output ONLY raw JSON: {"type":"message","text":"<your final response>"}.',
+  rule:'You have NO native or MCP tools on this transport. Output exactly one valid JSON value matching outputSchema, without preamble, Markdown fences or trailing text. Select only declared tools. Follow the selected tool parameters and the node responseSchema from its result. Serialize strings with JSON escaping and balance all object/array delimiters; never append another envelope or extra closing delimiters. Use the message variant only after all requested tool steps are complete.',
+  outputSchema:{oneOf:[
+   {type:'object',properties:{type:{const:'tool_calls'},calls:{type:'array',minItems:1,items:{oneOf:catalog.map(tool=>({type:'object',properties:{name:{const:tool.name},arguments:tool.parameters},required:['name','arguments'],additionalProperties:false}))}}},required:['type','calls'],additionalProperties:false},
+   {type:'object',properties:{type:{const:'message'},text:{type:'string'}},required:['type','text'],additionalProperties:false}
+  ]},
  };
  const newline=prompt.indexOf('\n{');
  if(newline>=0){
@@ -274,6 +278,12 @@ export function formatInferencePrompt(prompt:string,tools:ProviderTool[]):string
 const copilotStartupNotice=/^(?:Info: (?:Disabled tools: [^\n{]*|Unknown tool name in the tool allowlist: "[^"]*")\s*)+/;
 const allowedCallKeys=new Set(['id','name','namespace','arguments','input']);
 
+/** Serialization rejection is distinct from authorization and schema failures. */
+export class InferenceEnvelopeJSONError extends Error {
+ readonly toolProposal:boolean;
+ constructor(toolProposal:boolean){super('Copilot 要求未授權或無效的工具提案：工具提案不是有效 JSON');this.toolProposal=toolProposal;}
+}
+
 /** Parse pure text inference output and validate any proposed tool calls against the declared catalog and JSON Schema. */
 export function parseInferenceCompletion(rawText:string,tools:ProviderTool[]):CopilotCompletion{
  if(!tools.length){
@@ -293,7 +303,10 @@ export function parseInferenceCompletion(rawText:string,tools:ProviderTool[]):Co
  const candidate=envelopeIndex>=0?unfenced.slice(envelopeIndex):(unfenced.startsWith('{')&&unfenced.endsWith('}')?unfenced:'');
  if(candidate||looksLikeEnvelope){
   let parsed:any;
-  try{parsed=JSON.parse(candidate||unfenced);}catch{parsed=undefined;}
+  try{parsed=JSON.parse(candidate||unfenced);}catch{
+   if(looksLikeEnvelope||envelopeIndex>=0)throw new InferenceEnvelopeJSONError(/\{\s*"type"\s*:\s*"tool_calls"/.test(candidate||unfenced));
+   parsed=undefined;
+  }
   if(!object(parsed)){
    if(looksLikeEnvelope||envelopeIndex>=0)throw Error('Copilot 要求未授權或無效的工具提案');
    return {text:rawText,calls:[]};
@@ -305,7 +318,8 @@ export function parseInferenceCompletion(rawText:string,tools:ProviderTool[]):Co
     if(!object(rawCall)||Object.keys(rawCall).some(k=>!allowedCallKeys.has(k)))throw Error('Copilot 要求未授權或無效的工具提案');
     const matched=matchDeclaredTool(rawCall,tools);
     const args=matched?.source?.type==='custom'&&rawCall?.arguments===undefined&&typeof rawCall?.input==='string'?{input:rawCall.input}:rawCall?.arguments;
-    if(!matched||!validateArgumentsAgainstSchema(args,matched.parameters))throw Error('Copilot 要求未授權或無效的工具提案');
+    if(!matched)throw Error('Copilot 要求未授權的工具');
+    if(!validateArgumentsAgainstSchema(args,matched.parameters))throw Error('Copilot 要求未授權或無效的工具提案：工具參數不符合契約');
     const explicitId=typeof rawCall.id==='string'&&rawCall.id?rawCall.id:undefined;
     if(explicitId&&declared.has(explicitId)){
      const known=declared.get(explicitId)!;

@@ -1,4 +1,5 @@
 import {assertDesignDecisionsResolved,parseDesignDecisions} from './design-decisions.mjs';
+import {workflowNodes,workflowReviewKinds} from './workflow-nodes.ts';
 import { readdir, readFile, mkdir, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,11 +12,11 @@ export const layout = Object.freeze({ specRoot: 'spec', testsRoot: 'tests', repo
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url));
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 export function featureKey(requirementId, featureId) { return `${id(requirementId, 'requirementId')}/${id(featureId, 'featureId')}`; }
-export const reviewKinds = Object.freeze(['gherkin','sd','tests']);
+export const reviewKinds = Object.freeze(workflowReviewKinds);
 export const defaultProfiles = Object.freeze(['chromium']);
 export function reviewStage(confirmed) {
   const pending=reviewKinds.find(kind=>!confirmed[kind]);
-  return pending?{gherkin:'GHERKIN',sd:'SD',tests:'TESTS'}[pending]:'IMPLEMENTATION';
+  return pending?workflowNodes.find(node=>node.review===pending).key:'IMPLEMENTATION';
 }
 async function directories(root, relative) {
   const directory = await safePath(root, relative);
@@ -40,7 +41,7 @@ export function validateConfiguration(value) {
   return config;
 }
 export const TOOLKIT_VERSION = '1.8.0';
-export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'git-core/source-files.mjs', 'git-core/vendor/ignore.cjs', 'git-core/vendor/ignore-LICENSE', 'git-core/progress.mjs', 'git-core/progress-store.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/design-decisions.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/workspace.mjs', 'spec-toolkit/source-checkpoint.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/tags.mjs', 'spec-toolkit/dependencies.mjs', 'spec-toolkit/cli.mjs']);
+export const TOOLKIT_FILES = Object.freeze(['contracts/index.mjs', 'contracts/schemas.mjs', 'git-core/index.mjs', 'git-core/source-files.mjs', 'git-core/vendor/ignore.cjs', 'git-core/vendor/ignore-LICENSE', 'git-core/progress.mjs', 'git-core/progress-store.mjs', 'spec-toolkit/index.mjs', 'spec-toolkit/workflow-nodes.ts', 'spec-toolkit/design-decisions.mjs', 'spec-toolkit/engine.mjs', 'spec-toolkit/workspace.mjs', 'spec-toolkit/source-checkpoint.mjs', 'spec-toolkit/reporter.mjs', 'spec-toolkit/tags.mjs', 'spec-toolkit/dependencies.mjs', 'spec-toolkit/cli.mjs']);
 export async function toolkitSnapshot(toolkitRoot) {
   const files = await Promise.all(TOOLKIT_FILES.map(async relative => ({ path: relative, content: await readFile(path.join(toolkitRoot, relative)) })));
   return { files, manifest: { schemaVersion: 1, version: TOOLKIT_VERSION, files: files.map(x => ({ path: x.path, sha256: digest(x.content) })) } };

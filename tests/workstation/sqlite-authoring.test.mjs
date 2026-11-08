@@ -22,24 +22,19 @@ async function scenario(t,{existing=false}={}) {
 }
 const input={reviewer:'Xing',projects:[]};
 async function createOfflineFeature(f,values) {
-  // Feature creation is the Git boundary; subsequent authoring is deliberately offline.
-  const remote=path.join(f.base,'unreachable.git');
-  await git.command(undefined,['init','--bare','--initial-branch','main',remote]);
-  const result=await f.job('workflow.create',values);
-  await rm(remote,{recursive:true,force:true});
-  return result;
+  return f.job('workflow.create',values);
 }
-test('settings defer the checkout and repeated offline saves preserve the creation checkpoint',async t=>{
+test('settings and repeated offline saves never acquire or create a Git checkout',async t=>{
   const f=await scenario(t);const setup=await f.job('repository.setup',input);assert.equal(setup.result.storage,'sqlite');assert.equal(await exists(f.root),false);
-  const created=await createOfflineFeature(f,{title:'可以離線儲存',acceptance:'重啟後仍保留',guided:true});assert.equal(created.result.storage,'sqlite');const checkpoint=await git.inspect(f.root);
+  const created=await createOfflineFeature(f,{title:'可以離線儲存',acceptance:'重啟後仍保留',guided:true});assert.equal(created.result.storage,'sqlite');const checkpoint=await exists(f.root);assert.equal(checkpoint,false);
   const file='spec/REQ-001/feature/feature.feature',before=await f.service.readFile('SPEC-sql',file);
   await f.job('workflow.draft',{requirementId:'REQ-001',featureId:'feature',title:'可以離線儲存',acceptance:'重啟後仍保留\n斷線也能編輯',expectedHash:before.sha256});
-  assert.deepEqual(await git.inspect(f.root),checkpoint);
+  assert.equal(await exists(f.root),checkpoint);
   const db=new DatabaseSync(path.join(f.home,'metadata.sqlite'),{readOnly:true});
   assert.match(db.prepare('SELECT content FROM authoring_files WHERE repository_id=? AND path=?').get('SPEC-sql',file).content,/斷線也能編輯/);db.close();
   await f.restart();assert.match((await f.service.readFile('SPEC-sql',file)).content,/斷線也能編輯/);
   assert.equal((await f.service.detail('SPEC-sql')).preferences.reviewer,'Xing');
-  assert.deepEqual(await git.inspect(f.root),checkpoint);
+  assert.equal(await exists(f.root),checkpoint);
 });
 test('failed synchronization does not invalidate saving or lose prior content',async t=>{
   const f=await scenario(t);await f.job('repository.setup',input);await createOfflineFeature(f,{title:'保留需求',acceptance:'不遺失',guided:true});
@@ -67,10 +62,10 @@ test('same-file stale saves fail with a content conflict, not Git errors; histor
   const db=new DatabaseSync(path.join(f.home,'metadata.sqlite'),{readOnly:true});assert.ok(db.prepare('SELECT count(*) n FROM authoring_history').get().n>=4);db.close();
 });
 test('human approvals persist in SQLite and do not need Git connectivity',async t=>{
-  const f=await scenario(t);await f.job('repository.setup',input);await createOfflineFeature(f,{title:'確認需求',acceptance:'成功',guided:true});const checkpoint=await git.inspect(f.root);
+  const f=await scenario(t);await f.job('repository.setup',input);await createOfflineFeature(f,{title:'確認需求',acceptance:'成功',guided:true});const checkpoint=await exists(f.root);assert.equal(checkpoint,false);
   const feature=(await f.service.detail('SPEC-sql')).spec.features[0];
   await f.job('workflow.review',{requirementId:feature.requirementId,featureId:feature.id,stage:'gherkin',expectedDigest:feature.review.hashes.gherkin});
-  await f.restart();assert.equal((await f.service.detail('SPEC-sql')).spec.features[0].review.stage,'SD');assert.deepEqual(await git.inspect(f.root),checkpoint);
+  await f.restart();assert.equal((await f.service.detail('SPEC-sql')).spec.features[0].review.stage,'SD');assert.equal(await exists(f.root),checkpoint);
 });
 test('save survives an unrelated running repository job',async t=>{
   const f=await scenario(t);await f.job('repository.setup',input);await createOfflineFeature(f,{title:'不被同步阻擋',acceptance:'儲存成功',guided:true});

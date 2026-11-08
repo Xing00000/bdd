@@ -194,6 +194,34 @@ test('tool-enabled inference succeeds without HTTP MCP capability because Copilo
  assert.equal(created.length,1);assert.deepEqual(created[0].params.mcpServers,[]);
 });
 
+test('malformed tool JSON is rejected and replaced in the same isolated ACP session before handoff',async t=>{
+ const submit={name:'workbench_submit_node',namespace:'mcp__workbench',description:'Submit a node response',parameters:{type:'object',properties:{key:{type:'string'},response:{type:'object',additionalProperties:true}},required:['key','response'],additionalProperties:false}};
+ const args={key:'version-bound-key',response:{description:'需求標題\n保留完整原文。',gherkin:'Feature: 顯示名稱\n  Scenario: 已登入\n    Given 已登入\n    When 開啟帳戶\n    Then 顯示名稱'}};
+ const valid=JSON.stringify({type:'tool_calls',calls:[{name:submit.name,arguments:args}]}),deltas:string[]=[];
+ const f=await fixture(t,{responseTexts:[valid+'}',valid+']',valid]});
+ const result=await f.runtime.completion(f.settings,'Submit the previously read node response',signal(),[submit],delta=>deltas.push(delta));
+ assert.equal(result.calls.length,1);assert.deepEqual(result.calls[0].arguments,args);assert.deepEqual(result.validation,{rejectedProposals:2});assert.deepEqual(deltas,[]);
+ const trace=await f.trace(),prompts=trace.filter(event=>event.method==='session/prompt');
+ assert.equal(prompts.length,3);assert.equal(new Set(prompts.map(event=>event.params.sessionId)).size,1);
+ assert.match(prompts[1].params.prompt[0].text,/Validation rejected tool proposal 1/);assert.match(prompts[2].params.prompt[0].text,/Validation rejected tool proposal 2/);
+ assert.equal(trace.filter(event=>event.method==='session/new').length,1);assert.equal(trace.filter(event=>event.method==='session/close').length,1);
+ assert(!trace.some(event=>event.type==='mcp'));assert.deepEqual(trace.find(event=>event.method==='session/new').params.mcpServers,[]);
+});
+
+test('repeated malformed tool proposals exhaust the original timeout and report the rejected count',async t=>{
+ const malformed=JSON.stringify({type:'tool_calls',calls:[{name:tool.name,arguments:{}}]})+'}';
+ const f=await fixture(t,{responseText:malformed});await f.runtime.models(f.settings,signal());
+ await assert.rejects(f.runtime.completion({...f.settings,timeoutMs:150},'Repeated serialization rejection',signal(),[tool]),/JSON 工具提案驗證未完成（已拒絕 [1-9][0-9]* 次提案；請求已取消或逾時）/);
+ const trace=await f.trace(),prompts=trace.filter(event=>event.method==='session/prompt');
+ assert(prompts.length>1);assert.equal(new Set(prompts.map(event=>event.params.sessionId)).size,1);assert.equal(trace.filter(event=>event.method==='session/close').length,2);
+});
+
+test('authorization failures are terminal and never enter serialization correction',async t=>{
+ const f=await fixture(t,{responseTexts:[JSON.stringify({type:'tool_calls',calls:[{name:'shell',arguments:{}}]}),JSON.stringify({type:'tool_calls',calls:[{name:tool.name,arguments:{}}]})]});
+ await assert.rejects(f.runtime.completion(f.settings,'Reject undeclared proposal',signal(),[tool]),/未授權的工具/);
+ assert.equal((await f.trace()).filter(event=>event.method==='session/prompt').length,1);
+});
+
 test('persisted CLI and permission overrides fail before spawning instead of falling back from ACP',async t=>{
  const f=await fixture(t);
  for(const arg of ['--headless','-p','-phello','--prompt=hello','--allow-all','--yolo','--available-tools=*','--additional-mcp-config={}','--model=uncontrolled','--']){

@@ -49,15 +49,14 @@ test('binding, settings, ordinary edits, reads and materialization never spawn G
     await context.service.detail('SPEC-flow');
     assert.equal(await exists(context.root), false);
     assert.equal((await dispatch(context.service, { method: 'GET', url: '/health', headers: {} })).body.status, 'ok');
-    await assert.rejects(context.operation('repository.prepare'), { code: 'FEATURE_INITIALIZATION_REQUIRED' });
+    await context.operation('repository.prepare');assert.equal(await exists(path.join(context.root,'.git')),false);
   });
   const { service, operation, root } = context;
-  await operation('workflow.create', { requirementId: 'REQ-001', featureId: 'login', title: 'Login', guided: true, projectIds: ['product'] });
-  const createdHead = await git.resolve(root), productHead = await git.resolve(path.join(root, 'projects/product'));
+  await trapGit(f.base,()=>operation('workflow.create', { requirementId: 'REQ-001', featureId: 'login', title: 'Login', guided: true, projectIds: ['product'] }));
   await trapGit(f.base, async () => {
     const relative = 'spec/REQ-001/login/login.sd.md', before = await service.readFile('SPEC-flow', relative);
     await operation('repository.save', { kind: 'source', path: relative, expectedHash: before.sha256, content: '# Updated design\n' });
-    await operation('repository.save', { kind: 'project', projectId: 'product', path: 'message.txt', expectedHash: digest('before\n'), content: 'draft product\n' });
+    await operation('repository.save', { kind: 'project', projectId: 'product', path: 'message.txt', expectedHash: null, content: 'draft product\n' });
     await operation('repository.prepare');
     const feature = (await service.detail('SPEC-flow')).spec.features[0];
     await operation('workflow.review', { requirementId: 'REQ-001', featureId: 'login', stage: 'gherkin', expectedDigest: feature.review.hashes.gherkin });
@@ -65,47 +64,37 @@ test('binding, settings, ordinary edits, reads and materialization never spawn G
     await service.projectFiles('SPEC-flow', 'product'); await service.readProjectFile('SPEC-flow', 'product', 'message.txt');
     await assert.rejects(operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
   });
-  assert.equal(await git.resolve(root), createdHead);
-  assert.equal(await git.resolve(path.join(root, 'projects/product')), productHead);
+  assert.equal(await exists(path.join(root,'.git')),false);
+  assert.equal(await exists(path.join(root,'projects/product/.git')),false);
   assert.equal(await readFile(path.join(root, 'projects/product/message.txt'), 'utf8'), 'draft product\n');
 });
 
-test('first creation preserves composer text before acquisition and allocates IDs after importing the remote', async t => {
+test('first creation saves complete source without acquiring an unavailable Git remote',async t=>{
   const f=await fixture(t),context=await workstation(t,f,f.remote);
   await context.operation('repository.setup',{reviewer:'Human',projects:[]});
-  const input={editorKey:'new-offline-draft',expectedToken:null,description:'保留完整需求\r\n第二行',gherkin:'Feature: Offline draft\n  Scenario: saved\n    Then it remains available\n',projectIds:[]};
-  const request={schemaVersion:1,operationId:'OP-offline-create',repositoryId:'SPEC-flow',operation:'workflow.requirement.save',input};
-  await assert.rejects(executeOperation(context.options,context.store,request),error=>{
-    assert.equal(error.details.saved,true);assert.equal(error.details.storage,'sqlite');assert.equal(error.details.creationPending,true);assert.equal(error.details.editorKey,input.editorKey);return true;
+  const input={editorKey:'new-offline-draft',expectedToken:null,description:'Original source\r\nSecond line',gherkin:'Feature: Offline draft\n  Scenario: saved\n    Then it remains available\n',projectIds:[]};
+  const created=await trapGit(f.base,async()=>{
+    const result=await context.operation('workflow.requirement.save',input);
+    assert.equal(result.saved,true);assert.equal(result.key,'REQ-001/feature');
+    const value=await context.service.requirement('SPEC-flow',result.requirementId,result.featureId);
+    assert.equal(value.description,input.description);assert.equal(value.gherkin,input.gherkin);
+    assert.equal(await exists(context.root),false);
   });
-  const reopened=openStore(f.home);t.after(()=>reopened.close());
-  const proposals=reopened.requirementProposals('SPEC-flow',input.editorKey);
-  assert.equal(proposals.length,1);assert.equal(proposals[0].description,input.description);assert.equal(proposals[0].generatedGherkin,input.gherkin);
-  assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,0);
-  await specRepository(f.remote);
-  const created=await executeOperation(context.options,context.store,request);
-  assert.equal(created.requirementId,'REQ-002');assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,2);
-  assert.equal(context.store.requirementProposals('SPEC-flow',created.key).length,1);
+  assert.deepEqual(created,[]);
 });
 
-test('a failed creation checkpoint retries the same editor feature without duplicate IDs or intermediate Git', async t => {
-  const f=await fixture(t);await git.command(undefined,['init','--bare','--initial-branch','main',f.remote]);
-  const context=await workstation(t,f,f.remote);await context.operation('repository.setup',{reviewer:'Human',projects:[]});await context.operation('repository.acquire');
-  const input={editorKey:'new-checkpoint-retry',expectedToken:null,description:'First source',gherkin:'Feature: Retry creation\n  Scenario: create once\n    Then exactly one feature exists\n',projectIds:[]};
-  let key;
+test('creation retries return the same database feature and changed content requires ordinary editing',async t=>{
+  const f=await fixture(t),context=await workstation(t,f,f.remote);
+  await context.operation('repository.setup',{reviewer:'Human',projects:[]});
+  const input={editorKey:'new-create-retry',expectedToken:null,description:'First source',gherkin:'Feature: Retry creation\n  Scenario: create once\n    Then exactly one feature exists\n',projectIds:[]};
   await trapGit(f.base,async()=>{
-    await assert.rejects(context.operation('workflow.requirement.save',input),error=>{
-      assert.equal(error.details.saved,true);assert.equal(error.details.featureCreated,true);assert.equal(error.details.creationPending,true);key=error.details.key;return true;
-    });
+    const created=await context.operation('workflow.requirement.save',input);
+    assert.equal((await context.operation('workflow.requirement.save',input)).key,created.key);
+    await assert.rejects(context.operation('workflow.requirement.save',{...input,description:'Use existing editor'}),{code:'CREATION_ALREADY_EXISTS'});
     assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,1);
-  },{expectCalls:true});
-  const revised={...input,description:'Revised source while initialization was pending'};
-  const created=await context.operation('workflow.requirement.save',revised);assert.equal(created.key,key);
-  assert.equal((await context.service.detail('SPEC-flow')).spec.features.length,1);
-  assert.equal((await context.service.requirement('SPEC-flow',created.requirementId,created.featureId)).description,revised.description);
-  await trapGit(f.base,async()=>{
-    assert.equal((await context.operation('workflow.requirement.save',revised)).key,key);
-    await assert.rejects(context.operation('workflow.requirement.save',{...revised,description:'Requires ordinary editing'}),{code:'CREATION_ALREADY_EXISTS'});
+    const current=await context.service.requirement('SPEC-flow',created.requirementId,created.featureId);
+    await context.operation('workflow.requirement.save',{requirementId:created.requirementId,featureId:created.featureId,expectedToken:current.token,description:'Revised source',gherkin:input.gherkin});
+    assert.equal((await context.service.requirement('SPEC-flow',created.requirementId,created.featureId)).description,'Revised source');
   });
 });
 
@@ -149,42 +138,34 @@ async function acceptanceContext(t) {
   context.store.recordRun('SPEC-flow', report, 'SEALED');
   return { ...f, ...context, input: { ...ids, runId: plan.runId, expectedManifestDigest: identity(report) }, report };
 }
-test('a failed acceptance checkpoint remains retryable without duplicating the human decision', async t => {
-  const f = await acceptanceContext(t);
-  const calls = await trapGit(f.base, async () => {
-    await assert.rejects(f.operation('workflow.accept', f.input));
-    assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status, 'ACCEPTANCE_PENDING');
-    await assert.rejects(f.operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
-  }, { expectCalls: true });
-  assert.ok(calls.length > 0, 'Git is attempted at the human acceptance boundary');
-  const before = JSON.parse((await f.service.readFile('SPEC-flow', 'spec/REQ-001/login/acceptance.json')).content); assert.equal(before.items.length, 1);
-  const accepted = await f.operation('workflow.accept', f.input); assert.equal(accepted.status, 'COMPLETE');
-  const after = JSON.parse((await f.service.readFile('SPEC-flow', 'spec/REQ-001/login/acceptance.json')).content); assert.deepEqual(after, before);
-  assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status, 'COMPLETE'); assert.equal(f.store.projection('SPEC-flow').checkpointKind, 'ACCEPTED');
+test('human acceptance persists without Git and explicit sync failure cannot undo the decision',async t=>{
+  const f=await acceptanceContext(t);
+  await trapGit(f.base,async()=>{assert.equal((await f.operation('workflow.accept',f.input)).status,'COMPLETE');});
+  const before=JSON.parse((await f.service.readFile('SPEC-flow','spec/REQ-001/login/acceptance.json')).content);assert.equal(before.items.length,1);
+  await trapGit(f.base,async()=>{await assert.rejects(f.operation('repository.sync'));},{expectCalls:true});
+  assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status,'COMPLETE');
+  await assert.rejects(f.operation('workflow.accept',f.input),{code:'ACCEPTANCE_NOT_READY'});
+  assert.deepEqual(JSON.parse((await f.service.readFile('SPEC-flow','spec/REQ-001/login/acceptance.json')).content),before);
 });
-test('publication failure cannot expose a partial acceptance as complete or synchronizable', async t => {
-  const f = await acceptanceContext(t);
-  await trapGit(f.base, async () => {
-    await assert.rejects(f.operation('workflow.accept', f.input));
-    assert.equal(f.store.projection('SPEC-flow').checkpointRevision, f.store.draft('SPEC-flow').revision);
-    assert.equal(f.store.projection('SPEC-flow').checkpointKind, 'ACCEPTANCE_PENDING');
-    assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status, 'ACCEPTANCE_PENDING');
-    await assert.rejects(f.operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
-  }, { failPublication: true, expectCalls: true });
-  assert.equal((await f.operation('workflow.accept', f.input)).status, 'COMPLETE');
-  assert.equal(JSON.parse((await f.service.readFile('SPEC-flow', 'spec/REQ-001/login/acceptance.json')).content).items.length, 1);
+
+test('publication failure is an explicit synchronization failure, not an invalid database acceptance',async t=>{
+  const f=await acceptanceContext(t);assert.equal((await f.operation('workflow.accept',f.input)).status,'COMPLETE');
+  await trapGit(f.base,async()=>{await assert.rejects(f.operation('repository.sync'));},{failPublication:true,expectCalls:true});
+  assert.equal((await f.service.workflow('SPEC-flow')).workflows[0].status,'COMPLETE');
+  assert.equal(JSON.parse((await f.service.readFile('SPEC-flow','spec/REQ-001/login/acceptance.json')).content).items.length,1);
 });
-test('a concurrent SQLite edit is preserved and cannot be certified by an older acceptance checkpoint', async t => {
-  const f = await acceptanceContext(t), original = f.store.completeAcceptanceCheckpoint;
-  const relative = 'spec/REQ-001/login/login.feature';
-  f.store.completeAcceptanceCheckpoint = function(repositoryId, expectedRevision, acceptanceId) {
-    const current = this.draft(repositoryId), file = current.files.find(file => file.path === relative);
-    this.saveDraft(repositoryId, { expectedRevision: current.revision, operationId: 'OP-concurrent', request: { concurrent: true }, files: [{ ...file, content: file.content + '\n# concurrent human draft\n' }], result: {} });
-    return original.call(this, repositoryId, expectedRevision, acceptanceId);
+
+test('a concurrent SQLite edit is preserved and cannot be certified by an older synchronization checkpoint',async t=>{
+  const f=await acceptanceContext(t);await f.operation('workflow.accept',f.input);
+  const original=f.store.completeAcceptanceCheckpoint,relative='spec/REQ-001/login/login.feature';
+  f.store.completeAcceptanceCheckpoint=function(repositoryId,revision,acceptanceId){
+    const current=this.draft(repositoryId),file=current.files.find(file=>file.path===relative);
+    this.saveDraft(repositoryId,{expectedRevision:current.revision,operationId:'OP-concurrent',request:{concurrent:true},files:[{...file,content:file.content+'\n# concurrent human draft\n'}]});
+    return original.call(this,repositoryId,revision,acceptanceId);
   };
-  await assert.rejects(f.operation('workflow.accept', f.input), { code: 'CONTENT_CHANGED' });
-  assert.match((await f.service.readFile('SPEC-flow', relative)).content, /concurrent human draft/);
-  assert.doesNotMatch((await git.command(f.root, ['show', `HEAD:${relative}`])).stdout, /concurrent human draft/);
-  assert.notEqual((await f.service.workflow('SPEC-flow')).workflows[0].status, 'COMPLETE');
-  await assert.rejects(f.operation('repository.sync'), { code: 'ACCEPTANCE_CHECKPOINT_REQUIRED' });
+  await assert.rejects(f.operation('repository.sync'),{code:'CONTENT_CHANGED'});
+  assert.match((await f.service.readFile('SPEC-flow',relative)).content,/concurrent human draft/);
+  assert.doesNotMatch((await git.command(f.root,['show',`HEAD:${relative}`])).stdout,/concurrent human draft/);
+  assert.notEqual((await f.service.workflow('SPEC-flow')).workflows[0].status,'COMPLETE');
+  await assert.rejects(f.operation('repository.sync'),{code:'ACCEPTANCE_CHECKPOINT_REQUIRED'});
 });

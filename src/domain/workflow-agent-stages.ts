@@ -1,15 +1,11 @@
-export const workflowAgentStages = [
-  { key: 'GHERKIN', label: '需求確認' },
-  { key: 'SD', label: '系統設計' },
-  { key: 'TESTS', label: '測試情境' },
-  { key: 'IMPLEMENTATION', label: '程式開發' },
-] as const;
+import {workflowNodes} from './workflow-nodes.ts';
+export const workflowAgentStages = workflowNodes.filter(node => node.key !== 'VERIFICATION');
 
 export type WorkflowAgentStage = typeof workflowAgentStages[number]['key'];
 export const workflowAgentStageKeys = workflowAgentStages.map(stage => stage.key);
 export const interactiveWorkflowStages = ['GHERKIN', 'IMPLEMENTATION'] as const satisfies readonly WorkflowAgentStage[];
 
-export const workflowStageOrder = [...workflowAgentStages.map(stage => stage.key), 'VERIFICATION', 'VERIFIED'] as const;
+export const workflowStageOrder = [...workflowNodes.map(node => node.key), 'VERIFIED'] as const;
 export type WorkflowStage = typeof workflowStageOrder[number];
 
 export function isWorkflowAgentStage(value: unknown): value is WorkflowAgentStage {

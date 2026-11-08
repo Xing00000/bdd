@@ -1,8 +1,9 @@
-export function chatRoomsView({api,el,button,navigate,note,workspace=()=>({})}) {
+export function chatRoomsView({api,el,button,navigate,note,workspace=()=>({}),onNodeChanged}) {
   const $=selector=>document.querySelector(selector);
   const shell=$('.shell'),drawer=$('#assistant-drawer'),menuToggle=$('#assistant-menu-toggle'),rail=$('.assistant-rail'),roomsPanel=$('#assistant-rooms-panel'),roomsBackdrop=$('#assistant-rooms-backdrop'),roomsClose=$('#assistant-rooms-close'),roomsNode=$('#chat-room-list'),supervisorMenu=$('#assistant-supervisor-menu'),view=$('#chat-view'),sessionsView=$('#assistant-sessions-view');
   const drawerClose=$('#assistant-drawer-toggle'),drawerOpen=$('#assistant-drawer-open'),menuButtons=[...document.querySelectorAll('[data-assistant-nav]')];
   const drafts=new Map();let rooms=[],current=null,version=0,source,activePane='chat',roomsCollapsed=true,selectedMenu='workspace',settingsRequest=0;
+  const savedReceipts=new Map();
   const report=error=>note(error.message,true);
   const selectedMenuButton=()=>menuButtons.find(button=>button.dataset.assistantNav===selectedMenu);
   function setRoomsModalOpen(openState){
@@ -70,6 +71,14 @@ export function chatRoomsView({api,el,button,navigate,note,workspace=()=>({})}) 
           for(const room of rooms){const item=button(room.title,()=>{showPane('chat');void navigate(room.id);},'chat-room-link');item.dataset.testid='chat-room-'+room.id;item.setAttribute('aria-current',activePane==='chat'&&room.id===current?'page':'false');if(room.pending)item.append(el('span',' ●'));roomsNode.append(item);}
           if(!rooms.length)roomsNode.append(el('p','建立聊天室，開始對話。','muted'));
           if(value.room)renderMessages?.(value.room);
+          if(onNodeChanged){
+            for(const receipt of value.nodeChanges??[]){
+              if(savedReceipts.get(receipt.repositoryId)===receipt.operationId)continue;
+              savedReceipts.set(receipt.repositoryId,receipt.operationId);
+              if(receipt.createdAt&&Date.parse(receipt.createdAt)<performance.timeOrigin)continue;
+              Promise.resolve(onNodeChanged(receipt)).catch(error=>{if(savedReceipts.get(receipt.repositoryId)===receipt.operationId)savedReceipts.delete(receipt.repositoryId);report(error);});
+            }
+          }
         }else if(value.type==='delta'&&value.roomId===roomId)renderStreaming?.(value);
         else throw Error('未知的聊天串流事件');
       }catch(error){stream.close();if(source===stream)source=null;report(error);}

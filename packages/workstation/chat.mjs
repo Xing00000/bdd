@@ -19,7 +19,7 @@ export async function openChat(store,home,workstation){
  try{
   const runtime=await createCodexChatRuntime(path.join(home,'chat'),{...tools,home,supervisorScript},{prewarm:true});
   try{
-   chat=await createChatService(storage,runtime,defaultChatSettings());
+   chat=await createChatService(storage,runtime,defaultChatSettings(),{nodeChanges:()=>workstation.nodeChanges()});
    void chat.settings().then(config=>runtime.warmup?.(config)).catch(()=>{});
   }catch(error){await runtime.close();throw error;}
  }catch(error){await tools.close();throw error;}

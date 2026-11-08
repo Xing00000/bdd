@@ -1,11 +1,12 @@
 import {agentOperations} from './agent-catalog.mjs';
+import {workflowNodeService,featureNodes,nodeId,workflowNodes} from './workflow-nodes.mjs';
 import {assertSdkAgentSnapshot} from './agent-task.mjs';
 import { validateLocation, managedLocation, checkRepositoryIdentity, remoteIdentity } from './locations.mjs';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { revisionOptions, versionCatalog, readVersionFile } from './catalog.mjs';
 import { draftDetail, readDraftFile, draftProjectFiles, ensureDraft, inDraftView } from './authoring.mjs';
-import { readComposer, generateRequirement, requirementText } from './requirements.mjs';
+import { readComposer, generateRequirement, requirementText, requirementDiagnostics, requirementSuggestions } from './requirements.mjs';
 import { importRequirementDocument } from './requirement-documents.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir, realpath } from 'node:fs/promises';
@@ -58,11 +59,23 @@ export async function createWorkstation(configuration) {
         store.finish(operationId, 'CANCELLED', undefined, { code: 'OPERATION_CANCELLED', message: 'Worker stopped; inspect partial Git changes before retrying' });
       else if (current && ['QUEUED', 'RUNNING'].includes(current.status))
         store.finish(operationId, 'INTERRUPTED', undefined, { code: 'WORKER_INTERRUPTED', message: stderr || 'Worker exited without a completion receipt; inspect before retrying' });
+      const completed=store.get(operationId);
+      if(completed&&!closing&&chatService){
+        const receipt=store.draftReceipt(completed.repository_id,operationId,completed.request);
+        const binding=completed.request.input.nodeKey?store.nodeKey(completed.request.input.nodeKey):null;
+        if(receipt||binding&&['IMPLEMENTATION','VERIFICATION'].includes(binding.stage))chatService.nodeChanged();
+      }
     });
   }
   for (const operationId of store.recover()) launch(operationId);
   const service = {
     options,
+    nodeDefinitions:workflowNodes,
+    nodeChanges(){return store.authoringChanges().map(change=>{
+      const binding=change.request.input.nodeKey?store.nodeKey(change.request.input.nodeKey):null;
+      return {repositoryId:change.repository_id,key:change.result.key??(binding?.featureKey!=='__new__'?binding?.featureKey:null)??null,
+        operationId:change.operation_id,revision:change.revision,createdAt:change.created_at,stage:binding?.stage,saved:true,error:change.error};
+    });},
     async chat(){
       invariant(!closing,'WORKSTATION_CLOSING','Workstation is closing',503);
       if(chatService)return chatService;
@@ -142,7 +155,14 @@ export async function createWorkstation(configuration) {
       return recordInteraction(repositoryId,'interaction.requirement.generate',input,()=>{
       invariant(typeof input.editorKey==='string'&&/^(?:new-[A-Za-z0-9-]+|[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)$/.test(input.editorKey)&&input.editorKey.length<=180,'INVALID_EDITOR','需求編輯識別無效。');
       requirementText(input.previousGherkin??'','Gherkin');
-      const generated=generateRequirement(input.description);
+      requirementText(input.description,'需求描述',{empty:false});
+      let generated;
+      if(input.gherkin!==undefined){
+        requirementText(input.gherkin,'Gherkin',{empty:false});
+        const diagnostics=requirementDiagnostics(input.gherkin);
+        invariant(!diagnostics.length,'INVALID_GHERKIN','提供的 Gherkin 結構不完整。');
+        generated={gherkin:input.gherkin,diagnostics,suggestions:requirementSuggestions(input.gherkin),method:'supplied-gherkin',draft:true};
+      }else generated=generateRequirement(input.description);
       const receipt=store.saveRequirementProposal(repositoryId,{...input,previousGherkin:input.previousGherkin??'',gherkin:generated.gherkin});
       return {...generated,...receipt};
       });
@@ -168,15 +188,17 @@ export async function createWorkstation(configuration) {
     list() { return store.repositories().map(r=>({...r,localPath:r.localPath??managedLocation(options.home,r.id),connection:store.connection(r.id)})); },
     register(input) {
       const repositoryId = id(input.id ?? `SPEC-${randomUUID()}`);
-      remoteUrl(input.remoteUrl, options);
-      invariant(!store.repositories().some(r => remoteIdentity(r.remoteUrl) === remoteIdentity(input.remoteUrl)), 'REPOSITORY_ALREADY_BOUND', '這個規格庫已綁定，請從導覽選單開啟；本地目錄可在設定修改。', 409);
+      invariant(input.remoteUrl==null||typeof input.remoteUrl==='string','INVALID_REMOTE','Git 網址必須是文字。');
+      const remote=input.remoteUrl?.trim()||null;
+      if(remote)remoteUrl(remote,options);
+      invariant(!remote||!store.repositories().some(r => r.remoteUrl&&remoteIdentity(r.remoteUrl) === remoteIdentity(remote)), 'REPOSITORY_ALREADY_BOUND', '這個規格庫已綁定，請從導覽選單開啟；本地目錄可在設定修改。', 409);
       if (input.branch) branchName(input.branch);
       invariant(typeof input.title === 'string' && input.title.trim() && input.title.length <= 200, 'INVALID_TITLE', 'Repository title is required');
       const selected=validateLocation(options,repositoryId,input.localPath,store.repositories());
-      const record=store.register({ ...input, id: repositoryId,localPath:input.localPath?.trim()?selected:null });
+      const record=store.register({ ...input,remoteUrl:remote, id: repositoryId,localPath:input.localPath?.trim()?selected:null });
       mkdirSync(path.join(options.home,'repositories',repositoryId),{recursive:true,mode:0o700});
       mkdirSync(path.dirname(selected),{recursive:true,mode:0o700});
-      if(options.autoAcquire) {
+      if(options.autoAcquire&&remote) {
         const operationId=`OP-${randomUUID()}`;
         store.setConnection(repositoryId,{status:'QUEUED',operationId,localPath:selected});
         store.enqueue({schemaVersion:1,operationId,repositoryId,operation:'repository.acquire',input:{}});launch(operationId);
@@ -201,7 +223,8 @@ export async function createWorkstation(configuration) {
         feature.verification={status:feature.workflow.verification,...(feature.workflow.latestReport?{runId:feature.workflow.latestReport.runId,testedSpecCommit:feature.workflow.latestReport.testedSpecCommit}:{})};
         feature.review.stage=feature.workflow.stage;
       }
-      return { ...detail, localPath:context.root, connection:store.connection(repositoryId), regressions:store.regressions(repositoryId), settingsToken: identity(detail.preferences ?? store.preferences(repositoryId)), preferences: detail.preferences ?? store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
+      for(const feature of detail.spec?.features??[])feature.nodes=featureNodes(repositoryId,feature.key);
+      return { ...detail, creationNodeId:nodeId(repositoryId,'__new__','GHERKIN'),localPath:context.root, connection:store.connection(repositoryId), regressions:store.regressions(repositoryId), settingsToken: identity(detail.preferences ?? store.preferences(repositoryId)), preferences: detail.preferences ?? store.preferences(repositoryId), sync: store.syncReceipt(repositoryId), runs, reports, transactions: await listTransactions(options.home, repositoryId), operations: store.operations(repositoryId) };
     },
     async workflow(repositoryId, selection) {
       store.repository(id(repositoryId));
@@ -301,5 +324,6 @@ export async function createWorkstation(configuration) {
       } finally { store.close(); }
     }
   };
+  Object.assign(service,workflowNodeService(service,store));
   return service;
 }

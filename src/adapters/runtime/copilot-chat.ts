@@ -2,7 +2,7 @@ import type {ChatModel,ChatSettings} from '../../ports/chat.ts';
 import {automaticChatModel,chatLimits} from '../../domain/chat.ts';
 import {createCopilotConnection,asError,copilotCancelled,validateCopilotArgs,validateKiroArgs} from './copilot-rpc.ts';
 import {modelConfigOption,parseCopilotModels} from './copilot-models.ts';
-import {workstationNamespace,agentSupervisorNamespace,codexProposalNamespace,formatInferencePrompt,parseInferenceCompletion,type ProviderTool,type CopilotTool,type CopilotCompletion} from './chat-tool-protocol.ts';
+import {workstationNamespace,agentSupervisorNamespace,codexProposalNamespace,formatInferencePrompt,parseInferenceCompletion,InferenceEnvelopeJSONError,type ProviderTool,type CopilotTool,type CopilotCompletion} from './chat-tool-protocol.ts';
 
 interface RuntimeOptions {idleMs?:number;startupTimeoutMs?:number;cleanupTimeoutMs?:number;toolPolicy?:'workstation'|'codex';prewarm?:boolean}
 type Collector=ReturnType<typeof collectCompletion>;
@@ -161,27 +161,44 @@ export function createCopilotRuntime(cwd:string,options:RuntimeOptions={}){
    return run(settings,signal,async(server,current,snapshot)=>{
     let sessionId:string|undefined,running=false,settled=false,cancelled=false;
     const cancel=()=>{if(running&&!settled&&!cancelled&&server.connection.usable&&sessionId){cancelled=true;server.connection.notify('session/cancel',{sessionId});}};
-    const collector=collectCompletion(declared,onDelta,cancel);
     return await session(server,current,snapshot,async created=>{
-     sessionId=created.sessionId;server.sessions.set(sessionId!,collector);
+     sessionId=created.sessionId;
      await selectModel(server.connection,created,snapshot.model,current,snapshot.timeoutMs);
-     if(current.aborted)throw copilotCancelled();
-     const pending=server.connection.rpc('session/prompt',{sessionId,prompt:[{type:'text',text:formattedPrompt}]},undefined,snapshot.timeoutMs+cleanupMs);
-     running=true;void pending.then(()=>{settled=true;},()=>{settled=true;});
-     try{
-      const response=await cancellable(pending,current);
-      if(collector.failure)throw collector.failure;
-      if(response?.stopReason!=='end_turn')throw Error(response?.stopReason==='cancelled'?'Copilot 請求已取消或逾時':`Copilot ACP 回覆未完成（${String(response?.stopReason)}）`);
-      if(current.aborted)throw copilotCancelled();
-      return collector.finish();
-     }catch(reason){
-      const error=collector.failure??asError(reason);cancel();
-      if(!settled&&server.connection.usable){
-       try{await bounded(pending,cleanupMs,'session/prompt 取消後未完成');}
-       catch(cleanup){server.connection.fail(asError(cleanup));await retire(server);}
-      }
-      throw error;
-     }finally{running=false;}
+     let nextPrompt=formattedPrompt,lastSerializationError:InferenceEnvelopeJSONError|undefined,rejectedProposals=0;
+     const cancelledValidation=()=>lastSerializationError?new Error(`Copilot JSON 工具提案驗證未完成（已拒絕 ${rejectedProposals} 次提案；請求已取消或逾時）`,{cause:lastSerializationError}):copilotCancelled();
+     // ACP has no constrained decoder on this zero-tool transport. A rejected
+     // serialization is feedback to the model, never repaired or executed here.
+     // Every validation turn shares run()'s original timeout/cancellation budget.
+     while(true){
+      if(current.aborted)throw cancelledValidation();
+      const collector=collectCompletion(declared,onDelta,cancel);
+      server.sessions.set(sessionId!,collector);settled=false;cancelled=false;
+      const pending=server.connection.rpc('session/prompt',{sessionId,prompt:[{type:'text',text:nextPrompt}]},undefined,snapshot.timeoutMs+cleanupMs);
+      running=true;void pending.then(()=>{settled=true;},()=>{settled=true;});
+      try{
+       const response=await cancellable(pending,current);
+       if(collector.failure)throw collector.failure;
+       if(response?.stopReason!=='end_turn')throw Error(response?.stopReason==='cancelled'?'Copilot 請求已取消或逾時':`Copilot ACP 回覆未完成（${String(response?.stopReason)}）`);
+       if(current.aborted)throw copilotCancelled();
+       try{
+        const result=collector.finish();
+        return rejectedProposals?{...result,validation:{rejectedProposals}}:result;
+       }
+       catch(error){
+        if(!(error instanceof InferenceEnvelopeJSONError)||!error.toolProposal||collector.hasStreamedText)throw error;
+        lastSerializationError=error;
+        rejectedProposals++;
+        nextPrompt=`Validation rejected tool proposal ${rejectedProposals}: it is not valid JSON. No proposed call was executed. Return a complete replacement matching responseContract.outputSchema and the declared tool parameter schemas. Preserve the intended arguments, serialize strings using JSON escaping, and emit exactly one JSON object with balanced delimiters and no trailing text. You still have no native or MCP tools.`;
+       }
+      }catch(reason){
+       const error=collector.failure??(current.aborted?cancelledValidation():asError(reason));cancel();
+       if(!settled&&server.connection.usable){
+        try{await bounded(pending,cleanupMs,'session/prompt 取消後未完成');}
+        catch(cleanup){server.connection.fail(asError(cleanup));await retire(server);}
+       }
+       throw error;
+      }finally{running=false;}
+     }
     });
    });
   },
@@ -252,7 +269,7 @@ function extractStreamingMessageText(raw:string):string|undefined{
 function collectCompletion(tools:ProviderTool[],onDelta:((delta:string)=>void)|undefined,onCancel:()=>void){
  let text='',bytes=0,streamed='',failure:Error|undefined,finished=false;
  const fail=(error:Error)=>{if(failure||finished)return;failure=error;onCancel();};
- return {fail,get failure(){return failure;},
+ return {fail,get failure(){return failure;},get hasStreamedText(){return streamed.length>0;},
   finish(){
    if(failure)throw failure;
    const result=parseInferenceCompletion(text,tools);
@@ -270,7 +287,7 @@ function collectCompletion(tools:ProviderTool[],onDelta:((delta:string)=>void)|u
    try{
     if(update.sessionUpdate==='agent_message_chunk'){
      if(update.content?.type!=='text'||typeof update.content.text!=='string')throw Error('Copilot ACP 文字增量格式錯誤');
-     if(tools.length&&!text&&copilotNoticeChunk.test(update.content.text))return;
+     if(!text&&copilotNoticeChunk.test(update.content.text))return;
      bytes+=Buffer.byteLength(update.content.text);if(bytes>chatLimits.providerRequest)throw Error('Copilot 回覆超過大小限制');
      text+=update.content.text;
      if(!tools.length){

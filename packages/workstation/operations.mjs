@@ -60,6 +60,15 @@ export async function executeOperation(options, store, request) {
   const { home, toolkitRoot, allowLocal = false, hosts = ['github.com'], enableExecution = false } = options;
   const workspace = store.repository(request.repositoryId), root = await repositoryPath(home, workspace.id, store);
   const git = createGit({ allowLocal, hosts }), input = request.input;
+  if(input.nodeKey){
+    const binding=store.nodeKey(input.nodeKey),saved=store.draftReceipt(request.repositoryId,request.operationId,request);
+    invariant(binding.repositoryId===request.repositoryId&&binding.operationId===request.operationId,'NODE_KEY_MISMATCH','提交 key 與操作不符。',409);
+    invariant(saved||store.draft(request.repositoryId)?.revision===binding.revision,'NODE_REVISION_CHANGED','node 內容已變更，操作未執行。',409);
+  }
+  if(input.expectedRevision!==undefined){
+    const saved=store.draftReceipt(request.repositoryId,request.operationId,request);
+    invariant(saved||store.draft(request.repositoryId)?.revision===input.expectedRevision,'DRAFT_REVISION_CHANGED','內容已變更，操作未執行。',409);
+  }
   if(request.operation==='repository.upgrade.preview') {
     const {ensureDraft,inDraftView}=await import('./authoring.mjs');
     const snapshot=await ensureDraft({root,options,store,repositoryId:request.repositoryId});
@@ -91,60 +100,14 @@ export async function executeOperation(options, store, request) {
   if (flowNames.includes(request.operation)) {
     const context = { root, options, store, request, git };
     const createsFeature = request.operation === 'workflow.create' || request.operation === 'workflow.requirement.save' && !input.requirementId && !input.featureId;
-    if (createsFeature || request.operation === 'workflow.accept') {
-      const creationEditorKey=createsFeature?(input.editorKey??(input.requirementId&&input.featureId?`feature:${input.requirementId}/${input.featureId}`:null)):null;
-      const pendingCreation=creationEditorKey?store.creationReceipt(request.repositoryId,creationEditorKey):null;
-      if(pendingCreation&&store.projection(request.repositoryId)?.checkpointRevision>=pendingCreation.revision) {
-        invariant(pendingCreation.creationInputDigest===identity(input),'CREATION_ALREADY_EXISTS','此編輯草稿已建立功能；請開啟原功能繼續編輯。',409);
-        const checkpoint=store.projection(request.repositoryId);
-        return {...pendingCreation,checkpoint:{revision:checkpoint.checkpointRevision,head:checkpoint.head},creationRetry:true};
+    if(createsFeature){
+      const creationEditorKey=input.editorKey??(input.requirementId&&input.featureId?`feature:${input.requirementId}/${input.featureId}`:null);
+      const previous=creationEditorKey?store.creationReceipt(request.repositoryId,creationEditorKey):null;
+      if(previous){
+        invariant(previous.creationInputDigest===identity(input),'CREATION_ALREADY_EXISTS','This editor already created a feature; open the saved feature to continue.',409);
+        return previous;
       }
-      if (createsFeature && (store.connection(request.repositoryId)?.validatedPath !== root || !await exists(root))) {
-        const snapshot=await ensureDraft({...context,repositoryId:request.repositoryId});
-        invariant(snapshot.settings.configured,'SETUP_REQUIRED','請先儲存基本設定；不需要先連線遠端。');
-        // Save the unallocated creation input before importing remote IDs. Durable
-        // jobs already retain the complete request; composer text is also available
-        // through the existing proposal history when acquisition fails.
-        let saved=Boolean(store.get(request.operationId)), proposal;
-        if(request.operation==='workflow.requirement.save') {
-          const description=requirementText(input.description,'需求描述'),gherkin=requirementText(input.gherkin,'Gherkin');
-          invariant(description.trim()||gherkin.trim(),'EMPTY_REQUIREMENT','請先填寫需求描述或 Gherkin。');
-          invariant(input.expectedToken===null,'CONTENT_CHANGED','新需求尚未儲存，請重新讀取編輯畫面。',409);
-          const editorKey=input.editorKey??`new-${request.operationId}`;
-          invariant(/^new-[A-Za-z0-9-]+$/.test(editorKey)&&editorKey.length<=180,'INVALID_EDITOR','新需求編輯識別無效。');
-          proposal={editorKey,...store.saveRequirementProposal(request.repositoryId,{editorKey,description,previousGherkin:gherkin,gherkin,creationOperationId:request.operationId})};
-          saved=true;
-        }
-        try { await acquireRepository({ ...context, lifecycleBoundary: 'CREATE_FEATURE' }); }
-        catch(error) { error.details={...error.details,saved,...(saved?{storage:'sqlite',draftOperationId:request.operationId}:{}),creationPending:true,...proposal};throw error; }
-      }
-      let result;
-      if(pendingCreation&&request.operation==='workflow.create') {
-        invariant(pendingCreation.creationInputDigest===identity(input),'CREATION_ALREADY_EXISTS','此建立操作已有已儲存草稿；請以相同內容重試初始化，再開啟原功能編輯。',409);
-        result=pendingCreation;
-      } else {
-        const editingContext=pendingCreation?{...context,creationInput:{...input,requirementId:pendingCreation.requirementId,featureId:pendingCreation.featureId,expectedToken:pendingCreation.token}}:context;
-        result=await editDraft({...editingContext,...(creationEditorKey?{creationEditorKey,creationInputDigest:identity(input)}:{})});
-      }
-      try {
-      const acceptedRun = request.operation === 'workflow.accept' ? store.runs(request.repositoryId).find(run => run.id === input.runId && run.state === 'SEALED') : undefined;
-      const acceptedManifest = request.operation === 'workflow.accept' ? acceptedRun?.result ?? store.reports(request.repositoryId).find(report => report.runId === input.runId && report.requirementId === input.requirementId && report.featureId === input.featureId)?.manifest : undefined;
-      const snapshot = await checkpointProjection({ ...context, expectedRevision: result.revision, ...(request.operation === 'workflow.accept' ? { acceptance: result.acceptance, acceptedManifest } : {}) }), checkpoint = store.projection(request.repositoryId);
-      let publication;
-      if (request.operation === 'workflow.accept') {
-        if (acceptedRun) {
-          const planFile = await safePath(home, `executions/${id(input.runId)}/plan.json`), plan = await readJson(planFile);
-          if (plan.sourceKind === 'WORKSPACE') await writeJson(planFile, { ...plan, acceptedSpecCommit: checkpoint.head });
-          publication = await publishRun({ root, home, repositoryId: request.repositoryId, runId: input.runId, git, push: false });
-        }
-        store.completeAcceptanceCheckpoint(request.repositoryId, snapshot.revision, result.acceptance.id);
-      }
-      return { ...result, ...(request.operation === 'workflow.accept' ? { status: 'COMPLETE', nextStage: 'VERIFIED' } : {}), revision: snapshot.revision, checkpoint: { revision: checkpoint.checkpointRevision, head: checkpoint.head }, ...(publication ? { publication } : {}) };
-      } catch(error) {
-        if(createsFeature)error.details={...error.details,saved:true,storage:'sqlite',creationPending:true,featureCreated:true,key:result.key,
-          requirementId:result.requirementId??result.key?.split('/')[0],featureId:result.featureId??result.key?.split('/')[1],editorKey:input.editorKey,revision:result.revision};
-        throw error;
-      }
+      return editDraft({...context,...(creationEditorKey?{creationEditorKey,creationInputDigest:identity(input)}:{})});
     }
     if (localAuthoring(request)) {
       for(let attempt=0;;attempt++) {
@@ -163,8 +126,21 @@ export async function executeOperation(options, store, request) {
       invariant(enableExecution,'EXECUTION_DISABLED','內容已儲存；主機尚未啟用測試執行。',403);
     }
     if (request.operation === 'repository.sync') {
-      const checkpoint = store.projection(request.repositoryId), draft = store.draft(request.repositoryId);
-      invariant(checkpoint?.checkpointKind === 'ACCEPTED' && checkpoint.checkpointRevision === draft?.revision, 'ACCEPTANCE_CHECKPOINT_REQUIRED', '目前有尚未完成驗收的變更；請完成驗收後再同步。草稿已保留，未建立 Git 版本。', 409);
+      const status=await workflowStatus(context,input.requirementId&&input.featureId?`${input.requirementId}/${input.featureId}`:undefined);
+      const accepted=status.workflows.filter(workflow=>workflow.status==='COMPLETE');
+      invariant(accepted.length===1,'ACCEPTANCE_CHECKPOINT_REQUIRED','請選擇已完成人工驗收的功能再同步；資料庫內容已保留。',409);
+      const acceptance=accepted[0].acceptance;
+      const acceptedRun=store.runs(request.repositoryId).find(run=>run.id===acceptance.runId&&run.state==='SEALED');
+      const acceptedManifest=acceptedRun?.result??store.reports(request.repositoryId).find(report=>report.runId===acceptance.runId&&report.manifest&&identity(report.manifest)===acceptance.manifestDigest)?.manifest;
+      const checkpointRequest={...request,input:{...input,requirementId:accepted[0].requirementId,featureId:accepted[0].featureId}};
+      await checkpointProjection({...context,request:checkpointRequest,expectedRevision:status.revision,acceptance,acceptedManifest});
+      store.completeAcceptanceCheckpoint(request.repositoryId,status.revision,acceptance.id);
+      const checkpoint=store.projection(request.repositoryId);
+      if(acceptedRun){
+        const planFile=await safePath(home,`executions/${id(acceptance.runId)}/plan.json`),plan=await readJson(planFile);
+        if(plan.sourceKind==='WORKSPACE')await writeJson(planFile,{...plan,acceptedSpecCommit:checkpoint.head});
+        await publishRun({root,home,repositoryId:request.repositoryId,runId:acceptance.runId,git,push:false});
+      }
       const receipt = await synchronizeRepository({ ...context, request: { ...request, expected: { head: checkpoint.head, branch: checkpoint.branch } } });
       receipt.sourceRevision = checkpoint.checkpointRevision; store.setSyncReceipt(request.repositoryId, receipt); return receipt;
     }
