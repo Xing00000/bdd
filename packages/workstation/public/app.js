@@ -825,6 +825,6 @@ on('#develop','click',()=>development.start());on('#stop-development','click',()
 const designView=systemDesignView({el,onChange:()=>{$('#editor-state').textContent='尚未儲存';renderNext();block();},onSave:()=>safe(saveSource),onModeChange:()=>{resizeWorkflowEditor($('#source-editor'));renderNext();}});
 const catalogView=agentCatalogView({api,el,button,note,ask,onDirty:()=>{state.formDirty=true;},onSaved:()=>{state.formDirty=false;}});
 on('#open-agent-manager','click',()=>navigate({view:'agents',repositoryId:null,featureKey:null,projectId:null}));
-const chat=chatRoomsView({api,el,button,navigate:id=>navigate({chatId:id},{protect:false}),note});
+const chat=chatRoomsView({api,el,button,navigate:id=>navigate({chatId:id},{protect:false}),note,workspace:()=>({repositoryId:state.repositoryId,projectId:state.projectId})});
 // Initialize the route only after every view state and handler exists.
 await safe(async()=>{state.capabilities=await api('/capabilities');$('#worker-status').textContent=state.capabilities.executionEnabled?'可執行驗收':'測試執行已停用';await route();});

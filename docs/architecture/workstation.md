@@ -78,6 +78,8 @@ SQLite view 與執行快照以 `.runtime/source-view.json` 記錄已接受檔案
 
 ## Repo 輸出與同步
 
+一般 CLI 派工從 registry 的規格庫位置及 `workbench.yaml.projects` 推導正式產品工作目錄；匯入後以目前 SQLite authoring 修訂為設定 owner，匯入前才讀 checkout。`agent-workspaces.mjs` 重用 configuration validator 和 safePath，不另存白名單。MCP `agent_workspaces` 與 GET `/repository-api/v1/agent-sessions/workspaces` 提供相同目錄資料；`agent_start` 接受 repositoryId/projectId 或 cwd，單一候選可自動選取，多個候選必須明確選擇。聊天室啟動表單提供產品工作目錄選單。明確任務 allowedRoots／管理者環境設定保留原限制；沒有已登錄產品的通用 Supervisor 沿用既有行為。已驗證的任務代理可透過帶 token 的控制通道轉送其 worktree，不能把聊天 scratch 目錄誤當成產品的唯一允許範圍。
+
 Spec Repo 仍有 `spec/<REQ>/<feature>`、`tests/<REQ>/<feature>`、`reports/<REQ>/<feature>/<run>`，產品仍是 `projects/<id>` submodule。一般 `prepareProjection` 只將固定 SQLite snapshot 輸出為工作檔案，保留衝突檢查。Git checkpoint 只在建立功能與人工驗收完成時產生。`repository_projection.revision` 記錄檔案輸出修訂，`checkpointRevision` 記錄已固定的 Git 修訂，兩者不可混用。只有 `checkpointKind: ACCEPTED` 且沒有較新草稿才可同步，不隱含提交。
 
 已存在的檔案必須符合上次輸出／匯入摘要或本次預期內容。外部修改不同則暫停，回報「SQLite 已儲存、Repo 尚未更新」。原稿、資料庫內容與同步歷史都保留，不執行 reset、clean 或 Force Push。跨 Repo 不是單一交易，部分同步以回執分辨。

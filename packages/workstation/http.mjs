@@ -83,6 +83,7 @@ export async function dispatch(service, request) {
   if(parts[0]==='agent-sessions'){
     if(parts.length===1&&method==='GET')result={sessions:service.agentSessions({repositoryId:url.searchParams.get('repositoryId')||undefined,operationId:url.searchParams.get('operationId')||undefined})};
     else if(parts.length===1&&method==='POST'){result=await service.startAgentSession(input);status=201;}
+    else if(parts.length===2&&parts[1]==='workspaces'&&method==='GET')result=await service.agentWorkspaces();
     else if(parts.length===2&&method==='GET')result=service.agentSession(id(parts[1]));
     else if(parts.length===3&&parts[2]==='events'&&method==='GET')result=service.agentSessionEvents(id(parts[1]),{afterSeq:url.searchParams.has('afterSeq')?Number(url.searchParams.get('afterSeq')):0,limit:url.searchParams.has('limit')?Number(url.searchParams.get('limit')):200});
     else if(parts.length===3&&parts[2]==='messages'&&method==='POST')result=await service.sendAgentSessionMessage(id(parts[1]),input);

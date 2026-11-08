@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import {registeredAgentWorkspaces} from './agent-workspaces.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { invariant, id, errorResult } from '../contracts/index.mjs';
@@ -678,6 +679,22 @@ export async function createAgentSupervisor({
   const effectiveDefaultArgs = defaultArgs ?? (process.env.WB_AGENT_SUPERVISOR_ARGS_JSON ? JSON.parse(process.env.WB_AGENT_SUPERVISOR_ARGS_JSON) : null);
 
   const liveSessions = new Map();
+  const explicitWorkspacePolicy=allowedRoots!==null||envAllowedRoots!==null;
+  async function resolveWorkspace(input){
+    if(explicitWorkspacePolicy)return {cwd:validateAllowedCwd(input.cwd??effectiveDefaultCwd,effectiveAllowedRoots)};
+    const catalog=await registeredAgentWorkspaces(home);
+    if(!catalog.projectCount){
+      invariant(input.projectId===undefined,'AGENT_PROJECT_NOT_FOUND','沒有已登錄的產品專案',404);
+      return {cwd:validateAllowedCwd(input.cwd??effectiveDefaultCwd,effectiveAllowedRoots)};
+    }
+    if(input.repositoryId!==undefined)id(input.repositoryId);
+    if(input.projectId!==undefined)id(input.projectId);
+    const candidates=catalog.workspaces.filter(item=>(input.repositoryId===undefined||item.repositoryId===input.repositoryId)&&(input.projectId===undefined||item.projectId===input.projectId));
+    invariant(candidates.length,'AGENT_PROJECT_NOT_FOUND','找不到已初始化的已登錄產品專案',404);
+    invariant(input.cwd!==undefined||candidates.length===1,'AGENT_PROJECT_REQUIRED','請以 agent_workspaces 查詢並指定產品專案或工作目錄',400);
+    const cwd=validateAllowedCwd(input.cwd??candidates[0].cwd,candidates.map(item=>item.cwd));
+    return {...candidates.find(item=>cwd===item.cwd||cwd.startsWith(item.cwd+path.sep)),cwd};
+  }
   const controlToken = randomUUID();
 
   const failQueuedMessages = (entry, error) => {
@@ -922,7 +939,9 @@ export async function createAgentSupervisor({
       invariant(command === undefined && args === undefined && (!env || Object.keys(env).length === 0), 'AGENT_COMMAND_FORBIDDEN', 'MCP 工具不得直接指定任意執行檔、參數或環境變數', 403);
     }
     const profileConfig = resolveProfileConfig(agentProfile, protocol, { effectiveDefaultCommand, effectiveDefaultArgs });
-    const resolvedCwd = validateAllowedCwd(cwd ?? effectiveDefaultCwd, effectiveAllowedRoots);
+    // Public starts validate project scope first. Authenticated proxies may
+    // also forward a worktree already validated by their task capability.
+    const resolvedCwd = validateAllowedCwd(cwd ?? effectiveDefaultCwd, explicitWorkspacePolicy?effectiveAllowedRoots:null);
     const sanitizedEnv = buildSanitizedAgentEnv(home, env);
     const resolvedAgentName = agentName || title || `${profileConfig.agentProfile}-agent`;
     const initialMessage = typeof task === 'string' && task.trim() ? task : typeof prompt === 'string' && prompt.trim() ? prompt : undefined;
@@ -1072,7 +1091,7 @@ export async function createAgentSupervisor({
         invariant(options.command === undefined && options.args === undefined && (!options.env || Object.keys(options.env).length === 0), 'AGENT_COMMAND_FORBIDDEN', 'MCP 工具不得直接指定任意執行檔、參數或環境變數', 403);
       }
       const profileConfig = resolveProfileConfig(options.agentProfile, protocol, { effectiveDefaultCommand, effectiveDefaultArgs });
-      const resolvedCwd = validateAllowedCwd(options.cwd ?? effectiveDefaultCwd, effectiveAllowedRoots);
+      const workspace=await resolveWorkspace(options),resolvedCwd=workspace.cwd;
       const resolvedCommand = options.command ?? profileConfig.command;
       invariant(
         resolvedCommand === process.execPath || resolvedCommand === effectiveDefaultCommand || resolvedCommand === profileConfig.command,
@@ -1092,7 +1111,7 @@ export async function createAgentSupervisor({
           command: resolvedCommand,
           args: resolvedArgs,
           cwd: resolvedCwd,
-          repositoryId: options.repositoryId ?? defaultRepositoryId,
+          repositoryId: options.repositoryId ?? workspace.repositoryId ?? defaultRepositoryId,
           operationId: options.operationId ?? defaultOperationId,
         });
       }
@@ -1103,9 +1122,14 @@ export async function createAgentSupervisor({
         command: resolvedCommand,
         args: resolvedArgs,
         cwd: resolvedCwd,
-        repositoryId: options.repositoryId ?? defaultRepositoryId,
+        repositoryId: options.repositoryId ?? workspace.repositoryId ?? defaultRepositoryId,
         operationId: options.operationId ?? defaultOperationId,
       });
+    },
+
+    async workspaces(){
+      const catalog=await registeredAgentWorkspaces(home);
+      return catalog.workspaces.filter(item=>{try{validateAllowedCwd(item.cwd,explicitWorkspacePolicy?effectiveAllowedRoots:null);return true;}catch(error){if(error.code==='AGENT_CWD_FORBIDDEN')return false;throw error;}});
     },
 
     async terminalInput(sessionId, data) {
@@ -1217,6 +1241,8 @@ export const agentSupervisorToolDefinitions = Object.freeze([
         agentName: { type: 'string', description: 'CLI Agent 識別名稱' },
         title: { type: 'string', description: 'CLI Agent 標題別名（選填）' },
         cwd: { type: 'string', description: '允許工作區內的工作目錄絕對路徑（選填）' },
+        repositoryId:{type:'string',description:'規格庫 ID，可先用 agent_workspaces 查詢'},
+        projectId:{type:'string',description:'已登錄產品專案 ID，可省略 cwd'},
         task: { type: 'string', description: '初始派工指令（選填）' },
         prompt: { type: 'string', description: '初始派工指令別名（選填）' },
         wait: { type: 'boolean', description: '是否等待初始回合完成（預設 false 立即回傳 sessionId）' },
@@ -1224,6 +1250,12 @@ export const agentSupervisorToolDefinitions = Object.freeze([
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name:'agent_workspaces',
+    description:'列出已綁定規格庫的已初始化產品專案及實際工作目錄，以 repositoryId/projectId 或 cwd 派工。',
+    inputSchema:{type:'object',properties:{},additionalProperties:false},
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
   },
   {
     name: 'agent_send',
@@ -1321,6 +1353,7 @@ export async function supervisorRpc(supervisor, request) {
   try {
     let value;
     if (name === 'agent_start') value = await supervisor.start({ ...args, fromMcp: true });
+    else if(name==='agent_workspaces')value={workspaces:await supervisor.workspaces()};
     else if (name === 'agent_send') value = await supervisor.send(args.sessionId, { message: args.message, messageId: args.messageId, mode: args.mode, actor: 'codex', wait: args.wait ?? true });
     else if (name === 'agent_events') value = supervisor.events(args.sessionId, { afterSeq: args.afterSeq ?? 0 });
     else if (name === 'agent_list') value = { sessions: supervisor.list(args) };

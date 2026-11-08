@@ -76,6 +76,7 @@ export async function createWorkstation(configuration) {
       return supervisorOpening;
     },
     agentSessions(query={}){return listAgentSessions(options.home,query);},
+    async agentWorkspaces(){return {workspaces:await (await this.supervisor()).workspaces()};},
     agentSession(sessionId){return readAgentSession(options.home,sessionId);},
     agentSessionEvents(sessionId,query={}){return readAgentSessionEvents(options.home,sessionId,query);},
     async startAgentSession(input={}){return (await this.supervisor()).start({...input,fromMcp:true});},

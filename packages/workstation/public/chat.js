@@ -1,4 +1,4 @@
-export function chatRoomsView({api,el,button,navigate,note}) {
+export function chatRoomsView({api,el,button,navigate,note,workspace=()=>({})}) {
   const $=selector=>document.querySelector(selector);
   const shell=$('.shell'),drawer=$('#assistant-drawer'),menuToggle=$('#assistant-menu-toggle'),rail=$('.assistant-rail'),roomsPanel=$('#assistant-rooms-panel'),roomsBackdrop=$('#assistant-rooms-backdrop'),roomsClose=$('#assistant-rooms-close'),roomsNode=$('#chat-room-list'),supervisorMenu=$('#assistant-supervisor-menu'),view=$('#chat-view'),sessionsView=$('#assistant-sessions-view');
   const drawerClose=$('#assistant-drawer-toggle'),drawerOpen=$('#assistant-drawer-open'),menuButtons=[...document.querySelectorAll('[data-assistant-nav]')];
@@ -127,13 +127,15 @@ export function chatRoomsView({api,el,button,navigate,note}) {
     protoSelect.setAttribute('aria-label','CLI Agent 協定');
     protoSelect.append(new Option('ACP 工作階段 (acp)','acp'),new Option('PTY 終端機 (pty)','pty'));
     protoWrap.append(protoSelect);
+    const workspaceWrap=el('label','產品工作目錄'),workspaceSelect=el('select');
+    workspaceSelect.setAttribute('aria-label','CLI Agent 工作目錄');workspaceSelect.append(new Option('預設工作目錄',''));workspaceWrap.append(workspaceSelect);
     const titleWrap=el('label','工作階段標題'),titleInput=el('input');
     titleInput.setAttribute('aria-label','CLI Agent 標題');titleInput.placeholder='選填標題…';titleWrap.append(titleInput);
     const promptWrap=el('label','初始派工指令'),promptInput=el('input');
     promptInput.setAttribute('aria-label','CLI Agent 初始指令');promptInput.placeholder='選填初始指令…';promptWrap.append(promptInput);
     const startBtn=el('button','啟動 CLI Agent','primary');startBtn.type='submit';
     const refreshBtn=button('重新整理工作階段',()=>void refreshSessions());
-    startForm.append(profileWrap,protoWrap,titleWrap,promptWrap,startBtn,refreshBtn);
+    startForm.append(profileWrap,protoWrap,workspaceWrap,titleWrap,promptWrap,startBtn,refreshBtn);
     startDetails.append(startForm);
     const listNode=el('div',undefined,'chat-agent-session-list');listNode.dataset.testid='agent-session-list';
     const detailNode=el('div',undefined,'chat-agent-session-detail');detailNode.dataset.testid='agent-session-detail';
@@ -221,7 +223,15 @@ export function chatRoomsView({api,el,button,navigate,note}) {
     }
     async function refreshSessions(){
       try{
-        const res=await api('/agent-sessions');if(!active())return;
+        const [res,catalog]=await Promise.all([api('/agent-sessions'),api('/agent-sessions/workspaces')]);if(!active())return;
+        const prior=workspaceSelect.value,context=workspace(),workspaces=catalog.workspaces;
+        workspaceSelect.replaceChildren(new Option(workspaces.length?'選擇產品專案':'預設工作目錄',''));
+        for(const item of workspaces)workspaceSelect.append(new Option(`${item.repositoryTitle} / ${item.projectId} · ${item.cwd}`,JSON.stringify({repositoryId:item.repositoryId,projectId:item.projectId})));
+        const selected=workspaces.find(item=>item.repositoryId===context.repositoryId&&item.projectId===context.projectId);
+        const preferred=selected?JSON.stringify({repositoryId:selected.repositoryId,projectId:selected.projectId}):prior;
+        if([...workspaceSelect.options].some(option=>option.value===preferred))workspaceSelect.value=preferred;
+        if(!workspaceSelect.value&&workspaces.length===1)workspaceSelect.selectedIndex=1;
+        workspaceSelect.required=workspaces.length>0;
         sessions=res.sessions??[];listNode.replaceChildren();
         if(!sessions.length){listNode.append(el('p','尚無 CLI Agent Session','muted'));detailNode.replaceChildren();return;}
         if(!selectedId||!sessions.some(s=>s.sessionId===selectedId))selectedId=sessions[0].sessionId;
@@ -238,6 +248,7 @@ export function chatRoomsView({api,el,button,navigate,note}) {
       event.preventDefault();if(busy)return;busy=true;startBtn.disabled=true;
       try{
         const body={agentProfile:profileSelect.value,protocol:protoSelect.value};
+        if(workspaceSelect.value)Object.assign(body,JSON.parse(workspaceSelect.value));
         if(titleInput.value.trim())body.title=titleInput.value.trim();
         if(promptInput.value.trim()){body.prompt=promptInput.value.trim();body.wait=true;}
         const created=await api('/agent-sessions','POST',body);
