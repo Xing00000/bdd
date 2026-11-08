@@ -91,7 +91,7 @@ export async function createCodexChatRuntime(directory:string,workstation?:{url:
    reusable=true;return answer;
   }catch(error){
    // Preserve the timeout/close cause even if interrupt or process cleanup fails.
-   const original=controller.signal.aborted?controller.signal.reason:error;
+   const original=controller.signal.aborted?controller.signal.reason:entry?.registration.failure??error;
    if(entry&&controller.signal.aborted&&!closing)reusable=await entry.worker.interrupt(interruptTimeoutMs);
    if(entry&&!reusable)await retire(input.roomId,entry).catch(()=>{});
    throw original;

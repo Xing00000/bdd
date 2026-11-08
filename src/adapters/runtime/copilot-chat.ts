@@ -222,7 +222,7 @@ function validateTools(tools:ProviderTool[],policy:'workstation'|'codex'):Provid
   if(typeof tool?.description!=='string'||tool.parameters?.type!=='object'||typeof tool.name!=='string'||tool.name.length>35)return false;
   if(policy==='codex')return tool.namespace===codexProposalNamespace&&/^codex_tool_[0-9]+$/.test(tool.name);
   if(tool.namespace===workstationNamespace)return /^workbench_[a-zA-Z0-9_]+$/.test(tool.name);
-  if(tool.namespace===agentSupervisorNamespace)return /^agent_(?:start|send|events|list|cancel|stop)$/.test(tool.name);
+  if(tool.namespace===agentSupervisorNamespace)return /^agent_(?:start|send|events|list|cancel|stop|workspaces)$/.test(tool.name);
   return false;
  };
  if(!Array.isArray(tools)||tools.some(tool=>!validTool(tool))||new Set(tools.map(tool=>`${tool.namespace}:${tool.name}`)).size!==tools.length)throw Error('Copilot 工具宣告未授權或無效（工具名稱最多 35 字元）');
