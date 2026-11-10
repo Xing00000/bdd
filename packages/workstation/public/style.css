@@ -3,6 +3,7 @@
 .skip:not(:focus){clip-path:inset(50%);width:1px;height:1px;padding:0;overflow:hidden;white-space:nowrap}
 
 #dialog-description{white-space:pre-line}#settings-products .product-row{border-bottom:1px solid var(--line);padding:12px 0}#sync-state{max-width:280px;text-align:right;margin:7px 0 0}#job-step{margin:0;font-size:12px}#job-progress>div{display:block}#repository-origin{overflow-wrap:anywhere}@media(max-width:760px){#sync-state{text-align:left}}
+.execution-footer{margin-top:28px}.job-progress-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}#job-error{color:var(--danger);white-space:pre-wrap}
 
 /* Guided requirements: natural language first, syntax and IDs behind disclosure. */
 .dialog-guide{padding:10px 14px;background:var(--soft);border-radius:var(--radius-sm);color:var(--muted);font-size:12px;line-height:1.6}.product-repo-input{display:grid;gap:6px;border:1px solid var(--line);border-radius:8px;padding:12px;margin:8px 0}.product-repo-input .muted{font-size:11px}.product-repo-input details{padding:6px 0}.product-repo-input details label{margin:10px 0 0}.product-repo-input label{margin:0}#settings-execution>.form-grid{margin-top:16px}#feature-select:empty{display:none}#feature-empty:not([hidden]){display:block}

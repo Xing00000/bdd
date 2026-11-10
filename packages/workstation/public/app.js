@@ -198,26 +198,36 @@ async function selectOperation(detail,epoch) {
   if(terminalSession?.repositoryId===state.repositoryId&&terminalSession.type===currentHistoryType()){$('#operation-terminal-details').hidden=false;return;}
   clearOperation();
 }
+function renderJob(result) {
+  $('#job-status').textContent=result.status;
+  $('#job-error').textContent=result.error?.message??'';
+  $('#job-error').hidden=!result.error?.message;
+  $('#cancel-job').disabled=!state.jobId||!activeOperation(result.status)||result.status==='CANCELLING';
+}
 async function executeJob(name,input, {refreshAfter=true}={}) {
   if(state.busy)throw new Error('目前流程正在執行，請勿重複送出。');
   beginAction();
   const repositoryId=state.repositoryId, d=state.detail;
   const expected=typeof d?.state==='object'?{head:d.state.head,branch:d.state.branch,fingerprint:d.state.fingerprint}:{head:null};
   state.busy=true;block();$('#job-progress').hidden=false;$('#job-title').textContent=labels[name]??'處理中';
+  $('#job-status').textContent='送出中';$('#job-error').textContent='';$('#job-error').hidden=true;$('#cancel-job').disabled=true;
   $('#job-step').textContent=name==='workflow.verify'?'建立內容快照 → 執行測試 → 儲存報告':name==='repository.sync'?'同步已固定產品 → 規格 → 報告；不會覆寫衝突內容':name==='workflow.accept'?'記錄人工驗收並固定版本':name==='workflow.review'?'檢查必要環境與內容，再推進下一步':'處理中…';
   let result;
   try {
-    result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected,interactionType:currentHistoryType()});state.jobId=result.id;
+    result=await api('/operations','POST',{schemaVersion:1,operationId:`OP-${crypto.randomUUID()}`,repositoryId,operation:name,input,expected,interactionType:currentHistoryType()});state.jobId=result.id;renderJob(result);
     let selected=false;
     while(['QUEUED','RUNNING','CANCELLING'].includes(result.status)){
       if(!selected&&cliOperations.has(name)){const terminal=await api(`/operations/${result.id}/terminal?offset=0`);if(terminal.hasProgress){showOperation({...result,request:{repositoryId,operation:name}});selected=true;}}
-      await new Promise(r=>setTimeout(r,350));result=await api(`/operations/${result.id}`);
+      await new Promise(r=>setTimeout(r,350));result=await api(`/operations/${result.id}`);renderJob(result);
     }
     if(!selected&&cliOperations.has(name)){const terminal=await api(`/operations/${result.id}/terminal?offset=0`);if(terminal.hasProgress)showOperation({...result,request:{repositoryId,operation:name}});}
     if(result.status!=='SUCCEEDED')throw Object.assign(new Error(result.error?.message??'流程未完成，內容已保留。'),result.error??{});
     note(result.result?.testOutcome==='FAILED'||result.result?.outcome==='FAILED'?'執行完成，但測試未通過。':name==='repository.sync'?'已同步至遠端。':name==='workflow.verify'?'測試完成，報告已儲存，請進行人工驗收。':'已儲存。');return result.result;
+  } catch(error) {
+    if(!result||activeOperation(result.status))$('#job-status').textContent='無法取得執行結果';
+    $('#job-error').textContent=error.message;$('#job-error').hidden=false;throw error;
   } finally {
-    state.busy=false;$('#job-progress').hidden=true;
+    state.busy=false;$('#cancel-job').disabled=true;
     try { if(refreshAfter&&repositoryId===state.repositoryId)await refresh(); } finally { state.jobId=null;block(); }
     $('#notice').dataset.operation=name;$('#notice').dataset.outcome=result?.status??'FAILED';$('#notice').dataset.jobId=result?.id??'';
   }
