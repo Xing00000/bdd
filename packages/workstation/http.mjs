@@ -43,6 +43,8 @@ export async function dispatch(service, request) {
     } else if (process.env.WB_SOURCE_COMMIT) {
       const commit = await workingCommit(service.options.toolkitRoot);
       invariant(commit === process.env.WB_SOURCE_COMMIT, 'SOURCE_VERSION_MISMATCH', '啟動版本與測試來源不符。', 409); source = { commit };
+    } else {
+      source = { commit: await workingCommit(service.options.toolkitRoot) };
     }
     return {status:200,headers:{...securityHeaders,'content-type':'application/json; charset=utf-8'},body:{status:'ok',...source}};
   }
